@@ -213,6 +213,7 @@ Mailu's `mailu.env` reference includes operationally important settings:
 - `DMARC_RUF`
 - quota/compression/search settings
 - initial admin creation settings
+- OIDC provider settings: issuer, client ID, client secret reference, redirect URI, scopes, claim mapping, allowed domains, auto-provision policy
 
 GopherMailForge should represent configuration as typed data with validation and generated environment/config files. Invalid config should fail before containers start.
 
@@ -232,8 +233,9 @@ GopherMailForge should provide:
   - schemas
   - users list/create/read/replace/patch/deprovision
   - groups explicitly unsupported or read-only empty until implemented
+- OIDC login for administrator and user-facing web sessions, with strict issuer metadata and token validation
 
-SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail data, unless a future destructive-delete policy explicitly says otherwise.
+SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail data, unless a future destructive-delete policy explicitly says otherwise. OIDC should authenticate existing accounts and optionally create users only under an explicit domain policy; it must not become an unbounded account-creation backdoor.
 
 ## 6. Users and use cases
 
@@ -242,6 +244,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - self-hosting operators running one mail domain or a small number of domains
 - small organizations needing mailboxes, aliases, admin delegation, DKIM/DNS help, and webmail
 - identity administrators provisioning users through SCIM
+- organizations using OIDC identity providers for administrator and user SSO
 - advanced operators who need clear generated configs and daemon lookup behavior
 
 ### 6.2 Core use cases
@@ -258,8 +261,9 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 10. Configure relays/smarthost behavior.
 11. Configure fetchmail where enabled.
 12. Provision users through REST or SCIM.
-13. Let Postfix/Dovecot/Rspamd query the control plane reliably.
-14. Diagnose configuration errors before they become mail delivery failures.
+13. Authenticate administrators and users through OIDC where configured.
+14. Let Postfix/Dovecot/Rspamd query the control plane reliably.
+15. Diagnose configuration errors before they become mail delivery failures.
 
 ## 7. Functional requirements
 
@@ -328,6 +332,8 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - Support scoped domain access rules.
 - Provide audit logs for admin mutations.
 - Separate human sessions from automation tokens.
+- Support OIDC-backed login for admin and user web sessions.
+- Support local-password fallback only when explicitly enabled by policy.
 
 ### 7.9 REST API
 
@@ -348,14 +354,26 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - Cap list results to the advertised maximum.
 - Treat groups as unsupported until real group semantics exist.
 
-### 7.11 Internal daemon APIs
+### 7.11 OIDC authentication
+
+- Support OpenID Connect for administrator and user web login.
+- Discover provider metadata from the configured issuer and require issuer metadata to be present and valid.
+- Validate ID token issuer, audience, authorized party (`azp`) when present, subject, expiry, issued-at, and not-before claims.
+- Reject malformed or unverifiable tokens; never fall back to trusting unsigned claims.
+- Map OIDC identities to mailbox/admin accounts through explicit claim mapping.
+- Support allowed-domain and allowed-group policy before granting access.
+- Support optional just-in-time user creation only when the domain already exists and policy explicitly enables it.
+- Keep OIDC login separate from daemon password/token authentication; mail clients still need Dovecot-compatible credentials or application tokens.
+- Provide clear login failure logs without exposing tokens or secrets.
+
+### 7.12 Internal daemon APIs
 
 - Provide stable endpoints for Postfix, Dovecot, Rspamd, fetchmail, auth, and autoconfig.
 - Make lookup behavior testable without running the full mail stack.
 - Log lookup failures with enough context to debug without exposing secrets.
 - Use explicit auth/trust boundaries for internal endpoints.
 
-### 7.12 Background jobs
+### 7.13 Background jobs
 
 - Treat background work as a first-class system:
   - DKIM generation/rotation
@@ -366,7 +384,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
   - cleanup/maintenance jobs
 - Jobs must have state, logs, retry policy, and operator visibility.
 
-### 7.13 Web UI
+### 7.14 Web UI
 
 - Web UI is useful but not the primary contract.
 - The UI must use the same public admin API where practical.
@@ -376,6 +394,8 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 ## 8. Security requirements
 
 - No unauthenticated admin API.
+- OIDC must validate issuer metadata, signatures, subject, audience, authorized party, expiry, issued-at, and not-before claims before session creation.
+- OIDC client secrets must be stored as secrets, not ordinary generated config.
 - Separate external admin/API auth from internal daemon auth.
 - API tokens must be hashable/revocable where practical.
 - Passwords must use a modern password hashing scheme compatible with Dovecot/Postfix auth needs.
@@ -409,6 +429,7 @@ Preserve where valuable:
 - DNS guidance semantics
 - DKIM lifecycle expectations
 - SCIM user provisioning shape
+- OIDC administrator/user SSO as a first-class authentication path
 - REST API coverage in spirit, not necessarily exact broken edge behavior
 - internal daemon lookup semantics needed by Postfix/Dovecot/Rspamd
 
@@ -463,14 +484,23 @@ Reject:
 - Initial admin bootstrap.
 - End-to-end smoke path: send, receive, authenticate, IMAP login.
 
-### M5: SCIM MVP
+### M5: OIDC MVP
+
+- OIDC provider configuration.
+- Provider discovery and JWKS handling.
+- Strict ID token validation.
+- Claim mapping to existing users/admins.
+- Optional policy-gated just-in-time user creation.
+- Authentik-compatible login path.
+
+### M6: SCIM MVP
 
 - SCIM service provider config, resource types, schemas.
 - User list/create/read/replace/patch/deprovision.
 - Strict validation tests.
 - Authentik-compatible provisioning path.
 
-### M6: Web UI MVP
+### M7: Web UI MVP
 
 - Admin login/session.
 - Domain/user/alias/token/DNS/DKIM screens.
@@ -481,6 +511,7 @@ Reject:
 - A fresh operator can bootstrap a working Compose mail stack from typed config.
 - Postfix, Dovecot, and Rspamd can run against GopherMailForge internal APIs without Mailu's Python admin service.
 - Domain/user/alias operations work through CLI and REST API.
+- OIDC login can authenticate administrators/users through a compliant identity provider without weakening local/session security.
 - SCIM provisioning can create, update, disable, and list users through an identity provider.
 - Generated config is reproducible and inspectable.
 - Core behavior is covered by unit/contract tests without requiring the full stack.
@@ -492,6 +523,7 @@ Reject:
 - Dovecot/Postfix lookup semantics must be exact; vague compatibility will break mail flow.
 - DKIM key handling crosses database and filesystem state; sloppy ownership will create security and backup problems.
 - Supporting SQLite and PostgreSQL can create lowest-common-denominator schema garbage if not constrained.
+- OIDC looks simple until token validation is sloppy; issuer, audience, azp, subject, expiry, issued-at, and not-before checks are not optional.
 - SCIM looks small but punishes weak validation.
 - Compose generation can become a templating swamp unless the config model is kept strict.
 - Web UI work can distract from the real contract: daemon APIs and generated config.
@@ -506,6 +538,8 @@ Reject:
 6. How much REST API compatibility with Mailu v1 is worth preserving?
 7. Whether anonymous alias/SimpleLogin-like behavior belongs in MVP.
 8. Whether fetchmail belongs in MVP or a later optional module.
+9. Whether OIDC just-in-time user creation belongs in MVP or should require pre-created users only.
+10. Which OIDC claim mapping is canonical: email, preferred_username, subject-bound external identity, or an explicit configured claim.
 
 ## 15. Acceptance criteria for starting architecture
 
