@@ -21,9 +21,26 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-14 23:52 CDT — Implement v0 foundation
+### 2026-07-14 23:56 CDT — Record v0 implementation commit hash
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Updated the v0 implementation changelog entry with the real Git commit hash after Git assigned it. This is the honest way to satisfy the changelog requirement without pretending a commit can contain its own final hash.
+
+Verification:
+
+- Confirmed the v0 implementation entry now records commit `6cf655c37451a8da63e7360e5bde9b7b2664e176`.
+- Confirmed `git diff --check -- .` passes.
+
+### 2026-07-14 23:52 CDT — Implement v0 foundation
+
+Commit: `6cf655c37451a8da63e7360e5bde9b7b2664e176`
 
 Affected files:
 
