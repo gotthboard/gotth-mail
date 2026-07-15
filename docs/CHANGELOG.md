@@ -21,9 +21,67 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-14 23:31 CDT — Expand changelog entry requirements
+### 2026-07-14 23:52 CDT — Implement v0 foundation
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `Dockerfile`
+- `cmd/gmf/main.go`
+- `cmd/gophermailforge/main.go`
+- `compose/reference/docker-compose.yml`
+- `go.mod`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/apply/apply.go`
+- `internal/apply/apply_test.go`
+- `internal/audit/audit.go`
+- `internal/audit/audit_test.go`
+- `internal/authn/authn.go`
+- `internal/authn/authn_test.go`
+- `internal/authz/authz.go`
+- `internal/authz/authz_test.go`
+- `internal/config/config.go`
+- `internal/config/config_test.go`
+- `internal/httpui/httpui.go`
+- `internal/plugin/plugin.go`
+- `internal/plugin/plugin_test.go`
+- `internal/render/render.go`
+- `internal/render/render_test.go`
+- `internal/store/store.go`
+- `internal/store/store_test.go`
+- `internal/version/version.go`
+- `migrations/0001_initial.sql`
+- `proto/gophermailforge/plugin/v1/plugin.proto`
+- `test/contract/sample-config.yaml`
+- `test/contract/v0_contract_test.go`
+- `test/fixtures/mail.crt`
+- `test/fixtures/mail.key`
+- `workflow/COVERAGE.md`
+- `workflow.events.jsonl`
+- `workflow.toml`
+- `workflow/features/v0.foundation/evidence/2026-07-14-v0-foundation-implementation.md`
+
+Explanation:
+
+Implemented the v0 foundation as a narrow control-plane baseline. This adds the Go module, server and CLI entrypoints, HTTP/API health/status/authz shell, GOTTH-compatible server-rendered UI shell, typed config parser and validator, TLS safety validation, deterministic render output, explicit apply gate, audit writer and redaction, static v0 authorization simulator, Authentik base model, initial schema/migration representation, plugin registry/control skeleton, protobuf contract layout, Dockerfile, reference Compose topology, contract fixtures, tests, workflow evidence, coverage updates, and workflow state updates for v0.
+
+The implementation intentionally does not add v1 mail-daemon behavior, SCIM provisioning, full OIDC login, real plugin implementations, or custom webmail. v0 remains the foundation: it establishes package boundaries, validation, audit/authz behavior, render/apply mechanics, plugin contract seams, Authentik-adjacent topology, and verification harnesses.
+
+The workflow manifest now marks `v0.foundation` and its v0 child features as done. Evidence for the verification commands and coverage posture is recorded under `workflow/features/v0.foundation/evidence/`.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Confirmed explicit binary builds for `cmd/gmf` and `cmd/gophermailforge` pass.
+- Confirmed CLI config validation, render, diff, apply, migrate, and authz smoke commands pass against `test/contract/sample-config.yaml`.
+- Confirmed `sudo docker build -t gophermailforge:v0-smoke .` passes and runs `go test ./...` inside the build stage.
+- Confirmed `git diff --check -- .` passes.
+
+### 2026-07-14 23:31 CDT — Expand changelog entry requirements
+
+Commit: `9d84ad3aa567a9579c73afb4c4b74b686ea9ec6c`
 
 Affected files:
 
