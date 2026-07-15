@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the system-wide architecture for GopherMailForge. Version-specific architecture details live under `architecture/` and must remain traceable to the matching PRD files.
+This document defines the system-wide architecture for GopherMailForge. Version-specific architecture details live under `docs/architecture/` and must remain traceable to the matching PRD files.
 
 GopherMailForge is a Docker/Compose-deployed Go control plane for a self-hosted mail stack. It uses Mailu as the reference architecture, but replaces Mailu's Python control plane with explicit Go services, typed configuration, containerized plugin mechanisms, audited mutations, and daemon-facing contracts that are testable without guessing.
 
