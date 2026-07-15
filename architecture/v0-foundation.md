@@ -138,6 +138,7 @@ Plugin runtime requirements:
 - no in-process loading
 - no Docker socket
 - no broad filesystem mounts
+- plugin failure cannot corrupt core state
 
 v0 defines seams only; it does not build a plugin ecosystem.
 
@@ -178,5 +179,8 @@ All mutations route through service/auth/audit layers.
 - audit writer records redacted mutation events
 - permission simulator explains allow/deny
 - Authentik profile exists in topology
-- plugin health/version/capability gRPC contracts compile and reject unauthenticated calls
+- plugin health/version/capability gRPC contracts compile
+- authenticated plugin health/version/capability calls succeed with admitted service credentials
+- unauthenticated plugin gRPC calls are rejected
+- plugin failure isolation is covered by tests or contract checks
 - `git diff --check` and Go tests pass
