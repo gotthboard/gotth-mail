@@ -21,9 +21,39 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-14 23:56 CDT — Record v0 implementation commit hash
+### 2026-07-15 00:03 CDT — Harden v0 migration and plugin transport tests
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `Dockerfile`
+- `docs/CHANGELOG.md`
+- `go.mod`
+- `go.sum`
+- `internal/plugin/grpc.go`
+- `internal/plugin/grpc_test.go`
+- `internal/store/sql.go`
+- `internal/store/sql_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v0.foundation/evidence/2026-07-14-v0-foundation-implementation.md`
+
+Explanation:
+
+Strengthened the v0 foundation implementation after review exposed two weak spots. The first pass had migration coverage that proved the schema list existed but did not execute the schema through a real SQL engine. It also had plugin control behavior as an in-process contract, with the protobuf file present but no actual gRPC transport skeleton test. That was too close to paperwork theater for a foundation release.
+
+This change adds SQLite-backed migration execution tests using `modernc.org/sqlite`, including migration-history count, unique domain constraint, and mailbox foreign-key rejection. It also adds a real gRPC server/client skeleton for the plugin control service using a registered JSON codec over gRPC and `bufconn` tests for authenticated and unauthenticated health calls. The protobuf file remains the contract layout; the transport skeleton now proves the health path crosses a real gRPC boundary instead of only a local function call.
+
+The Go toolchain and Docker builder were aligned to Go 1.25 after dependency resolution raised the module version.
+
+Verification:
+
+- Confirmed `go test ./internal/plugin ./internal/store` passes after the hardening change.
+- Full final project verification is recorded in the v0 evidence file and rerun before commit.
+
+### 2026-07-14 23:56 CDT — Record v0 implementation commit hash
+
+Commit: `ca8965fdb74135f19000e3fca8dec0d5f9483a27`
 
 Affected files:
 

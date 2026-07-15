@@ -11,9 +11,9 @@ v0 foundation implementation now exists. New features still start with missing e
 | Subsystem | Required harnesses | Initial state | High-risk gaps |
 | --- | --- | --- | --- |
 | Config/render/apply | unit, golden render, audit integration | initial v0 tests in `internal/config`, `internal/render`, `internal/apply` | future daemon-specific renderers still missing |
-| Store/migrations | migration, constraint, upgrade/downgrade where safe | initial v0 migration/schema helper tests in `internal/store` | real database driver execution and downgrade path deferred beyond v0 |
+| Store/migrations | migration, constraint, upgrade/downgrade where safe | initial v0 migration/schema helper tests plus SQLite-backed SQL execution tests in `internal/store` | downgrade path deferred beyond v0 |
 | Audit/authz | unit, negative, fail-closed integration | initial v0 audit redaction and authz explain tests in `internal/audit` and `internal/authz` | richer integration coverage required as mutations expand |
-| Plugin runtime | protobuf contract, authenticated/unauthenticated gRPC, failure isolation | initial v0 proto contract and plugin control tests in `internal/plugin` and `test/contract` | real generated gRPC bindings and network transport hardening remain future work |
+| Plugin runtime | protobuf contract, authenticated/unauthenticated gRPC, failure isolation | initial v0 proto contract, plugin control tests, and bufconn gRPC transport tests in `internal/plugin` and `test/contract` | generated protobuf bindings remain future work |
 | Daemon contracts | Postfix/Dovecot/Rspamd contract and negative tests | missing | fake success, Authentik-dependent mail path |
 | DNS/TLS/ACME | unit, doctor, reference integration | initial v0 TLS config validation tests in `internal/config` | ACME implementation and doctor checks deferred |
 | Diagnostics/smoke | CLI/API, machine-readable output, reference Compose smoke | initial v0 CLI/API smoke, contract checks, and Docker build smoke evidence | reference Compose runtime smoke still deferred |
