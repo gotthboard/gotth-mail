@@ -114,6 +114,8 @@ Import candidate types:
 - DKIM keys
 - compatible tokens where safe
 
+Token/app-password import is allowed only for verifier-compatible, non-plaintext records whose hash/verifier algorithm, scope, and revocation state can be preserved. Anything else is `incompatible` or `manual_action_required`.
+
 Import report item status:
 
 ```text
@@ -134,7 +136,7 @@ POST /api/v1/imports/mailu/apply
 GET  /api/v1/imports/{id}
 ```
 
-Apply requires explicit confirmation using preview ID/hash.
+Apply requires explicit confirmation using preview ID/hash, source fingerprint, actor binding, and expiry. Stale previews, changed source fingerprints, mismatched actors, or mismatched preview hashes are rejected.
 
 ## Abuse/rate-limit dashboard
 
@@ -189,7 +191,7 @@ Required tests:
 - snapshot UI shows config/migration/image/plugin/deployment/verified-restore state
 - rollback UI refuses fake safety claims without verified backup
 - Mailu import preview/apply moves supported state without silent weakening
-- import apply requires preview hash/confirmation and audits mutations
+- import apply requires preview hash/source fingerprint/actor binding/expiry confirmation and audits mutations
 - abuse/rate-limit dashboard exposes required operational signals without hidden policy
 - admin workflows do not bypass API/service/auth/audit paths
 - bulk operations prove preview, confirmation, per-item result reporting, and per-item or grouped audit entries
