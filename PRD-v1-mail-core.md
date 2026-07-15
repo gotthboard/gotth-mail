@@ -82,6 +82,7 @@ Each plugin container must:
   - DKIM
   - database
   - Authentik reachability
+  - selected webmail provider reachability
   - generated config
   - daemon lookup health
   - plugin health
@@ -112,6 +113,7 @@ Each plugin container must:
   - alias delivery
   - IMAP login
   - DKIM signing
+  - delivered smoke mail visible through the selected webmail provider
 - Known-good snapshot capture for:
   - generated config
   - image versions
@@ -144,6 +146,6 @@ Each plugin container must:
 - Generated config can be rendered, diffed, applied, and audited.
 - DNS readiness reports exact missing/mismatched records.
 - Let’s Encrypt issuance/renewal works in the reference deployment or fails loudly with actionable doctor output.
-- Smoke test proves SMTP submission, receive, alias delivery, IMAP login, and DKIM signing.
+- Smoke test proves SMTP submission, receive, alias delivery, IMAP login, DKIM signing, and delivered smoke mail visibility through the selected webmail provider.
 - Plugin containers are wired through Compose and pass gRPC health/capability checks.
 - Mail delivery and daemon lookups do not depend on Authentik availability.
