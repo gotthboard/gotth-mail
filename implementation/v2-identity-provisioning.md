@@ -17,14 +17,17 @@ Flow:
 start_login -> redirect_to_provider -> callback -> validate_state -> exchange_code -> validate_id_token -> map_identity -> create_session
 ```
 
-State table or secure session store:
+OIDC login state is stored in `oidc_login_states`:
 
-- `state_id`
-- `nonce`
+- `state_id` primary key
+- `nonce` not null
+- `browser_binding_hash` not null
 - `redirect_after_login`
 - `created_at`
 - `expires_at`
 - `used_at`
+
+`state_id` is single-use. The callback must mark it used in the same transaction that accepts the callback.
 
 Validation requirements:
 
@@ -136,6 +139,8 @@ GET    /Groups
 
 Groups return explicit unsupported behavior until real group semantics exist.
 
+SCIM requests authenticate as a `scim_client` actor using a verifier-backed bearer/API token. Every create/update/patch/deprovision request runs through core authorization and domain policy before canonical mailbox state is admitted.
+
 User mapping:
 
 - `userName` -> mailbox email
@@ -152,6 +157,16 @@ Validation rejects:
 - unknown paths
 - bad password values
 - mailbox/domain outside allowed policy
+
+Supported PATCH matrix:
+
+- `add` or `replace` `/active` with boolean value
+- `add` or `replace` `/displayName` with string value
+- `add` or `replace` `/name/formatted` with string value
+- `add` or `replace` `/password` with valid string password
+- `remove` `/displayName` or `/name/formatted`
+
+All other operations or paths fail explicitly. Empty Operations arrays fail explicitly.
 
 SCIM DELETE disables the mailbox by default and does not delete mail data.
 
@@ -235,8 +250,10 @@ Required tests:
 - Authentik role mapping doctor/tests for global admin/domain manager/scoped access
 - mail delivery/daemon lookup checks with Authentik unavailable
 - permission simulator coverage for all actor classes and denied results
+- OIDC login state is single-use and marked used atomically with callback acceptance
+- SCIM client authentication/authorization tests
 - SCIM success paths for list/create/read/replace/patch/disable
-- SCIM failure paths for malformed JSON, non-object payload, scalar identity fields, unsupported operations, unknown paths, bad passwords
+- SCIM failure paths for malformed JSON, non-object payload, scalar identity fields, unsupported operations, unknown paths, empty Operations arrays, bad passwords
 - Authentik-compatible SCIM provisioning path without DB/config bypass
 - app-password create/revoke/list/Dovecot auth with verifier-only storage
 - every identity/provisioning mutation audited
