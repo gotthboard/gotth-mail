@@ -47,6 +47,8 @@ Rules:
 - Telegram carries the prompt.
 - Core decides authorization.
 - Core validates confirmation.
+- Approval prompts include request/correlation ID, actor, action, resource, expiry, and single-use confirmation binding.
+- Core rejects stale, replayed, mismatched, or expired approvals.
 - Core performs mutation.
 - Core writes audit event.
 - Telegram never mutates state directly.
@@ -83,4 +85,4 @@ After Telegram proves the seam:
 - Operational alerts are delivered through Telegram without exposing secrets.
 - Read-only Telegram commands return bounded summaries.
 - Every Telegram request is mapped to an identity and audited.
-- Approval workflows, when enabled, use core authorization/confirmation/mutation/audit paths.
+- Approval workflows, when enabled, use core authorization/confirmation/mutation/audit paths and reject stale, replayed, mismatched, or expired approvals.
