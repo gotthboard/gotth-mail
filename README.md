@@ -9,6 +9,7 @@ This repository is currently in the planning/specification phase. Do not jump st
 - [Product requirements](docs/prd/PRD.md)
 - [Architecture](docs/architecture/ARCHITECTURE.md)
 - [Implementation specifications](docs/implementation/IMPLEMENTATION.md)
+- [Authentik password hashing compatibility](docs/reference/authentik-password-hashing.md)
 - [Workflow manifest](workflow.toml)
 - [Coverage posture](workflow/COVERAGE.md)
 

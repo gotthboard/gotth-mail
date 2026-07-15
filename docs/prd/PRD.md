@@ -28,7 +28,8 @@ GopherMailForge is not a Mailu fork and must not mechanically copy Mailu's Pytho
 6. Do not silently log secrets.
 7. Do not silently fall back to self-signed certs in production.
 8. Do not claim rollback unless the required verified backup/snapshot exists.
-9. Do not build custom webmail before the control plane is solid.
+9. Do not invent a mail-only password hash when Authentik-compatible Django encoded hashes are required.
+10. Do not build custom webmail before the control plane is solid.
 
 ## Reference: Mailu concepts to preserve
 

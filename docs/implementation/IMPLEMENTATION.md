@@ -137,6 +137,13 @@ Actors:
 
 Plugin service identity authenticates a plugin. It does not grant user/admin permissions.
 
+
+### Password verifier compatibility
+
+Mailbox-password and mail-client verifier storage must use Authentik-compatible Django encoded password-hash strings where password sync or Dovecot verification is intended. The encoded string must carry the algorithm identifier and parameters, and must be accepted by Authentik/Django `identify_hasher`.
+
+GopherMailForge must not invent a private mail-only password hash. New password hashes use the configured Authentik-compatible hasher profile. Imports accept only recognized Django encoded hashes unless an explicit migration exception is recorded. Plaintext import/export is forbidden. See [Authentik password hashing compatibility](../reference/authentik-password-hashing.md).
+
 ### Plugin contract
 
 All plugins must:

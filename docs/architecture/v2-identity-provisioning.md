@@ -80,7 +80,7 @@ Mapping:
 - `userName` -> mailbox email
 - `displayName` / `name.formatted` -> displayed name
 - `active` -> enabled flag
-- `password` -> mailbox password when supplied
+- `password` -> mailbox password when supplied, stored using the Authentik-compatible Django encoded password-hash format
 
 Validation rejects:
 
@@ -101,7 +101,7 @@ App passwords/mail-client tokens:
 
 - are created/revoked/listed through core services
 - integrate with Dovecot auth
-- are stored hashed or verifier-only, never plaintext
+- are stored as Authentik-compatible Django encoded password-hash/verifier strings where password sync or Dovecot verification is intended; never plaintext
 - expose the secret value only at creation
 - emit audit events for create/revoke/use metadata
 
@@ -132,5 +132,5 @@ Plugin service identity proves the plugin is admitted; it does not grant user/ad
 - permission simulator explains identity-backed decisions
 - SCIM success and failure paths tested
 - Authentik-compatible SCIM provisioning path verified without bypassing GopherMailForge validation/state admission
-- app passwords work for Dovecot auth and are verifier-only/hashed
+- app passwords work for Dovecot auth using the same Authentik-compatible Django encoded hash/verifier contract where applicable
 - every identity/provisioning mutation audited

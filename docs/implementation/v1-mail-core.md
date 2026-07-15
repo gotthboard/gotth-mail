@@ -97,7 +97,7 @@ Passdb request:
 
 Passdb behavior:
 
-- app-password/mail-client token verifier is checked against stored verifier
+- app-password/mail-client token verifier is checked against the stored Authentik-compatible Django encoded verifier/hash string where applicable
 - plaintext secret is never logged or audited
 - OIDC session tokens are not accepted for IMAP/SMTP
 - disabled mailbox returns explicit reject
@@ -305,7 +305,7 @@ Snapshot is not rollback unless paired with verified backup.
 Required tests:
 
 - Postfix contract happy/failure paths
-- Dovecot passdb/userdb/quota happy/failure paths
+- Dovecot passdb/userdb/quota happy/failure paths, including Authentik-compatible encoded hash verification
 - Rspamd DKIM/local-domain tests
 - generated daemon config deterministic render/diff/apply/audit
 - DNS readiness exact missing/mismatched record reporting

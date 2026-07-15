@@ -95,12 +95,12 @@ Validation:
 - `subject_type` text not null
 - `subject_id` text not null
 - `kind` text not null enum: `api`, `app_password`, `plugin_service`, `scim_client`, `break_glass`
-- `verifier` text not null
+- `verifier` text not null; password/mail-client verifiers use Authentik-compatible Django encoded password-hash strings where password sync or Dovecot verification is intended
 - `label` text not null
 - `scope_json` json/text not null
 - `created_at`, `last_used_at`, `revoked_at`
 
-Never store plaintext token/app-password values.
+Never store plaintext token/app-password values. Password verifier strings must preserve the Django algorithm identifier and parameters.
 
 ### `identity_refs`
 

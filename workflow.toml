@@ -60,7 +60,7 @@ source_path = "."
 branch = "workflow/root/v2.identity-provisioning"
 worktree = "/tmp/gophermailforge-worktrees/v2.identity-provisioning"
 dependencies = ["v1.mail-core"]
-required_verification = ["git diff --check", "go test ./...", "OIDC/SCIM/app-password contract tests"]
+required_verification = ["git diff --check", "go test ./...", "OIDC/SCIM/app-password/password-hash compatibility contract tests"]
 
 [[root_features]]
 id = "v3.ops-import-admin"
@@ -282,7 +282,7 @@ source_path = "internal/httpui"
 branch = "workflow/feature/v2.identity-provisioning.app-passwords-ui"
 dependencies = ["v2.identity-provisioning.scim", "v1.mail-core.daemon-contracts"]
 implementation_spec_sections = ["App passwords / mail-client tokens", "Identity UI", "Plugin identity boundary"]
-verification = ["create/revoke/list tests", "Dovecot verifier tests", "secret-once/no-plaintext tests", "identity UI service/auth/audit tests", "go test ./...", "git diff --check"]
+verification = ["create/revoke/list tests", "Dovecot Authentik-compatible verifier tests", "secret-once/no-plaintext/Django-hash-format tests", "identity UI service/auth/audit tests", "go test ./...", "git diff --check"]
 
 [[features]]
 id = "v3.ops-import-admin.audit-backup-snapshots"
@@ -306,7 +306,7 @@ source_path = "proto"
 branch = "workflow/feature/v3.ops-import-admin.mailu-import"
 dependencies = ["v3.ops-import-admin.audit-backup-snapshots", "v1.mail-core.daemon-contracts"]
 implementation_spec_sections = ["Mailu import plugin"]
-verification = ["preview/apply source fingerprint binding", "no silent weakening tests", "token verifier compatibility classification", "contract verification before success", "go test ./...", "git diff --check"]
+verification = ["preview/apply source fingerprint binding", "no silent weakening tests", "Authentik/Django token verifier compatibility classification", "contract verification before success", "go test ./...", "git diff --check"]
 
 [[features]]
 id = "v3.ops-import-admin.abuse-bulk-ui"

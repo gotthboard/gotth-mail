@@ -146,7 +146,7 @@ User mapping:
 - `userName` -> mailbox email
 - `displayName` or `name.formatted` -> display name
 - `active` -> enabled flag
-- `password` -> mailbox password when supplied
+- `password` -> mailbox password when supplied; stored as an Authentik-compatible Django encoded password-hash string
 
 Validation rejects:
 
@@ -187,6 +187,22 @@ Use SCIM error shape:
 
 Unsupported groups or operations must fail explicitly. No fake 200/no-op behavior.
 
+## Password hashing compatibility
+
+Mailbox-password and app-password/mail-client verifier storage must be compatible with Authentik's Django encoded password-hash format.
+
+Requirements:
+
+- new mailbox passwords are encoded with the configured Authentik-compatible hasher profile
+- stored verifier strings include the Django algorithm identifier and parameters
+- accepted imported hashes must be accepted by Authentik/Django `identify_hasher`
+- Dovecot passdb verifies submitted secrets against the same stored verifier string
+- plaintext password import/export is rejected
+- unknown, deprecated, or policy-disabled hash algorithms are rejected unless a documented migration exception is recorded
+- Authentik outage must not affect Dovecot passdb verification of already-stored verifiers
+
+This contract intentionally matches Authentik's hash format. It does not make Authentik a runtime dependency for IMAP/SMTP login.
+
 ## App passwords / mail-client tokens
 
 API:
@@ -210,11 +226,11 @@ Create response exposes plaintext secret once:
 
 Storage:
 
-- store verifier/hash only
+- store Authentik-compatible Django encoded verifier/hash strings where password sync or Dovecot verification is intended
 - never log plaintext secret
 - never return secret after creation
 - revocation sets `revoked_at`
-- Dovecot passdb validates against verifier
+- Dovecot passdb validates against the same stored verifier string
 
 Audit events:
 
@@ -255,7 +271,8 @@ Required tests:
 - SCIM success paths for list/create/read/replace/patch/disable
 - SCIM failure paths for malformed JSON, non-object payload, scalar identity fields, unsupported operations, unknown paths, empty Operations arrays, bad passwords
 - Authentik-compatible SCIM provisioning path without DB/config bypass
-- app-password create/revoke/list/Dovecot auth with verifier-only storage
+- password-hash compatibility tests with Authentik/Django `identify_hasher`-accepted encoded hashes
+- app-password create/revoke/list/Dovecot auth with Authentik-compatible Django encoded verifier/hash storage where applicable
 - every identity/provisioning mutation audited
 - `git diff --check`
 - `go test ./...`
