@@ -118,7 +118,7 @@ Minimum audit fields:
 - result
 - error code when failed
 
-Audit writes must not be optional for mutation paths. If an audit write fails, the mutation must fail closed unless the operation is explicitly classified as emergency break-glass and records a durable recovery audit record.
+Audit writes must not be optional for mutation paths. If the primary audit write fails, the mutation must fail closed. The only exception is an explicitly classified emergency break-glass operation that writes a durable local recovery audit record to a configured fallback sink before or atomically with the mutation; if that fallback write fails, the break-glass mutation also fails closed.
 
 ### Authorization contract
 
