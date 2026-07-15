@@ -307,7 +307,8 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - Create, update, disable, and delete domains subject to safety policy.
 - Enforce domain limits: max users, max aliases, max quota.
 - Support alternative domain names.
-- Generate DNS guidance for MX, SPF, DKIM, DMARC, DMARC report records, SRV/autoconfig, and TLSA where applicable.
+- Generate DNS guidance for MX, SPF, DKIM, DMARC, DMARC report records, SRV/autoconfig/autodiscover, and TLSA where applicable.
+- Explain generated DNS records in operator-facing output so the user can tell which record solves which mail path.
 - Check whether MX records point to configured hostnames.
 - Generate and rotate DKIM keys.
 
@@ -316,6 +317,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - Create, update, disable, and delete users/mailboxes.
 - Store password hashes, not plaintext passwords.
 - Support quota, displayed name, enabled flag, protocol enablement, spam settings, forwarding, automatic replies, and change-password-next-login semantics where applicable.
+- Support application passwords/mail-client tokens because OIDC is web/session authentication, not IMAP/SMTP client authentication.
 - Validate email identity fields before database lookup or storage.
 - Deprovision must disable by default, not delete mail data.
 
@@ -324,7 +326,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - Support aliases with one or more destinations.
 - Support alias enable/disable.
 - Support wildcard/catch-all behavior only if explicitly modeled and tested.
-- Support anonymous/random alias generation as an optional feature, not a hidden default.
+- Support anonymous/random alias generation only if it is inside the selected product cutline; otherwise exclude it from the supported deployment shape instead of half-supporting it.
 
 ### 7.7 Relay and transport management
 
@@ -338,7 +340,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - Support global admins.
 - Support domain managers.
 - Support scoped domain access rules.
-- Provide audit logs for admin mutations.
+- Provide audit logs for admin mutations with actor, source path, before/after summary, timestamp, remote address, session/token identity, and OIDC subject where present.
 - Separate human sessions from automation tokens.
 - Support OIDC-backed login for admin and user web sessions.
 - Require Authentik group/role mapping for global admins, domain managers, and scoped domain access.
@@ -391,6 +393,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 
 - Provide stable endpoints for Postfix, Dovecot, Rspamd, fetchmail, auth, and autoconfig.
 - Make lookup behavior testable without running the full mail stack.
+- Provide a daemon lookup debugger that explains Postfix recipient/sender decisions, Dovecot auth/userdb decisions, alias expansion, domain matching, and Rspamd local-domain/DKIM answers.
 - Log lookup failures with enough context to debug without exposing secrets.
 - Use explicit auth/trust boundaries for internal endpoints.
 
@@ -411,6 +414,41 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - The UI must use the same public admin API where practical.
 - Do not hide capabilities in UI-only routes.
 - Support core admin flows: domains, users, aliases, relays, tokens, DNS details, DKIM, managers, and settings.
+
+
+### 7.16 Diagnostics and doctor commands
+
+- `gophermailforge doctor` must check DNS records, exposed ports, TLS certificate state, DKIM presence/validity, database reachability, Authentik reachability, and daemon lookup health.
+- Doctor output must distinguish configuration errors, external DNS/TLS state, daemon reachability, and identity-provider failures.
+- Doctor checks must be safe to run repeatedly and must not mutate production state.
+- Provide focused subcommands for DNS, TLS, DKIM, Authentik, database, Postfix, Dovecot, Rspamd, and generated-config checks.
+- Provide machine-readable output for automation and human-readable output for operators.
+
+### 7.17 Contract-test harness
+
+- Provide a contract-test harness before UI work is considered complete.
+- Cover Postfix maps, Dovecot passdb/userdb, Rspamd local domains and DKIM, SCIM behavior, OIDC token validation, Authentik role mapping, and config rendering.
+- Tests must run without a full mail stack where possible; end-to-end smoke tests cover the integrated stack separately.
+- Contract tests must include failure paths, not just happy-path lookups.
+
+### 7.18 Mail delivery smoke test
+
+- Provide a safe smoke-test command that creates or uses a test domain/user/alias, sends test mail, verifies delivery, verifies IMAP login, and verifies DKIM signing.
+- Smoke tests must clean up or clearly report any test artifacts they create.
+- Smoke tests must fail loudly when mail is accepted but not delivered, delivered without DKIM, or authenticated through the wrong path.
+
+### 7.19 Rollback and reference snapshots
+
+- Store known-good reference snapshots for generated config, migration version, image versions, and selected deployment policy.
+- Provide rollback guidance from the last known-good snapshot.
+- Do not claim rollback is available for destructive data migrations unless the database backup/export exists and has been verified.
+
+### 7.20 Mailu import
+
+- Provide a Mailu import path after the core schema is stable.
+- Import domains, users, aliases, relays, DKIM keys, and compatible tokens where possible.
+- Import must validate data before writing and must produce a report of imported, skipped, incompatible, and manually required items.
+- Import must not silently weaken passwords, DKIM permissions, role mappings, or daemon lookup behavior.
 
 ## 8. Security requirements
 
@@ -434,7 +472,10 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - `gophermailforge config validate` must catch bad config before deployment.
 - `gophermailforge config render --diff` must show generated changes.
 - `gophermailforge migrate` must show pending migrations and apply them explicitly.
-- `gophermailforge doctor` must check DNS, ports, database, daemon reachability, certs, DKIM, and generated files.
+- `gophermailforge doctor` must check DNS, ports, database, daemon reachability, certs, DKIM, generated files, Authentik reachability, and daemon lookup health.
+- `gophermailforge lookup explain` must explain recipient, sender, alias, domain, Dovecot auth/userdb, and Rspamd DKIM/local-domain decisions.
+- `gophermailforge smoke mail` must exercise SMTP submission, delivery, IMAP login, alias delivery, and DKIM signing in a bounded test path.
+- `gophermailforge snapshot` must capture known-good generated config, migration version, image versions, and deployment policy.
 - Support backup/export of control-plane state.
 - Support restore/import with validation.
 - All generated configs should be reproducible from database + typed config.
@@ -482,6 +523,7 @@ Reject:
 - Config parser/validator.
 - Database schema and migrations.
 - Domain, user, alias, relay, token primitives.
+- Application password/mail-client token primitive.
 - CLI: validate, migrate, doctor, render.
 
 ### M2: Internal daemon contract MVP
@@ -489,7 +531,8 @@ Reject:
 - Postfix lookup endpoints.
 - Dovecot passdb/userdb endpoints.
 - Rspamd local-domain/DKIM endpoints.
-- Tests for lookup behavior.
+- Daemon lookup debugger for recipient, sender, alias, domain, Dovecot auth/userdb, and Rspamd DKIM/local-domain answers.
+- Contract tests for lookup behavior and failure paths.
 - Generated config fragments for the reference services.
 
 ### M3: Admin API MVP
@@ -505,7 +548,9 @@ Reject:
 - Generated Docker Compose reference stack.
 - Persistent directory layout.
 - Initial admin bootstrap.
-- End-to-end smoke path: send, receive, authenticate, IMAP login.
+- Config doctor for DNS, ports, TLS, DKIM, database, Authentik, generated config, and daemon lookup health.
+- End-to-end smoke path: SMTP submission, receive, alias delivery, DKIM signing, authenticate, IMAP login.
+- Known-good snapshot capture for generated config, migration version, image versions, and deployment policy.
 
 ### M5: OIDC MVP
 
@@ -531,7 +576,15 @@ Reject:
 
 - Admin login/session.
 - Domain/user/alias/token/DNS/DKIM screens.
+- Doctor/diagnostic result views.
+- Audit log views.
 - UI backed by API, not hidden side routes.
+
+### M8: Mailu import MVP
+
+- Import domains, users, aliases, relays, DKIM keys, and compatible tokens where possible.
+- Produce imported/skipped/incompatible/manual-action report.
+- Verify imported data through daemon contract tests before calling the import successful.
 
 ## 12. Success metrics
 
@@ -542,13 +595,19 @@ Reject:
 - Authentik deployment/configuration works as an adjacent required service, not an embedded control-plane dependency.
 - Authentik group/role mapping assigns global admin, domain manager, and scoped domain access without local manual edits.
 - SCIM provisioning can create, update, disable, and list users through an identity provider.
+- Generated DNS guidance covers MX, SPF, DKIM, DMARC, DMARC report records, SRV/autoconfig/autodiscover, and TLSA where applicable.
+- Doctor identifies DNS, TLS, DKIM, database, Authentik, generated-config, and daemon lookup failures without mutating state.
+- Daemon lookup debugger explains Postfix, Dovecot, Rspamd, alias, and domain decisions.
+- Application passwords/mail-client tokens allow mail clients to authenticate without pretending OIDC is an IMAP/SMTP protocol.
 - Generated config is reproducible and inspectable.
+- Known-good snapshots exist for generated config, migration version, image versions, and deployment policy.
 - Core behavior is covered by unit/contract tests without requiring the full stack.
 - End-to-end smoke tests prove SMTP submission, SMTP receive, IMAP login, alias delivery, DKIM signing, and spam/local-domain behavior.
+- Mailu import can move supported state without silent data loss or behavior weakening.
 
 ## 13. Risks and hard problems
 
-- Mail delivery failures are often config-generation failures disguised as daemon problems.
+- Mail delivery failures are often config-generation failures disguised as daemon problems; doctor and lookup explain commands are mandatory, not nice-to-have tools.
 - Dovecot/Postfix lookup semantics must be exact; vague compatibility will break mail flow.
 - DKIM key handling crosses database and filesystem state; sloppy ownership will create security and backup problems.
 - Supporting SQLite and PostgreSQL can create lowest-common-denominator schema garbage if not constrained.
@@ -556,7 +615,8 @@ Reject:
 - Bundling Authentik too tightly would turn identity outages/upgrades into mail-server outages. It is required for identity flows, but the boundary must stay clean.
 - SCIM looks small but punishes weak validation.
 - Compose generation can become a templating swamp unless the config model is kept strict.
-- Web UI work can distract from the real contract: daemon APIs and generated config.
+- Web UI work can distract from the real contract: daemon APIs, generated config, diagnostics, and contract tests.
+- Mailu import can import historical garbage if validation and reporting are weak.
 
 ## 14. Open decisions
 
@@ -572,6 +632,10 @@ Reject:
 10. Which OIDC claim mapping is canonical: email, preferred_username, subject-bound external identity, or an explicit configured claim.
 11. Whether the required Authentik profile should generate configuration artifacts only, run Authentik containers, or support both modes.
 12. Which Authentik groups/roles are canonical for global admin, domain manager, and scoped domain access.
+13. Which webmail service is the default required deployment target.
+14. Which doctor checks are blocking versus warning-only.
+15. What snapshot retention and rollback guarantees are actually supported.
+16. Which Mailu token/password artifacts can be safely imported without weakening authentication.
 
 ## 15. Acceptance criteria for starting architecture
 
