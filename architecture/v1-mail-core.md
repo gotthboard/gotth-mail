@@ -200,4 +200,5 @@ Snapshots are reference points, not rollback guarantees unless paired with verif
 - Let's Encrypt works or fails loudly with doctor output
 - MTA-STS/TLS-RPT generated and checked when enabled
 - smoke test passes including webmail visibility
-- plugin containers pass health/capability checks
+- plugin containers pass authenticated gRPC health/capability checks
+- mail delivery and daemon lookup smoke/contract checks pass with Authentik unavailable or isolated
