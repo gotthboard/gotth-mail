@@ -11,7 +11,7 @@ Mail delivery and daemon lookups must not depend on Authentik availability.
 
 ## Internal daemon API
 
-Internal daemon APIs are core contracts, not plugin seams. They may be HTTP/JSON, gRPC, or daemon-native map protocols, but the implementation must document the wire contract before coding.
+Internal daemon APIs are core contracts, not plugin seams. v1 uses HTTP/JSON internal APIs as the canonical wire contract. Daemon-native map/protocol adapters may be generated or configured, but they must call or preserve the same documented decision semantics.
 
 All daemon API responses include:
 
@@ -70,7 +70,7 @@ Alias response:
 Failure rules:
 
 - disabled domain -> `reject`
-- unknown recipient -> `not_found` or daemon-specific reject mapping
+- unknown recipient -> API returns `not_found`; daemon adapters may map that to the daemon-specific reject behavior configured for Postfix
 - database unavailable -> `defer`
 - malformed daemon request -> `error`
 
@@ -191,7 +191,7 @@ Required first plugins:
 - manual/Let's Encrypt cert plugin
 - local filesystem backup storage plugin
 
-Each plugin must implement v0 `PluginControl` plus its seam-specific service. All plugin health/capability calls must authenticate with service identity credentials.
+Each plugin must implement v0 `PluginControl` plus its seam-specific service. All plugin health/version/capability calls must authenticate with service identity credentials.
 
 Plugin failure behavior:
 
@@ -311,7 +311,7 @@ Required tests:
 - DNS readiness exact missing/mismatched record reporting
 - ACME success or loud/actionable failure in reference deployment
 - MTA-STS/TLS-RPT generation and doctor checks
-- authenticated plugin health/capability checks for v1 plugins
+- authenticated plugin health/version/capability checks for v1 plugins
 - smoke test including webmail visibility
 - mail delivery and daemon lookup tests with Authentik unavailable/isolated
 - `git diff --check`
