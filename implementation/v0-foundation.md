@@ -147,11 +147,13 @@ Never store plaintext token/app-password values.
 - `endpoint` text not null
 - `service_identity_token_id` uuid references `tokens(id)`
 - `enabled` boolean not null default true
+
+Enabled plugin registrations require a non-null `service_identity_token_id` whose token kind is `plugin_service`.
 - `created_at`, `updated_at`
 
 ## Typed config
 
-Initial config file format: YAML or TOML, chosen once before implementation. The parser must reject unknown top-level sections unless a section is explicitly marked experimental.
+Initial config file format: YAML. The parser must reject unknown top-level sections unless a section is explicitly marked experimental.
 
 Required sections:
 
@@ -339,6 +341,7 @@ Required tests:
 - diff/apply emits audit event
 - redaction tests for audit writer
 - authorization explain tests for local admin, break-glass, API token, plugin service
+- enabled plugin registration without `plugin_service` credentials is rejected
 - plugin health/version/capability authenticated success
 - unauthenticated plugin gRPC rejection
 - plugin failure cannot corrupt core state
