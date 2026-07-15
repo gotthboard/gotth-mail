@@ -70,6 +70,7 @@ Requirements:
 - Create/revoke/list app passwords.
 - Scoped use where practical.
 - Dovecot integration.
+- Store app-password/mail-client token secrets hashed or otherwise verifier-only; never plaintext.
 - Audit events for create/revoke/use metadata.
 - Never expose token values after creation.
 - OIDC is not IMAP/SMTP auth; mail clients need app passwords or compatible credentials.
@@ -104,5 +105,5 @@ Requirements:
 - Permission simulator explains allow/deny results for identity-backed actors.
 - SCIM provisioning can create, update, list, disable, and patch users through Authentik-compatible flows.
 - SCIM failure paths are tested.
-- App passwords/mail-client tokens work for Dovecot auth.
+- App passwords/mail-client tokens work for Dovecot auth and are stored hashed or verifier-only, never plaintext.
 - Every identity/provisioning mutation is audited.
