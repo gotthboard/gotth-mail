@@ -66,7 +66,7 @@ v3 turns the working mail system into an operationally serious system: audit vis
 ### v3.6 Admin UI polish
 
 - Complete workflows.
-- Bulk operations only where safe.
+- Bulk operations only with dry-run/preview, explicit confirmation, per-item result reporting, and per-item or grouped audit entries.
 - Better diagnostics display.
 - Config diff viewer.
 - Mail flow trace UI.
@@ -78,6 +78,7 @@ v3 turns the working mail system into an operationally serious system: audit vis
 - No custom webmail.
 - No broad plugin ecosystem.
 - No hidden destructive bulk operations.
+- No bulk mutation without preview, explicit confirmation, result reporting, and audit coverage.
 - No import that silently weakens passwords, DKIM permissions, role mappings, or daemon lookup behavior.
 
 ## Acceptance criteria
@@ -88,3 +89,4 @@ v3 turns the working mail system into an operationally serious system: audit vis
 - Mailu import can move supported state without silent data loss or behavior weakening.
 - Abuse/rate-limit dashboard exposes operationally useful signals.
 - Admin UI covers the common operational workflows without bypassing API/service/audit paths.
+- Bulk operations prove preview, explicit confirmation, per-item result reporting, and audit coverage.
