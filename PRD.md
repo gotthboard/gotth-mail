@@ -4,7 +4,7 @@
 
 GopherMailForge is a Go-based mail-server control plane and deployment system that uses Mailu as the reference architecture and executable behavioral specification, while deliberately avoiding a line-for-line rewrite of Mailu's Python admin application.
 
-The product should run a complete self-hosted mail stack using proven mail daemons and container boundaries:
+The product must run as a Docker/Compose-deployed system using proven mail daemons and strict container boundaries. GopherMailForge itself is a containerized control plane; plugin implementations are separate containers communicating with the control plane over gRPC:
 
 - SMTP ingress/proxy: nginx-style front service
 - SMTP delivery/submission: Postfix
@@ -12,7 +12,8 @@ The product should run a complete self-hosted mail stack using proven mail daemo
 - spam/DKIM/filtering: Rspamd
 - webmail: required webmail service selected by deployment policy
 - identity provider: required Authentik service/profile, never embedded in the mail server
-- control plane: GopherMailForge, written in Go
+- control plane: GopherMailForge, written in Go and shipped as a Docker container
+- plugins: separate Docker containers communicating with the control plane over gRPC
 - persistence: explicit relational schema and migrations
 - generated configuration: typed, reproducible, inspectable daemon config
 
@@ -99,7 +100,7 @@ GopherMailForge will not initially:
 - support arbitrary daemon topology before the Compose reference path works
 - import Mailu's Python code or templates mechanically
 
-If there is one deployment target at first, it is Docker/Compose. Generalizing before that works is fake abstraction.
+The first supported deployment target is Docker/Compose. GopherMailForge and all plugin implementations must run as containers. Generalizing before that works is fake abstraction.
 
 ## 5. Reference system: Mailu inventory
 
@@ -278,6 +279,9 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 
 - Provide a CLI for bootstrap, config validation, migration, and diagnostics.
 - Generate Docker Compose files for the reference deployment.
+- Run the GopherMailForge control plane as a Docker container.
+- Run plugin implementations as separate Docker containers, not in-process loaded modules.
+- Communicate with plugin containers through gRPC over the internal deployment network.
 - Generate the required Compose profile/services for Authentik integration while keeping Authentik outside the GopherMailForge binary.
 - Generate daemon configuration from typed state.
 - Support explicit persistent paths for data, mail, certs, DKIM keys, overrides, database, and queue/runtime state.
@@ -465,6 +469,8 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 ## 8. Security requirements
 
 - No unauthenticated admin API.
+- No unauthenticated plugin gRPC calls.
+- Plugin containers must use least-privilege network, filesystem, and secret access.
 - OIDC must validate issuer metadata, signatures, subject, audience, authorized party, expiry, issued-at, and not-before claims before session creation.
 - OIDC client secrets must be stored as secrets, not ordinary generated config.
 - Authentik integration must not weaken local recovery access, daemon authentication, or mail delivery availability.
@@ -497,7 +503,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 
 ## 10. Plugin boundaries
 
-Pluggability is allowed only at narrow mechanism seams. The control plane must not become a plugin swamp before the mail server works.
+Pluggability is allowed only at narrow mechanism seams. The control plane must not become a plugin swamp before the mail server works. Plugin implementations must be separate Docker containers and communicate with the GopherMailForge control plane over gRPC; in-process plugins are not part of the supported architecture.
 
 ### 10.1 Pluggable seams
 
@@ -553,7 +559,17 @@ The following are the spine of the product and must not be made pluggable during
 
 Making these pluggable early is architecture cosplay. These surfaces define trust, state, compatibility, and diagnosability. They stay core until the mechanism is proven and the cost of abstraction is justified.
 
-### 10.3 Plugin rule
+### 10.3 Plugin runtime contract
+
+- Plugins run as separate Docker containers.
+- Plugins communicate with the GopherMailForge control plane over gRPC on the internal deployment network.
+- Plugin APIs must be explicit protobuf contracts with versioned service definitions.
+- Plugin containers must authenticate to the control plane with service identity credentials generated or admitted by core.
+- Plugin calls must have deadlines, structured errors, health checks, and observable request IDs.
+- Plugin containers must not receive broad filesystem or Docker socket access.
+- Plugin failure must degrade the specific mechanism it implements without corrupting core state.
+
+### 10.4 Plugin rule
 
 Core owns policy. Plugins provide mechanisms.
 
@@ -564,7 +580,7 @@ Examples:
 - A notification plugin may deliver an approval prompt.
 - Core decides whether the actor is authorized, whether confirmation is valid, whether the action mutates state, and what audit event is written.
 
-No plugin may bypass validation, authorization, confirmation, audit logging, redaction rules, or generated-config apply gates.
+No plugin may bypass validation, authorization, confirmation, audit logging, redaction rules, generated-config apply gates, service identity checks, or gRPC contract boundaries.
 
 ## 11. Compatibility strategy
 
@@ -611,7 +627,9 @@ Reject:
 - Application password/mail-client token primitive.
 - CLI: validate, migrate, doctor, render.
 - Define plugin seam interfaces only: webmail provider, DNS provider, ACME/certificate backend, backup storage backend, notification backend, and import source.
+- Define protobuf/gRPC contracts for plugin containers, including health, version, capability, and mechanism-specific RPCs.
 - Prove plugin boundary enforcement: plugins provide mechanisms; core owns policy, validation, authorization, confirmation, mutation, and audit.
+- Prove plugin container isolation: no in-process plugin loading, no broad filesystem mounts, no Docker socket access, and no unauthenticated gRPC calls.
 
 ### M2: Internal daemon contract MVP
 
@@ -633,6 +651,8 @@ Reject:
 ### M4: Compose deployment MVP
 
 - Generated Docker Compose reference stack.
+- GopherMailForge control-plane container.
+- Plugin container wiring on the internal Compose network with gRPC service discovery and health checks.
 - Persistent directory layout.
 - Initial admin bootstrap.
 - Webmail provider seam first implementation for the selected required webmail target.
@@ -695,8 +715,8 @@ Reject:
 
 ### Plugin seam rollout summary
 
-- M1 defines all plugin interfaces and enforcement rules without building a plugin zoo.
-- M4 ships the first webmail, DNS, ACME/certificate, and backup storage implementations required for a working deployment.
+- M1 defines all plugin interfaces, protobuf/gRPC contracts, service identity checks, and enforcement rules without building a plugin zoo.
+- M4 ships the first webmail, DNS, ACME/certificate, and backup storage plugin containers required for a working deployment.
 - M7 exposes plugin configuration/status in the admin UI without letting UI bypass core policy.
 - M8 ships the first import source implementation: Mailu.
 - M9 ships the first notification backend implementation: Telegram.
@@ -731,6 +751,7 @@ Reject:
 - Bundling Authentik too tightly would turn identity outages/upgrades into mail-server outages. It is required for identity flows, but the boundary must stay clean.
 - SCIM looks small but punishes weak validation.
 - Compose generation can become a templating swamp unless the config model is kept strict.
+- Plugin containers can become a distributed mess if gRPC contracts, deadlines, health checks, service identity, and failure behavior are not strict from the start.
 - Web UI work can distract from the real contract: daemon APIs, generated config, diagnostics, and contract tests.
 - Mailu import can import historical garbage if validation and reporting are weak.
 - Telegram can become an unaudited remote-control backdoor if actor mapping, confirmations, and policy checks are not centralized in the control plane.
@@ -755,6 +776,7 @@ Reject:
 16. Which Mailu token/password artifacts can be safely imported without weakening authentication.
 17. Which Telegram actions remain notification-only, which are read-only commands, and which may become approval workflows.
 18. Which Telegram identity mapping is canonical: configured chat IDs, linked user accounts, Authentik identities, or a combination.
+19. Which gRPC transport security model is canonical for plugin containers: mTLS, signed service tokens, or both.
 
 ## 16. Acceptance criteria for starting architecture
 
