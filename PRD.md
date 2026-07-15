@@ -494,9 +494,81 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - All generated configs should be reproducible from database + typed config.
 - Every daemon-facing lookup should be observable.
 
-## 10. Compatibility strategy
 
-### 10.1 Mailu compatibility to preserve
+## 10. Plugin boundaries
+
+Pluggability is allowed only at narrow mechanism seams. The control plane must not become a plugin swamp before the mail server works.
+
+### 10.1 Pluggable seams
+
+1. Webmail provider
+   - Roundcube
+   - SnappyMail
+   - future custom GopherMailForge webmail
+   - Webmail is a mail client; the provider seam must not own mailbox/domain policy.
+
+2. DNS provider integration
+   - Cloudflare
+   - Route53
+   - manual/export-only
+   - RFC2136 where practical
+   - DNS providers may create or verify records; core decides which records are required, safe, audited, and allowed.
+
+3. ACME/certificate backend
+   - Let's Encrypt
+   - manual certificates
+   - internal/dev certificates
+   - Interface must stay small: issue, renew, inspect. Production must not silently fall back to self-signed certificates.
+
+4. Backup storage backend
+   - local filesystem
+   - S3-compatible storage
+   - restic/borg wrapper where justified
+   - Backup verification remains core behavior, not a storage-plugin promise.
+
+5. Notification backend
+   - Telegram as the first required implementation
+   - email
+   - webhook
+   - Slack/Discord/etc later
+   - Notification backends may deliver alerts and approval prompts; they must not own authorization, mutation, confirmation, or audit.
+
+6. Import source
+   - Mailu first
+   - Docker-mailserver later if justified
+   - raw Postfix/Dovecot config later if justified
+   - Import plugins may parse source systems; core validates and decides what may enter GopherMailForge state.
+
+### 10.2 Not pluggable early
+
+The following are the spine of the product and must not be made pluggable during the early architecture:
+
+- Postfix/Dovecot/Rspamd contracts
+- audit logging
+- permission model
+- Authentik role mapping
+- config rendering core
+- database/migration layer
+- daemon lookup debugger
+
+Making these pluggable early is architecture cosplay. These surfaces define trust, state, compatibility, and diagnosability. They stay core until the mechanism is proven and the cost of abstraction is justified.
+
+### 10.3 Plugin rule
+
+Core owns policy. Plugins provide mechanisms.
+
+Examples:
+
+- A DNS plugin may say, "Cloudflare can create this DNS record."
+- Core decides whether that record is required, safe, audited, and allowed.
+- A notification plugin may deliver an approval prompt.
+- Core decides whether the actor is authorized, whether confirmation is valid, whether the action mutates state, and what audit event is written.
+
+No plugin may bypass validation, authorization, confirmation, audit logging, redaction rules, or generated-config apply gates.
+
+## 11. Compatibility strategy
+
+### 11.1 Mailu compatibility to preserve
 
 Preserve where valuable:
 
@@ -510,7 +582,7 @@ Preserve where valuable:
 - REST API coverage in spirit, not necessarily exact broken edge behavior
 - internal daemon lookup semantics needed by Postfix/Dovecot/Rspamd
 
-### 10.2 Mailu compatibility to reject
+### 11.2 Mailu compatibility to reject
 
 Reject:
 
@@ -521,7 +593,7 @@ Reject:
 - implicit ORM behavior as a contract
 - accidental historical route shapes when a cleaner versioned API is available
 
-## 11. Milestones
+## 12. Milestones
 
 ### M0: Reference inventory
 
@@ -607,7 +679,7 @@ Reject:
 - Telegram actor-to-identity mapping.
 - Audit coverage for every Telegram-triggered action.
 
-## 12. Success metrics
+## 13. Success metrics
 
 - A fresh operator can bootstrap a working Compose mail stack from typed config.
 - Postfix, Dovecot, and Rspamd can run against GopherMailForge internal APIs without Mailu's Python admin service.
@@ -627,7 +699,7 @@ Reject:
 - Mailu import can move supported state without silent data loss or behavior weakening.
 - Telegram can deliver operational alerts and read-only status without bypassing core policy, authorization, or audit boundaries.
 
-## 13. Risks and hard problems
+## 14. Risks and hard problems
 
 - Mail delivery failures are often config-generation failures disguised as daemon problems; doctor and lookup explain commands are mandatory, not nice-to-have tools.
 - Dovecot/Postfix lookup semantics must be exact; vague compatibility will break mail flow.
@@ -641,7 +713,7 @@ Reject:
 - Mailu import can import historical garbage if validation and reporting are weak.
 - Telegram can become an unaudited remote-control backdoor if actor mapping, confirmations, and policy checks are not centralized in the control plane.
 
-## 14. Open decisions
+## 15. Open decisions
 
 1. Database policy: PostgreSQL-first, SQLite dev-only, or true dual support?
 2. Config file format: YAML, TOML, or both?
@@ -662,7 +734,7 @@ Reject:
 17. Which Telegram actions remain notification-only, which are read-only commands, and which may become approval workflows.
 18. Which Telegram identity mapping is canonical: configured chat IDs, linked user accounts, Authentik identities, or a combination.
 
-## 15. Acceptance criteria for starting architecture
+## 16. Acceptance criteria for starting architecture
 
 Architecture work may begin when this PRD has been followed by:
 
