@@ -451,9 +451,9 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - Import must not silently weaken passwords, DKIM permissions, role mappings, or daemon lookup behavior.
 
 
-### 7.21 Telegram operator interface
+### 7.21 Version 5 notifications and operator messaging
 
-- Provide Telegram as an operator interface after the core admin/control plane is stable.
+- Provide a version 5 notifications/operator-messaging layer after the core admin/control plane is stable, with Telegram as the first required channel.
 - Telegram notifications must cover doctor failures, certificate renewal failures, backup verification failures, queue/deferred-mail alerts, abuse/rate-limit alerts, and other high-priority operational events.
 - Telegram commands must start read-only: doctor summary, queue summary, domain health summary, backup status, and deployment status.
 - Telegram approval workflows may later approve bounded actions such as config apply, DKIM rotation, queue flush/retry, rollback, and emergency/break-glass use.
@@ -599,9 +599,9 @@ Reject:
 - Produce imported/skipped/incompatible/manual-action report.
 - Verify imported data through daemon contract tests before calling the import successful.
 
-### M9 / v5: Telegram operator interface MVP
+### M9: Version 5 notifications MVP
 
-- Telegram notification backend for high-priority operational alerts.
+- Notifications backend for high-priority operational alerts, with Telegram as the first required channel.
 - Read-only Telegram commands for doctor summary, queue summary, domain health, backup status, and deployment status.
 - Telegram approval workflow for bounded high-risk actions after authorization/policy/audit paths are proven.
 - Telegram actor-to-identity mapping.
