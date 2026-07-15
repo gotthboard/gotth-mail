@@ -2,7 +2,7 @@
 
 ## Goal
 
-v4 may build a custom GopherMailForge webmail client after the control plane, daemon contracts, identity, operations, and import workflows are solid. Until then, the product requires a supported external webmail provider.
+If the v4 cutline is explicitly accepted, v4 builds a custom GopherMailForge webmail client after the control plane, daemon contracts, identity, operations, and import workflows are solid. Until then, the product requires a supported external webmail provider.
 
 Custom webmail must not block the control-plane product.
 
@@ -10,9 +10,9 @@ Custom webmail must not block the control-plane product.
 
 ### v4.1 Webmail provider evolution
 
-- Custom GopherMailForge webmail may become a webmail provider implementation.
+- Custom GopherMailForge webmail becomes a webmail provider implementation for the accepted v4 scope.
 - It remains separate from core mail policy.
-- It may be deployed as a containerized service/plugin.
+- It is deployed as a containerized service/plugin.
 - It must use the same auth/audit/service boundaries where it mutates state.
 
 ### v4.2 IMAP client core
@@ -61,8 +61,11 @@ Custom webmail must not block the control-plane product.
 
 - External webmail remains usable until custom webmail is production-ready.
 - Custom webmail can read folders/messages through IMAP safely.
-- Custom webmail can compose and submit messages.
-- HTML email rendering is XSS-hardened.
+- Custom webmail can compose, save drafts, and submit messages.
+- Search works across the supported mailbox scope declared for v4.
+- Identities/signatures work for compose/send flows.
+- HTML email rendering is XSS-hardened with CSP and no unsafe HTML bypass.
+- Remote image policy is enforced.
 - Attachments are handled safely.
 - Mobile/basic workflows are usable.
 - Webmail UI does not bypass core authorization/audit paths for control-plane actions.
