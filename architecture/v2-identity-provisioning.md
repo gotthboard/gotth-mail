@@ -93,6 +93,8 @@ Validation rejects:
 
 SCIM DELETE disables mailbox by default. It does not delete mail data.
 
+Authentik is the expected first SCIM client. Authentik calls the GopherMailForge SCIM endpoint; GopherMailForge validates requests, enforces domain policy, writes canonical mailbox state, and audits provisioning mutations. Authentik does not write directly to the database or daemon config.
+
 ## App-password architecture
 
 App passwords/mail-client tokens:
@@ -129,5 +131,6 @@ Plugin service identity proves the plugin is admitted; it does not grant user/ad
 - Authentik mappings assign global admin/domain manager/scoped access
 - permission simulator explains identity-backed decisions
 - SCIM success and failure paths tested
+- Authentik-compatible SCIM provisioning path verified without bypassing GopherMailForge validation/state admission
 - app passwords work for Dovecot auth and are verifier-only/hashed
 - every identity/provisioning mutation audited
