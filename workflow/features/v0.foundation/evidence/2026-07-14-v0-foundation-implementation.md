@@ -24,7 +24,7 @@ Implemented artifacts:
 - Diff/apply gate requiring explicit staged ID confirmation.
 - Audit writer with recursive redaction.
 - Static v0 authorization simulator for local admin, break-glass, API token, plugin service, and placeholder identity actors.
-- Initial schema/migration representation, empty-schema migration runner, and SQLite-backed SQL migration execution tests.
+- Initial schema/migration representation, empty-schema migration runner, and embedded Postgres SQL migration execution tests.
 - Plugin registry/control skeleton with authenticated health/version/capability checks, failure isolation behavior, and gRPC bufconn transport tests.
 - Protobuf contract file for `PluginControl` health/version/capability RPCs.
 - Dockerfile and reference Compose skeleton including database and required Authentik service/profile.
@@ -71,7 +71,7 @@ Relevant v0 behavior has tests for:
 - audit redaction
 - authz allow/deny explanations
 - Authentik config validation and bootstrap availability during Authentik outage
-- empty migration run plus SQLite-backed schema execution, migration-history count, unique constraint, and foreign-key rejection
+- empty migration run plus embedded Postgres schema execution, migration-history count, unique constraint, and foreign-key rejection
 - domain/token/plugin registration validation helpers
 - authenticated plugin control success through local and gRPC bufconn paths
 - unauthenticated plugin rejection through local and gRPC bufconn paths
