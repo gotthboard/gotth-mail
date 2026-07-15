@@ -27,8 +27,9 @@ Backup verification flow:
 3. run schema check
 4. run daemon contract tests against restored data
 5. mark backup verified only after validation passes
+6. emit actionable failure report when any step fails
 
-Storage mechanism is plugin-backed. Verification and verified status are core-owned.
+Storage mechanism is plugin-backed. Verification, failure reporting, and verified status are core-owned.
 
 ## Snapshot/rollback architecture
 
@@ -102,13 +103,17 @@ Adds:
 - mail flow trace UI
 - permission simulator UI
 - generated-config/plugin-backed status surfaces
-- bulk operations only with dry-run/preview, explicit confirmation, per-item result reporting, and audit coverage
+- better diagnostics display
+- bulk operations only with dry-run/preview, explicit confirmation, per-item result reporting, and per-item or grouped audit entries
+
+Mature admin workflows call the same API/service/auth/audit paths as every other mutation surface. UI polish must not create a second mutation path.
 
 ## Verification gates
 
 - audit UI answers who changed what, when, through which path, and result
-- backup verification restores into isolated environment and proves schema/contract validity
+- backup verification restores into isolated environment, proves schema/contract validity, and reports actionable failures
 - snapshot UI shows config/migration/image/plugin/deployment state
 - Mailu import moves supported state without silent weakening
 - abuse/rate-limit dashboard exposes useful signals
-- bulk operations prove preview, confirmation, result reporting, and audit coverage
+- admin workflows do not bypass API/service/auth/audit paths
+- bulk operations prove preview, confirmation, per-item result reporting, and per-item or grouped audit entries
