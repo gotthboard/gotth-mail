@@ -451,9 +451,9 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - Import must not silently weaken passwords, DKIM permissions, role mappings, or daemon lookup behavior.
 
 
-### 7.21 Version 5 notifications and operator messaging
+### 7.21 Notification backend and operator messaging
 
-- Provide a version 5 notifications/operator-messaging layer after the core admin/control plane is stable, with Telegram as the first required channel.
+- Provide a notification backend/operator-messaging layer after the core admin/control plane is stable, with Telegram as the first required channel.
 - Telegram notifications must cover doctor failures, certificate renewal failures, backup verification failures, queue/deferred-mail alerts, abuse/rate-limit alerts, and other high-priority operational events.
 - Telegram commands must start read-only: doctor summary, queue summary, domain health summary, backup status, and deployment status.
 - Telegram approval workflows may later approve bounded actions such as config apply, DKIM rotation, queue flush/retry, rollback, and emergency/break-glass use.
@@ -610,6 +610,8 @@ Reject:
 - Domain, user, alias, relay, token primitives.
 - Application password/mail-client token primitive.
 - CLI: validate, migrate, doctor, render.
+- Define plugin seam interfaces only: webmail provider, DNS provider, ACME/certificate backend, backup storage backend, notification backend, and import source.
+- Prove plugin boundary enforcement: plugins provide mechanisms; core owns policy, validation, authorization, confirmation, mutation, and audit.
 
 ### M2: Internal daemon contract MVP
 
@@ -633,6 +635,10 @@ Reject:
 - Generated Docker Compose reference stack.
 - Persistent directory layout.
 - Initial admin bootstrap.
+- Webmail provider seam first implementation for the selected required webmail target.
+- DNS provider seam first implementation: manual/export-only record guidance plus provider capability shape.
+- ACME/certificate backend seam first implementations: manual certificates and Let's Encrypt issuance/renewal path.
+- Backup storage backend seam first implementation: local filesystem snapshot storage with verification owned by core.
 - Config doctor for DNS, ports, TLS, DKIM, database, Authentik, generated config, and daemon lookup health.
 - End-to-end smoke path: SMTP submission, receive, alias delivery, DKIM signing, authenticate, IMAP login.
 - Known-good snapshot capture for generated config, migration version, image versions, and deployment policy.
@@ -661,23 +667,39 @@ Reject:
 
 - Admin login/session.
 - Domain/user/alias/token/DNS/DKIM screens.
+- Webmail provider status/config surface for the selected provider.
+- DNS provider status/config surface for configured provider integrations.
+- ACME/certificate backend status/config surface.
+- Backup storage backend status/config surface.
 - Doctor/diagnostic result views.
 - Audit log views.
 - UI backed by API, not hidden side routes.
 
-### M8: Mailu import MVP
+### M8: Import source MVP
 
+- Import source plugin seam first implementation: Mailu.
 - Import domains, users, aliases, relays, DKIM keys, and compatible tokens where possible.
 - Produce imported/skipped/incompatible/manual-action report.
 - Verify imported data through daemon contract tests before calling the import successful.
+- Keep import parsing pluggable, but keep validation and state admission in core.
 
-### M9: Version 5 notifications MVP
+### M9: Notification backend MVP
 
-- Notifications backend for high-priority operational alerts, with Telegram as the first required channel.
+- Notification backend plugin seam first implementation: Telegram.
+- Additional notification backend targets may include email and webhook after Telegram proves the seam.
 - Read-only Telegram commands for doctor summary, queue summary, domain health, backup status, and deployment status.
 - Telegram approval workflow for bounded high-risk actions after authorization/policy/audit paths are proven.
 - Telegram actor-to-identity mapping.
 - Audit coverage for every Telegram-triggered action.
+- Keep notification delivery pluggable, but keep authorization, confirmation, mutation, and audit in core.
+
+### Plugin seam rollout summary
+
+- M1 defines all plugin interfaces and enforcement rules without building a plugin zoo.
+- M4 ships the first webmail, DNS, ACME/certificate, and backup storage implementations required for a working deployment.
+- M7 exposes plugin configuration/status in the admin UI without letting UI bypass core policy.
+- M8 ships the first import source implementation: Mailu.
+- M9 ships the first notification backend implementation: Telegram.
 
 ## 13. Success metrics
 
