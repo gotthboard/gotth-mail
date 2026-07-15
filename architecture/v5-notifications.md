@@ -34,6 +34,8 @@ Telegram receives high-priority operational alerts for:
 
 No alert includes secrets, full tokens, private keys, passwords, or unredacted before/after values.
 
+Notification delivery failures are recorded in core status. A failed Telegram delivery must be visible to operators without granting the Telegram plugin authority over state.
+
 ## Read-only command architecture
 
 Read-only Telegram commands:
@@ -86,12 +88,21 @@ After Telegram proves the seam:
 
 These remain notification backends, not authorities.
 
+## Non-goals
+
+- no Telegram-as-authority
+- no unaudited bot commands
+- no broad remote shell over chat
+- no notification plugin bypassing core policy
+
 ## Verification gates
 
 - Telegram plugin runs as separate Docker container
 - plugin communicates over gRPC/protobuf
-- plugin passes health/version/capability checks
+- plugin passes authenticated health/version/capability checks
 - alerts deliver without exposing secrets
+- notification delivery failures are visible in core status
 - read-only commands return bounded summaries
 - every Telegram request maps to identity and audit event
+- approval workflows use core authorization/confirmation/mutation/audit paths
 - approval workflows reject stale/replayed/mismatched/expired approvals
