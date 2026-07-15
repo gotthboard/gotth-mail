@@ -84,3 +84,4 @@ HTML email is hostile input. Treat it as data, not UI code.
 - remote image policy enforced
 - attachments handled safely
 - mobile/basic workflows usable
+- webmail control-plane actions route through core service/auth/audit paths without bypass
