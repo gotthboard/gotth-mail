@@ -84,7 +84,7 @@ Build operational maturity: audit UI, backup/restore verification, snapshot/roll
 
 ### v4 — Custom Webmail
 
-Only after the control plane is solid, optionally build custom GOTTH webmail: IMAP core, MIME-safe message rendering, compose/send, attachments, drafts, search, identities/signatures, sieve/rules, mobile UI, and XSS hardening.
+Only after the control plane is solid and the v4 cutline is explicitly accepted, build custom GOTTH webmail: IMAP core, MIME-safe message rendering, compose/send, attachments, drafts, search, identities/signatures, sieve/rules, mobile UI, and XSS hardening.
 
 ### v5 — Notifications
 
