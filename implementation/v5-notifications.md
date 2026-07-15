@@ -112,6 +112,7 @@ Prompt record fields:
 - `resource_type`
 - `resource_id`
 - `preview_hash` or request hash where applicable
+- `confirmation_binding_hash`
 - `expires_at`
 - `used_at`
 - `status`: `pending`, `approved`, `rejected`, `expired`, `mismatch`
@@ -119,8 +120,10 @@ Prompt record fields:
 Flow:
 
 ```text
-create prompt -> deliver prompt -> receive response -> authenticate Telegram actor -> map identity -> verify single-use binding -> authorize action -> validate confirmation -> perform mutation -> audit result
+create prompt with one-time binding nonce -> deliver prompt -> receive response -> authenticate Telegram actor -> map identity -> verify single-use binding -> authorize action -> validate confirmation -> perform mutation -> audit result
 ```
+
+The prompt displays or carries only the one-time binding nonce needed for the operator response. Core stores only `confirmation_binding_hash`; responses that do not prove the binding are rejected before authorization or mutation.
 
 Rejection cases:
 
@@ -158,7 +161,7 @@ Required tests:
 - read-only commands authenticate actor, map identity, authorize read, audit request, and return bounded summaries
 - chat membership alone does not authorize commands or approvals
 - approval workflows use core authorization/confirmation/mutation/audit paths
-- stale/replayed/mismatched/expired/changed-hash approvals are rejected
+- stale/replayed/mismatched/expired/changed-hash/bad-binding approvals are rejected
 - Telegram plugin never mutates state directly
 - no broad remote shell over chat
 - `git diff --check`
