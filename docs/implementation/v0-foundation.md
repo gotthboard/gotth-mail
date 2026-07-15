@@ -121,7 +121,7 @@ Never store plaintext token/app-password values.
 
 ### `audit_events`
 
-- fields required by [IMPLEMENTATION.md](../IMPLEMENTATION.md#audit-contract)
+- fields required by [IMPLEMENTATION.md](IMPLEMENTATION.md#audit-contract)
 - `before_redacted_json` json/text null
 - `after_redacted_json` json/text null
 - immutable after insert

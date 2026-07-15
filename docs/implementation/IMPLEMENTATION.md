@@ -8,14 +8,14 @@ This is still not code. Implementation may begin only after a version has a PRD,
 
 ## Source documents
 
-- [Product PRD](prd/PRD.md)
-- [Architecture overview](ARCHITECTURE.md)
-- [v0 implementation spec](implementation/v0-foundation.md) — from [PRD-v0-foundation.md](prd/PRD-v0-foundation.md) and [architecture/v0-foundation.md](architecture/v0-foundation.md)
-- [v1 implementation spec](implementation/v1-mail-core.md) — from [PRD-v1-mail-core.md](prd/PRD-v1-mail-core.md) and [architecture/v1-mail-core.md](architecture/v1-mail-core.md)
-- [v2 implementation spec](implementation/v2-identity-provisioning.md) — from [PRD-v2-identity-provisioning.md](prd/PRD-v2-identity-provisioning.md) and [architecture/v2-identity-provisioning.md](architecture/v2-identity-provisioning.md)
-- [v3 implementation spec](implementation/v3-ops-import-admin.md) — from [PRD-v3-ops-import-admin.md](prd/PRD-v3-ops-import-admin.md) and [architecture/v3-ops-import-admin.md](architecture/v3-ops-import-admin.md)
-- [v4 implementation spec](implementation/v4-webmail.md) — from [PRD-v4-webmail.md](prd/PRD-v4-webmail.md) and [architecture/v4-webmail.md](architecture/v4-webmail.md)
-- [v5 implementation spec](implementation/v5-notifications.md) — from [PRD-v5-notifications.md](prd/PRD-v5-notifications.md) and [architecture/v5-notifications.md](architecture/v5-notifications.md)
+- [Product PRD](../prd/PRD.md)
+- [Architecture overview](../architecture/ARCHITECTURE.md)
+- [v0 implementation spec](v0-foundation.md) — from [PRD-v0-foundation.md](../prd/PRD-v0-foundation.md) and [architecture/v0-foundation.md](../architecture/v0-foundation.md)
+- [v1 implementation spec](v1-mail-core.md) — from [PRD-v1-mail-core.md](../prd/PRD-v1-mail-core.md) and [architecture/v1-mail-core.md](../architecture/v1-mail-core.md)
+- [v2 implementation spec](v2-identity-provisioning.md) — from [PRD-v2-identity-provisioning.md](../prd/PRD-v2-identity-provisioning.md) and [architecture/v2-identity-provisioning.md](../architecture/v2-identity-provisioning.md)
+- [v3 implementation spec](v3-ops-import-admin.md) — from [PRD-v3-ops-import-admin.md](../prd/PRD-v3-ops-import-admin.md) and [architecture/v3-ops-import-admin.md](../architecture/v3-ops-import-admin.md)
+- [v4 implementation spec](v4-webmail.md) — from [PRD-v4-webmail.md](../prd/PRD-v4-webmail.md) and [architecture/v4-webmail.md](../architecture/v4-webmail.md)
+- [v5 implementation spec](v5-notifications.md) — from [PRD-v5-notifications.md](../prd/PRD-v5-notifications.md) and [architecture/v5-notifications.md](../architecture/v5-notifications.md)
 
 ## Global implementation rules
 
