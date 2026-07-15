@@ -89,7 +89,8 @@ v0 establishes the containerized control-plane foundation. It must ship a testab
 - Protobuf contract layout.
 - gRPC server/client skeleton.
 - Plugin service identity model.
-- Health/version/capability RPCs.
+- Generated or admitted plugin service credentials.
+- Authenticated health/version/capability RPCs.
 - Deadlines, request IDs, structured errors.
 - No in-process plugin loading.
 - Plugin containers only.
@@ -141,5 +142,7 @@ Core owns policy. Plugins provide mechanisms.
 - Permission simulator can explain simple allow/deny results.
 - Authentik service/profile exists in the deployment topology and has modeled OIDC/SCIM/role-mapping config.
 - Plugin gRPC health/version/capability contracts compile and are testable.
+- Authenticated plugin health/version/capability calls succeed with admitted service credentials.
+- Unauthenticated plugin gRPC calls are rejected.
 - No plugin can run in-process.
 - `git diff --check` and relevant Go tests pass.
