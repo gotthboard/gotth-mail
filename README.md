@@ -9,6 +9,7 @@ This repository is currently in the planning/specification phase. Do not jump st
 - [Product requirements](docs/prd/PRD.md)
 - [Architecture](docs/architecture/ARCHITECTURE.md)
 - [Implementation specifications](docs/implementation/IMPLEMENTATION.md)
+- [Changelog](docs/CHANGELOG.md)
 - [Authentik password hashing compatibility](docs/reference/authentik-password-hashing.md)
 - [Workflow manifest](workflow.toml)
 - [Coverage posture](workflow/COVERAGE.md)
@@ -36,7 +37,7 @@ The intended sequence is:
 6. Tests/verification
 7. Evidence/handoff
 
-Root implementation worktrees are created under `/tmp/gophermailforge-worktrees` and recorded in `workflow.toml`.
+Root implementation worktrees are created under `/tmp/gophermailforge-worktrees` and recorded in `workflow.toml`. Every meaningful repository change must update [docs/CHANGELOG.md](docs/CHANGELOG.md) in the same commit.
 
 ## License
 

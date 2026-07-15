@@ -28,6 +28,12 @@ This is still not code. Implementation may begin only after a version has a PRD,
 - Plugins are separate Docker containers using gRPC/protobuf.
 - The control plane remains the sole authority for policy, validation, state admission, mutation, and audit.
 
+### Change history
+
+Every meaningful repository change must update [docs/CHANGELOG.md](../CHANGELOG.md) in the same commit. This includes product docs, architecture, implementation specs, workflow state, source code, tests, deployment behavior, security posture, and user-visible behavior.
+
+The changelog does not replace workflow evidence, test results, or handoff notes. It is the compact chronological index of what changed.
+
 ### Repository layout
 
 Initial source layout should be:

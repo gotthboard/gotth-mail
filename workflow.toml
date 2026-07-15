@@ -4,6 +4,7 @@ profile = "medium"
 active_feature = "v0.foundation"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
+changelog = "docs/CHANGELOG.md"
 
 [repository]
 main_branch = "main"
@@ -18,7 +19,7 @@ default_commands = [
   "git diff --check",
   "go test ./..."
 ]
-notes = "Docs-only features use git diff --check and traceability checks until code exists. Implementation features must add relevant Go/unit/contract/integration tests before done."
+notes = "Docs-only features use git diff --check, changelog update, and traceability checks until code exists. Implementation features must update the changelog and add relevant Go/unit/contract/integration tests before done."
 
 [[root_features]]
 id = "v0.foundation"
