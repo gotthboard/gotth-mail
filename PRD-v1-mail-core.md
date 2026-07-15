@@ -146,6 +146,7 @@ Each plugin container must:
 - Generated config can be rendered, diffed, applied, and audited.
 - DNS readiness reports exact missing/mismatched records.
 - Let’s Encrypt issuance/renewal works in the reference deployment or fails loudly with actionable doctor output.
+- MTA-STS policy serving and TLS-RPT guidance are generated and doctor-checked when enabled.
 - Smoke test proves SMTP submission, receive, alias delivery, IMAP login, DKIM signing, and delivered smoke mail visibility through the selected webmail provider.
 - Plugin containers are wired through Compose and pass gRPC health/capability checks.
 - Mail delivery and daemon lookups do not depend on Authentik availability.
