@@ -450,6 +450,18 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - Import must validate data before writing and must produce a report of imported, skipped, incompatible, and manually required items.
 - Import must not silently weaken passwords, DKIM permissions, role mappings, or daemon lookup behavior.
 
+
+### 7.21 Telegram operator interface
+
+- Provide Telegram as an operator interface after the core admin/control plane is stable.
+- Telegram notifications must cover doctor failures, certificate renewal failures, backup verification failures, queue/deferred-mail alerts, abuse/rate-limit alerts, and other high-priority operational events.
+- Telegram commands must start read-only: doctor summary, queue summary, domain health summary, backup status, and deployment status.
+- Telegram approval workflows may later approve bounded actions such as config apply, DKIM rotation, queue flush/retry, rollback, and emergency/break-glass use.
+- Every Telegram-triggered action must pass through the same core authorization, policy, validation, and audit paths as UI/API/CLI actions.
+- Telegram actors must be mapped to configured identities; raw chat membership is not authorization.
+- Telegram messages must never include secrets, full tokens, private keys, passwords, or unredacted before/after values.
+- Telegram is not the authority. The control plane owns policy, permissions, state transitions, and audit.
+
 ## 8. Security requirements
 
 - No unauthenticated admin API.
@@ -465,7 +477,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - Support TLS modes equivalent to manual certs and Let's Encrypt integration.
 - Store DKIM private keys with constrained filesystem permissions.
 - Avoid logging secrets, passwords, full tokens, or private keys.
-- Destructive actions require explicit confirmation in UI/API/CLI.
+- Destructive actions require explicit confirmation in UI/API/CLI and any future Telegram approval workflow.
 
 ## 9. Operational requirements
 
@@ -476,6 +488,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - `gophermailforge lookup explain` must explain recipient, sender, alias, domain, Dovecot auth/userdb, and Rspamd DKIM/local-domain decisions.
 - `gophermailforge smoke mail` must exercise SMTP submission, delivery, IMAP login, alias delivery, and DKIM signing in a bounded test path.
 - `gophermailforge snapshot` must capture known-good generated config, migration version, image versions, and deployment policy.
+- Operational alerts must have a notification abstraction that can support Telegram without letting messaging transport own policy or authorization.
 - Support backup/export of control-plane state.
 - Support restore/import with validation.
 - All generated configs should be reproducible from database + typed config.
@@ -586,6 +599,14 @@ Reject:
 - Produce imported/skipped/incompatible/manual-action report.
 - Verify imported data through daemon contract tests before calling the import successful.
 
+### M9 / v5: Telegram operator interface MVP
+
+- Telegram notification backend for high-priority operational alerts.
+- Read-only Telegram commands for doctor summary, queue summary, domain health, backup status, and deployment status.
+- Telegram approval workflow for bounded high-risk actions after authorization/policy/audit paths are proven.
+- Telegram actor-to-identity mapping.
+- Audit coverage for every Telegram-triggered action.
+
 ## 12. Success metrics
 
 - A fresh operator can bootstrap a working Compose mail stack from typed config.
@@ -604,6 +625,7 @@ Reject:
 - Core behavior is covered by unit/contract tests without requiring the full stack.
 - End-to-end smoke tests prove SMTP submission, SMTP receive, IMAP login, alias delivery, DKIM signing, and spam/local-domain behavior.
 - Mailu import can move supported state without silent data loss or behavior weakening.
+- Telegram can deliver operational alerts and read-only status without bypassing core policy, authorization, or audit boundaries.
 
 ## 13. Risks and hard problems
 
@@ -617,6 +639,7 @@ Reject:
 - Compose generation can become a templating swamp unless the config model is kept strict.
 - Web UI work can distract from the real contract: daemon APIs, generated config, diagnostics, and contract tests.
 - Mailu import can import historical garbage if validation and reporting are weak.
+- Telegram can become an unaudited remote-control backdoor if actor mapping, confirmations, and policy checks are not centralized in the control plane.
 
 ## 14. Open decisions
 
@@ -636,6 +659,8 @@ Reject:
 14. Which doctor checks are blocking versus warning-only.
 15. What snapshot retention and rollback guarantees are actually supported.
 16. Which Mailu token/password artifacts can be safely imported without weakening authentication.
+17. Which Telegram actions remain notification-only, which are read-only commands, and which may become approval workflows.
+18. Which Telegram identity mapping is canonical: configured chat IDs, linked user accounts, Authentik identities, or a combination.
 
 ## 15. Acceptance criteria for starting architecture
 
