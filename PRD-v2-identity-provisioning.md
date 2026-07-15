@@ -10,6 +10,9 @@ v2 adds identity and provisioning on top of a working mail core. OIDC handles we
 
 - Provider discovery.
 - JWKS handling.
+- Authorization-code login flow with callback state validation.
+- Nonce generation and validation.
+- Exact redirect URI validation against configured public URLs.
 - Strict ID token validation:
   - issuer
   - signature
@@ -95,8 +98,8 @@ Requirements:
 
 ## Acceptance criteria
 
-- OIDC login works with strict token validation.
-- Malformed/unverifiable OIDC tokens are rejected.
+- OIDC login works with authorization-code state validation, nonce validation, exact redirect URI validation, and strict token validation.
+- Malformed/unverifiable OIDC tokens and invalid callback state/nonce values are rejected.
 - Authentik group/role mappings assign global admin, domain manager, and scoped domain access.
 - Permission simulator explains allow/deny results for identity-backed actors.
 - SCIM provisioning can create, update, list, disable, and patch users through Authentik-compatible flows.
