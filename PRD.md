@@ -11,6 +11,7 @@ The product should run a complete self-hosted mail stack using proven mail daemo
 - IMAP/POP3/auth/quota: Dovecot
 - spam/DKIM/filtering: Rspamd
 - webmail: pluggable optional service
+- identity provider: optional Authentik sidecar/profile, never embedded in the mail server
 - control plane: GopherMailForge, written in Go
 - persistence: explicit relational schema and migrations
 - generated configuration: typed, reproducible, inspectable daemon config
@@ -88,6 +89,8 @@ GopherMailForge will not initially:
 
 - replace Postfix, Dovecot, Rspamd, Redis, or webmail implementations
 - implement a Kubernetes-first product
+- embed Authentik or any other identity provider inside the GopherMailForge binary/control plane
+- require Authentik for mail delivery, daemon lookups, bootstrap, or recovery
 - support every historical Mailu plugin/integration on day one
 - preserve every Mailu REST quirk
 - provide multi-node clustering
@@ -115,6 +118,7 @@ Mailu's service split is the baseline:
 - optional `webmail`
 - optional `webdav`
 - optional `fetchmail`
+- optional `identity` profile running Authentik for OIDC login and SCIM provisioning
 - optional `resolver`/unbound
 - optional macro scanning/oletools
 
@@ -234,8 +238,9 @@ GopherMailForge should provide:
   - users list/create/read/replace/patch/deprovision
   - groups explicitly unsupported or read-only empty until implemented
 - OIDC login for administrator and user-facing web sessions, with strict issuer metadata and token validation
+- optional Authentik integration profile that configures OIDC and SCIM against a separately deployed Authentik service
 
-SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail data, unless a future destructive-delete policy explicitly says otherwise. OIDC should authenticate existing accounts and optionally create users only under an explicit domain policy; it must not become an unbounded account-creation backdoor.
+SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail data, unless a future destructive-delete policy explicitly says otherwise. OIDC should authenticate existing accounts and optionally create users only under an explicit domain policy; it must not become an unbounded account-creation backdoor. Authentik, when used, is an adjacent identity service integrated through OIDC and SCIM; it is not part of the mail-server trust core.
 
 ## 6. Users and use cases
 
@@ -245,6 +250,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - small organizations needing mailboxes, aliases, admin delegation, DKIM/DNS help, and webmail
 - identity administrators provisioning users through SCIM
 - organizations using OIDC identity providers for administrator and user SSO
+- operators who want an optional Authentik sidecar/profile managed beside the mail stack
 - advanced operators who need clear generated configs and daemon lookup behavior
 
 ### 6.2 Core use cases
@@ -262,8 +268,9 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 11. Configure fetchmail where enabled.
 12. Provision users through REST or SCIM.
 13. Authenticate administrators and users through OIDC where configured.
-14. Let Postfix/Dovecot/Rspamd query the control plane reliably.
-15. Diagnose configuration errors before they become mail delivery failures.
+14. Optionally deploy/configure Authentik beside the mail stack for OIDC and SCIM.
+15. Let Postfix/Dovecot/Rspamd query the control plane reliably.
+16. Diagnose configuration errors before they become mail delivery failures.
 
 ## 7. Functional requirements
 
@@ -271,6 +278,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 
 - Provide a CLI for bootstrap, config validation, migration, and diagnostics.
 - Generate Docker Compose files for the reference deployment.
+- Generate an optional Compose profile for Authentik integration without making it mandatory for the mail stack.
 - Generate daemon configuration from typed state.
 - Support explicit persistent paths for data, mail, certs, DKIM keys, overrides, database, and queue/runtime state.
 - Support initial admin creation with idempotent modes: create, if-missing, update.
@@ -364,16 +372,27 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - Support allowed-domain and allowed-group policy before granting access.
 - Support optional just-in-time user creation only when the domain already exists and policy explicitly enables it.
 - Keep OIDC login separate from daemon password/token authentication; mail clients still need Dovecot-compatible credentials or application tokens.
+- Provide first-class Authentik integration through generated OIDC client settings, SCIM provider settings, redirect URLs, and documented secret handling.
+- Treat Authentik as an optional adjacent service: if Authentik is unavailable, mail delivery and daemon lookup paths must continue to function.
 - Provide clear login failure logs without exposing tokens or secrets.
 
-### 7.12 Internal daemon APIs
+### 7.12 Authentik integration profile
+
+- Support an optional Authentik deployment/profile for operators who want bundled identity infrastructure beside the mail stack.
+- Generate or document Authentik OIDC application/client configuration for GopherMailForge web login.
+- Generate or document Authentik SCIM provider configuration for mailbox provisioning.
+- Keep Authentik data, secrets, upgrades, and availability independent from the mail control-plane database and daemon lookup paths.
+- Provide bootstrap/recovery paths that do not depend on Authentik being healthy.
+- Do not proxy every identity operation through custom glue when standard OIDC and SCIM contracts already solve the problem.
+
+### 7.13 Internal daemon APIs
 
 - Provide stable endpoints for Postfix, Dovecot, Rspamd, fetchmail, auth, and autoconfig.
 - Make lookup behavior testable without running the full mail stack.
 - Log lookup failures with enough context to debug without exposing secrets.
 - Use explicit auth/trust boundaries for internal endpoints.
 
-### 7.13 Background jobs
+### 7.14 Background jobs
 
 - Treat background work as a first-class system:
   - DKIM generation/rotation
@@ -384,7 +403,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
   - cleanup/maintenance jobs
 - Jobs must have state, logs, retry policy, and operator visibility.
 
-### 7.14 Web UI
+### 7.15 Web UI
 
 - Web UI is useful but not the primary contract.
 - The UI must use the same public admin API where practical.
@@ -396,6 +415,7 @@ SCIM `DELETE` should deprovision by disabling the mailbox, not by deleting mail 
 - No unauthenticated admin API.
 - OIDC must validate issuer metadata, signatures, subject, audience, authorized party, expiry, issued-at, and not-before claims before session creation.
 - OIDC client secrets must be stored as secrets, not ordinary generated config.
+- Authentik integration must not weaken local recovery access, daemon authentication, or mail delivery availability.
 - Separate external admin/API auth from internal daemon auth.
 - API tokens must be hashable/revocable where practical.
 - Passwords must use a modern password hashing scheme compatible with Dovecot/Postfix auth needs.
@@ -430,6 +450,7 @@ Preserve where valuable:
 - DKIM lifecycle expectations
 - SCIM user provisioning shape
 - OIDC administrator/user SSO as a first-class authentication path
+- optional Authentik sidecar/profile integration through OIDC and SCIM
 - REST API coverage in spirit, not necessarily exact broken edge behavior
 - internal daemon lookup semantics needed by Postfix/Dovecot/Rspamd
 
@@ -487,11 +508,13 @@ Reject:
 ### M5: OIDC MVP
 
 - OIDC provider configuration.
+- Optional Authentik profile documentation/generation.
 - Provider discovery and JWKS handling.
 - Strict ID token validation.
 - Claim mapping to existing users/admins.
 - Optional policy-gated just-in-time user creation.
 - Authentik-compatible login path.
+- Authentik outage does not break existing mail delivery or daemon lookup paths.
 
 ### M6: SCIM MVP
 
@@ -499,6 +522,7 @@ Reject:
 - User list/create/read/replace/patch/deprovision.
 - Strict validation tests.
 - Authentik-compatible provisioning path.
+- Authentik optional profile can provision users through SCIM without bypassing GopherMailForge validation.
 
 ### M7: Web UI MVP
 
@@ -512,6 +536,7 @@ Reject:
 - Postfix, Dovecot, and Rspamd can run against GopherMailForge internal APIs without Mailu's Python admin service.
 - Domain/user/alias operations work through CLI and REST API.
 - OIDC login can authenticate administrators/users through a compliant identity provider without weakening local/session security.
+- Optional Authentik deployment/configuration works as an adjacent service, not an embedded control-plane dependency.
 - SCIM provisioning can create, update, disable, and list users through an identity provider.
 - Generated config is reproducible and inspectable.
 - Core behavior is covered by unit/contract tests without requiring the full stack.
@@ -524,6 +549,7 @@ Reject:
 - DKIM key handling crosses database and filesystem state; sloppy ownership will create security and backup problems.
 - Supporting SQLite and PostgreSQL can create lowest-common-denominator schema garbage if not constrained.
 - OIDC looks simple until token validation is sloppy; issuer, audience, azp, subject, expiry, issued-at, and not-before checks are not optional.
+- Bundling Authentik too tightly would turn identity outages/upgrades into mail-server outages. Keep the boundary clean.
 - SCIM looks small but punishes weak validation.
 - Compose generation can become a templating swamp unless the config model is kept strict.
 - Web UI work can distract from the real contract: daemon APIs and generated config.
@@ -540,6 +566,7 @@ Reject:
 8. Whether fetchmail belongs in MVP or a later optional module.
 9. Whether OIDC just-in-time user creation belongs in MVP or should require pre-created users only.
 10. Which OIDC claim mapping is canonical: email, preferred_username, subject-bound external identity, or an explicit configured claim.
+11. Whether the optional Authentik profile should generate configuration artifacts only, run Authentik containers, or support both modes.
 
 ## 15. Acceptance criteria for starting architecture
 
