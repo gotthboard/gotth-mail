@@ -1,6 +1,6 @@
 # Implementation Spec — v2 Identity + Provisioning
 
-Source PRD: [PRD-v2-identity-provisioning.md](../PRD-v2-identity-provisioning.md)
+Source PRD: [PRD-v2-identity-provisioning.md](../prd/PRD-v2-identity-provisioning.md)
 Source architecture: [architecture/v2-identity-provisioning.md](../architecture/v2-identity-provisioning.md)
 
 ## Goal

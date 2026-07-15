@@ -1,6 +1,6 @@
 # Implementation Spec — v4 Custom Webmail
 
-Source PRD: [PRD-v4-webmail.md](../PRD-v4-webmail.md)
+Source PRD: [PRD-v4-webmail.md](../prd/PRD-v4-webmail.md)
 Source architecture: [architecture/v4-webmail.md](../architecture/v4-webmail.md)
 
 ## Goal

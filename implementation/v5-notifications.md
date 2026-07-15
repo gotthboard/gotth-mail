@@ -1,6 +1,6 @@
 # Implementation Spec — v5 Notifications
 
-Source PRD: [PRD-v5-notifications.md](../PRD-v5-notifications.md)
+Source PRD: [PRD-v5-notifications.md](../prd/PRD-v5-notifications.md)
 Source architecture: [architecture/v5-notifications.md](../architecture/v5-notifications.md)
 
 ## Goal

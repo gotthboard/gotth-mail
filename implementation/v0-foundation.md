@@ -1,6 +1,6 @@
 # Implementation Spec — v0 Foundation
 
-Source PRD: [PRD-v0-foundation.md](../PRD-v0-foundation.md)
+Source PRD: [PRD-v0-foundation.md](../prd/PRD-v0-foundation.md)
 Source architecture: [architecture/v0-foundation.md](../architecture/v0-foundation.md)
 
 ## Goal

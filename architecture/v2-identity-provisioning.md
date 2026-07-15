@@ -1,6 +1,6 @@
 # Architecture — v2 Identity + Provisioning
 
-Source PRD: [PRD-v2-identity-provisioning.md](../PRD-v2-identity-provisioning.md)
+Source PRD: [PRD-v2-identity-provisioning.md](../prd/PRD-v2-identity-provisioning.md)
 
 ## Goal
 

@@ -8,12 +8,12 @@ GopherMailForge is a Docker/Compose-deployed Go control plane for a self-hosted 
 
 ## Architecture documents
 
-- [v0 Foundation](architecture/v0-foundation.md) — from [PRD-v0-foundation.md](PRD-v0-foundation.md)
-- [v1 Mail Core](architecture/v1-mail-core.md) — from [PRD-v1-mail-core.md](PRD-v1-mail-core.md)
-- [v2 Identity + Provisioning](architecture/v2-identity-provisioning.md) — from [PRD-v2-identity-provisioning.md](PRD-v2-identity-provisioning.md)
-- [v3 Ops + Import + Mature Admin](architecture/v3-ops-import-admin.md) — from [PRD-v3-ops-import-admin.md](PRD-v3-ops-import-admin.md)
-- [v4 Custom Webmail](architecture/v4-webmail.md) — from [PRD-v4-webmail.md](PRD-v4-webmail.md)
-- [v5 Notifications](architecture/v5-notifications.md) — from [PRD-v5-notifications.md](PRD-v5-notifications.md)
+- [v0 Foundation](architecture/v0-foundation.md) — from [PRD-v0-foundation.md](prd/PRD-v0-foundation.md)
+- [v1 Mail Core](architecture/v1-mail-core.md) — from [PRD-v1-mail-core.md](prd/PRD-v1-mail-core.md)
+- [v2 Identity + Provisioning](architecture/v2-identity-provisioning.md) — from [PRD-v2-identity-provisioning.md](prd/PRD-v2-identity-provisioning.md)
+- [v3 Ops + Import + Mature Admin](architecture/v3-ops-import-admin.md) — from [PRD-v3-ops-import-admin.md](prd/PRD-v3-ops-import-admin.md)
+- [v4 Custom Webmail](architecture/v4-webmail.md) — from [PRD-v4-webmail.md](prd/PRD-v4-webmail.md)
+- [v5 Notifications](architecture/v5-notifications.md) — from [PRD-v5-notifications.md](prd/PRD-v5-notifications.md)
 
 ## Core components
 

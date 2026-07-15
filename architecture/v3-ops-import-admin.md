@@ -1,6 +1,6 @@
 # Architecture — v3 Ops + Import + Mature Admin
 
-Source PRD: [PRD-v3-ops-import-admin.md](../PRD-v3-ops-import-admin.md)
+Source PRD: [PRD-v3-ops-import-admin.md](../prd/PRD-v3-ops-import-admin.md)
 
 ## Goal
 

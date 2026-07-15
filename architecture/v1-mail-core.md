@@ -1,6 +1,6 @@
 # Architecture — v1 Mail Core
 
-Source PRD: [PRD-v1-mail-core.md](../PRD-v1-mail-core.md)
+Source PRD: [PRD-v1-mail-core.md](../prd/PRD-v1-mail-core.md)
 
 ## Goal
 
