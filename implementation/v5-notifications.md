@@ -1,0 +1,165 @@
+# Implementation Spec — v5 Notifications
+
+Source PRD: [PRD-v5-notifications.md](../PRD-v5-notifications.md)
+Source architecture: [architecture/v5-notifications.md](../architecture/v5-notifications.md)
+
+## Goal
+
+Implement the notification backend plugin seam with Telegram as the first required implementation. Notification transports deliver alerts and approval prompts; the control plane remains the authority.
+
+## Notification protobuf
+
+Package: `gophermailforge.notification.v1`
+
+```proto
+service NotificationBackend {
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Version(VersionRequest) returns (VersionResponse);
+  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
+  rpc SendAlert(SendAlertRequest) returns (SendAlertResponse);
+  rpc SendPrompt(SendPromptRequest) returns (SendPromptResponse);
+}
+```
+
+Every RPC requires plugin service identity authentication, correlation ID metadata, deadlines, and structured errors.
+
+## Telegram plugin
+
+Telegram runs as a separate Docker container. It receives sanitized payloads from core and calls Telegram APIs. It does not read core DB state directly and never mutates canonical state.
+
+Telegram plugin config:
+
+- bot token secret reference
+- allowed chat IDs or mapping source
+- delivery mode
+- rate-limit settings
+- redaction mode
+
+Secrets must be provided through explicit secret mounts or environment references, not broad filesystem mounts.
+
+## Alerts
+
+Required alert classes:
+
+- doctor failures
+- certificate renewal failures
+- backup verification failures
+- queue/deferred-mail alerts
+- abuse/rate-limit alerts
+- deployment status changes
+- plugin health failures
+
+No alert includes secrets, full tokens, private keys, passwords, or unredacted before/after values.
+
+Delivery result state:
+
+```text
+pending -> delivered
+        -> failed_retryable
+        -> failed_permanent
+```
+
+Notification delivery failures are recorded in core status and visible to operators.
+
+## Read-only commands
+
+Supported Telegram commands:
+
+- doctor summary
+- queue summary
+- domain health
+- backup status
+- deployment status
+- plugin health status
+
+Command flow:
+
+```text
+telegram update -> authenticate actor -> map identity -> authorize read action -> query bounded summary -> audit request -> send response
+```
+
+Read-only responses must be bounded summaries. No raw logs, secrets, private keys, full tokens, or broad shell output.
+
+## Actor mapping
+
+Telegram actor mapping is explicit. Chat membership is not authorization.
+
+Mapping sources may include:
+
+- configured chat/user IDs
+- linked GopherMailForge user accounts
+- Authentik identities
+- explicit combination of the above
+
+Approval workflows cannot be enabled until mapping is configured and verified.
+
+## Approval workflow
+
+Supported approvals:
+
+- config apply
+- DKIM rotation
+- queue flush/retry
+- rollback
+- break-glass use
+
+Prompt record fields:
+
+- `id`
+- `correlation_id`
+- `actor_id`
+- `action`
+- `resource_type`
+- `resource_id`
+- `preview_hash` or request hash where applicable
+- `expires_at`
+- `used_at`
+- `status`: `pending`, `approved`, `rejected`, `expired`, `mismatch`
+
+Flow:
+
+```text
+create prompt -> deliver prompt -> receive response -> authenticate Telegram actor -> map identity -> verify single-use binding -> authorize action -> validate confirmation -> perform mutation -> audit result
+```
+
+Rejection cases:
+
+- stale prompt
+- replayed prompt
+- mismatched actor
+- mismatched action/resource
+- expired prompt
+- changed preview/request hash
+- unauthorized actor
+
+Telegram carries the prompt only. Core decides authorization, validates confirmation, performs mutation, and writes audit events.
+
+## Non-goals
+
+- no Telegram-as-authority
+- no unaudited bot commands
+- no broad remote shell over chat
+- no notification plugin bypassing core policy
+
+## Additional backends
+
+Email and webhook notification backends may be added after Telegram proves the seam. Slack/Discord/etc require explicit justification. All remain notification backends, not authorities.
+
+## Verification
+
+Required tests:
+
+- Telegram plugin runs as separate Docker container
+- plugin communicates over gRPC/protobuf
+- authenticated health/version/capability checks pass
+- unauthenticated plugin calls fail
+- alerts deliver without exposing secrets
+- delivery failures are visible in core status
+- read-only commands authenticate actor, map identity, authorize read, audit request, and return bounded summaries
+- chat membership alone does not authorize commands or approvals
+- approval workflows use core authorization/confirmation/mutation/audit paths
+- stale/replayed/mismatched/expired/changed-hash approvals are rejected
+- Telegram plugin never mutates state directly
+- no broad remote shell over chat
+- `git diff --check`
+- `go test ./...`

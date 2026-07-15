@@ -1,0 +1,130 @@
+# Implementation Spec — v4 Custom Webmail
+
+Source PRD: [PRD-v4-webmail.md](../PRD-v4-webmail.md)
+Source architecture: [architecture/v4-webmail.md](../architecture/v4-webmail.md)
+
+## Goal
+
+If the v4 cutline is explicitly accepted, implement a custom GopherMailForge webmail provider. Until then, supported external webmail remains required.
+
+Custom webmail must remain separate from the control-plane product and must not replace Dovecot, SMTP submission, or core policy.
+
+## Deployment
+
+Custom webmail runs as a separate containerized webmail provider implementation. It may use a plugin seam for provider registration/status, but it must not receive authority over core policy.
+
+Control-plane mutations initiated from webmail must call core service/auth/audit paths.
+
+## IMAP client
+
+Required capabilities:
+
+- folder list
+- message list
+- message read
+- pagination/windowing
+- quota display
+- safe MIME parsing foundation
+
+IMAP connection configuration is derived from core state/config. The webmail client does not read mailbox files directly and does not replace Dovecot.
+
+Message list response shape:
+
+```json
+{
+  "folder": "INBOX",
+  "cursor": "opaque",
+  "messages": [
+    {
+      "id": "opaque-imap-id",
+      "from": "safe display",
+      "subject": "safe text",
+      "date": "...",
+      "flags": ["Seen"]
+    }
+  ],
+  "next_cursor": "opaque-or-null"
+}
+```
+
+## Compose/send
+
+Sending uses SMTP submission.
+
+State machine:
+
+```text
+draft -> queued_for_submission -> submitted -> sent
+                         |-> failed
+```
+
+Features:
+
+- compose
+- save drafts
+- attachments
+- reply/forward
+- send failure reporting
+- honest app-password/session boundary
+
+Web session identity may authorize webmail access, but SMTP submission must use the configured submission path and must not pretend OIDC is an SMTP protocol.
+
+## Search and UX
+
+Search scope must be declared for v4 before implementation:
+
+- current folder only, or
+- supported mailbox scope with documented limits
+
+Features:
+
+- identities/signatures
+- sieve/rules UI if supported by Dovecot/config
+- mobile layout
+- keyboard-safe basic workflows
+
+## MIME and HTML security
+
+HTML email is hostile input.
+
+Renderer requirements:
+
+- sanitize HTML before rendering
+- no unsafe HTML bypass
+- Content Security Policy
+- remote image policy enforced by default
+- attachment content type and disposition rules
+- MIME edge-case tests
+- no script execution from message content
+- safe URL handling
+
+Attachment handling:
+
+- filenames sanitized for display
+- no path traversal
+- size limits
+- content type treated as advisory, not authority
+
+## Control-plane boundary
+
+If webmail exposes actions such as aliases, identities, forwarding, sieve/rules, password/app-password UI, or mailbox settings, those actions must route through core service/auth/audit paths. Webmail cannot write canonical state directly.
+
+## Verification
+
+Required tests:
+
+- external webmail remains usable until custom webmail is production-ready
+- folder/message reads through IMAP with pagination/windowing
+- quota display uses Dovecot/core contract
+- compose/draft/submit/reply/forward flows
+- send failures reported clearly
+- search works across declared scope
+- identities/signatures work in compose/send
+- HTML rendering XSS tests with CSP and no unsafe bypass
+- remote image policy tests
+- MIME edge-case tests
+- attachment safety tests
+- mobile/basic workflow smoke tests
+- webmail control-plane actions route through core service/auth/audit paths without bypass
+- `git diff --check`
+- `go test ./...`
