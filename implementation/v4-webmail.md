@@ -71,10 +71,7 @@ Web session identity may authorize webmail access, but SMTP submission must use 
 
 ## Search and UX
 
-Search scope must be declared for v4 before implementation:
-
-- current folder only, or
-- supported mailbox scope with documented limits
+Minimum v4 search scope is current-folder IMAP SEARCH with pagination/windowing and documented result limits. Any broader mailbox-wide index/search requires an amended v4 cutline and storage/security review before implementation.
 
 Features:
 
@@ -91,12 +88,12 @@ Renderer requirements:
 
 - sanitize HTML before rendering
 - no unsafe HTML bypass
-- Content Security Policy
-- remote image policy enforced by default
+- baseline CSP: `default-src 'none'; img-src 'self' data:; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`
+- remote image policy enforced by default; remote images require explicit user action or configured proxy policy
 - attachment content type and disposition rules
 - MIME edge-case tests
 - no script execution from message content
-- safe URL handling
+- safe URL handling with an allowlist for `http`, `https`, and `mailto`
 
 Attachment handling:
 
@@ -118,7 +115,7 @@ Required tests:
 - quota display uses Dovecot/core contract
 - compose/draft/submit/reply/forward flows
 - send failures reported clearly
-- search works across declared scope
+- current-folder IMAP SEARCH works with pagination/windowing and documented result limits
 - identities/signatures work in compose/send
 - HTML rendering XSS tests with CSP and no unsafe bypass
 - remote image policy tests
