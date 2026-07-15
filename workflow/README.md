@@ -8,4 +8,4 @@ Worktrees are created under `/tmp/gophermailforge-worktrees` and recorded in `wo
 
 ## Changelog discipline
 
-Every meaningful repository change must update [`docs/CHANGELOG.md`](../docs/CHANGELOG.md) in the same commit. Workflow evidence stays under `workflow/`; the changelog is the compact human-readable index of changes.
+Every meaningful repository change must update [`docs/CHANGELOG.md`](../docs/CHANGELOG.md) in the same commit. Each entry must include date/time with timezone, commit identifier, affected files, verbose explanation, and verification performed. Workflow evidence stays under `workflow/`; the changelog is the compact human-readable index of changes.

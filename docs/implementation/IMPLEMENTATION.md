@@ -32,6 +32,8 @@ This is still not code. Implementation may begin only after a version has a PRD,
 
 Every meaningful repository change must update [docs/CHANGELOG.md](../CHANGELOG.md) in the same commit. This includes product docs, architecture, implementation specs, workflow state, source code, tests, deployment behavior, security posture, and user-visible behavior.
 
+Each changelog entry must include date/time with timezone, commit identifier, affected files, verbose explanation, and verification performed. Historical entries use real commit hashes. The entry for the commit currently being created may use `current commit; hash assigned by Git after commit` because Git commit hashes include the changelog content itself.
+
 The changelog does not replace workflow evidence, test results, or handoff notes. It is the compact chronological index of what changed.
 
 ### Repository layout
