@@ -35,6 +35,7 @@ type Server struct {
 	OIDCAuthorizeEndpoint string
 	OIDCJWKS              authn.JWKS
 	Identity              *identity.Service
+	V3                    *ops.V3Runtime
 }
 
 func (s Server) Handler() http.Handler {
@@ -109,6 +110,7 @@ func (s Server) Handler() http.Handler {
 	identitySvc := s.identityService(auditLog)
 	s.registerSCIM(mux, auditLog, identitySvc)
 	s.registerIdentityAPI(mux, auditLog, identitySvc)
+	s.registerV3(mux, auditLog)
 	mux.HandleFunc("/api/v1/authz/explain", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "POST") {
 			return
@@ -181,7 +183,7 @@ func (s Server) Handler() http.Handler {
 		if !method(w, r, "GET") {
 			return
 		}
-		writeJSON(w, auditLog.Events)
+		writeJSON(w, ops.FilterAudit(auditLog.Events, auditFilter(r)))
 	})
 	mux.HandleFunc("/api/v1/plugins", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {

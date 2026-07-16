@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -297,5 +298,100 @@ func TestDefaultIdentityServiceIsSharedAcrossSCIMAndAppPasswordRoutes(t *testing
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/scim/v2/Users", strings.NewReader(`{"userName":"user@example.test"}`)))
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d", rr.Code)
+	}
+}
+
+func TestV3OpsAPIRoutes(t *testing.T) {
+	w := &audit.MemoryWriter{}
+	_ = w.Write(nil, audit.Event{ID: "e1", Actor: audit.ActorRef{Type: "admin", ID: "a"}, Action: "auth.failure", Resource: audit.ResourceRef{Type: "session", ID: "s"}, Result: "failure", BeforeRedacted: map[string]any{"password": "secret"}})
+	h := Server{Audit: w, Daemon: daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}}}.Handler()
+	cases := []struct{ method, path, body, want string }{
+		{http.MethodGet, "/api/v1/audit/export?format=jsonl&actor_type=admin", "", "[REDACTED]"},
+		{http.MethodGet, "/api/v1/audit/events/e1", "", "auth.failure"},
+		{http.MethodPost, "/api/v1/audit/retention/preview?policy=older-than-90d", "", "ret_"},
+		{http.MethodPost, "/api/v1/backups/verify?artifact_ref=current", "", "verified"},
+		{http.MethodGet, "/api/v1/snapshots", "", "current"},
+		{http.MethodGet, "/api/v1/snapshots/current?verified_restore_status=failed", "", "rollback blocked"},
+		{http.MethodGet, "/api/v1/ops/abuse-summary", "", "AuthFailures"},
+		{http.MethodGet, "/api/v1/ops/rate-limits", "", "[]"},
+		{http.MethodGet, "/api/v1/ops/deferred-correlation", "", "[]"},
+		{http.MethodGet, "/api/v1/snapshots/current/diff?against=current", "", "changed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+			if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), tc.want) {
+				t.Fatalf("status=%d body=%s want=%s", rr.Code, rr.Body.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestV3ImportAndBulkAPIBindPreviewConfirmation(t *testing.T) {
+	w := &audit.MemoryWriter{}
+	h := Server{Audit: w, Daemon: daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}}}.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/imports/mailu/preview", strings.NewReader(`{"source":"[{\"Type\":\"domain\",\"ID\":\"example.test\"}]"}`)))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "SourceFingerprint") {
+		t.Fatalf("preview status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var p ops.ImportPreview
+	if err := json.Unmarshal(rr.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/imports/"+p.ID, nil))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), p.ID) {
+		t.Fatalf("get status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/imports/mailu/apply?hash="+p.Hash+"&source_fingerprint="+p.SourceFingerprint, strings.NewReader(`{"id":"`+p.ID+`"}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("apply status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/bulk/disable-users/preview", strings.NewReader(`{"items":["a","b"]}`)))
+	var bp ops.BulkPreview
+	if err := json.Unmarshal(rr.Body.Bytes(), &bp); err != nil {
+		t.Fatal(err)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/bulk/disable-users/apply?confirm="+bp.ID+"&hash="+bp.Hash, strings.NewReader(`{"id":"`+bp.ID+`"}`)))
+	if rr.Code != http.StatusOK || len(w.Events) < 3 {
+		t.Fatalf("bulk status=%d body=%s events=%#v", rr.Code, rr.Body.String(), w.Events)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/bulk/jobs/"+bp.ID, nil))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "success") {
+		t.Fatalf("job status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestV3ImportLookupDoesNotExposeRawCandidateValues(t *testing.T) {
+	h := Server{Daemon: daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}}}.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/imports/mailu/preview", strings.NewReader(`{"source":"[{\"Type\":\"token\",\"ID\":\"t\",\"Value\":\"secret-value\",\"PlaintextSecret\":true}]"}`)))
+	var p ops.ImportPreview
+	if err := json.Unmarshal(rr.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/imports/"+p.ID, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "secret-value") || strings.Contains(rr.Body.String(), "Candidates") {
+		t.Fatalf("leaked raw candidates: %s", rr.Body.String())
 	}
 }

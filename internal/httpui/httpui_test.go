@@ -39,7 +39,7 @@ func TestMailAdminCRUDScreensRenderAndMutate(t *testing.T) {
 	h.ServeHTTP(w, req)
 	body, _ := io.ReadAll(w.Result().Body)
 	text := string(body)
-	for _, want := range []string{"Domain CRUD", "User CRUD", "Alias CRUD", "example.test", "smoke@example.test", "alias@example.test", "OIDC/Auth status", "Authentik role/group mapping", "SCIM status/test", "App-password list/create/revoke", "Permission simulator UI", "Doctor screens", "DNS/DKIM screens", "Plugin status/config screens", "Lookup debugger UI"} {
+	for _, want := range []string{"Domain CRUD", "User CRUD", "Alias CRUD", "example.test", "smoke@example.test", "alias@example.test", "OIDC/Auth status", "Authentik role/group mapping", "SCIM status/test", "App-password list/create/revoke", "Permission simulator UI", "Audit UI/search/export", "Backup/restore verification", "Snapshot/rollback guidance", "Mailu import preview/apply", "Abuse/rate-limit dashboard", "Bulk admin workflows", "Doctor screens", "DNS/DKIM screens", "Plugin status/config screens", "Lookup debugger UI"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("admin UI missing %q in %s", want, text)
 		}
@@ -92,5 +92,30 @@ func TestSCIMUITestActionProvisionsUser(t *testing.T) {
 	}
 	if _, ok := ids.GetUser("ui@example.test"); !ok {
 		t.Fatal("SCIM UI did not provision user")
+	}
+}
+
+func TestV3OperatorUIFormsExecute(t *testing.T) {
+	h := HandlerWithAdminAndIdentity(admin.NewStore(), identity.NewService("example.test"), authz.StaticAuthorizer{})
+	cases := []struct {
+		path string
+		form url.Values
+		want string
+	}{
+		{"/ops/backup-verify", url.Values{"artifact_ref": {"ui-backup"}}, "backup verification status=verified"},
+		{"/ops/mailu-preview", url.Values{"source": {`[{"Type":"domain","ID":"example.test"}]`}}, "mailu preview created:"},
+		{"/ops/bulk-preview", url.Values{"operation": {"disable-users"}, "items": {"user@example.test"}}, "bulk preview created:"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			body, _ := io.ReadAll(w.Result().Body)
+			if w.Code != http.StatusOK || !strings.Contains(string(body), tc.want) {
+				t.Fatalf("status=%d body=%s want=%s", w.Code, string(body), tc.want)
+			}
+		})
 	}
 }

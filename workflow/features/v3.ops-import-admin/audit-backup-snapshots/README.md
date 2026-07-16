@@ -2,6 +2,6 @@
 
 ID: `v3.ops-import-admin.audit-backup-snapshots`
 
-State: `planned`
+State: `done`
 
 Canonical state lives in `workflow.toml`. This folder holds scoped evidence, review notes, and postmortems only.

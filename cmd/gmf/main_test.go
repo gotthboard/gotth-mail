@@ -82,3 +82,15 @@ func TestCLIDoctorTextAndJSON(t *testing.T) {
 		t.Fatal("unsupported doctor format accepted")
 	}
 }
+
+func TestCLIAuditRetentionPreviewApplyRequiresConfirmation(t *testing.T) {
+	if err := run([]string{"audit", "retention", "preview", "--policy", "older-than-90d"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"audit", "retention", "apply", "--policy", "older-than-90d"}); err == nil {
+		t.Fatal("missing confirmation accepted")
+	}
+	if err := run([]string{"audit", "retention", "apply", "--policy", "older-than-90d", "--confirm", "wrong"}); err == nil {
+		t.Fatal("wrong confirmation accepted")
+	}
+}

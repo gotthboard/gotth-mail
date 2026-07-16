@@ -21,9 +21,51 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-16 12:05 CDT — Finish v2 identity provisioning
+### 2026-07-16 12:55 CDT — Implement v3 ops, import, and mature admin workflows
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `cmd/gmf/main.go`
+- `cmd/gmf/main_test.go`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/api/v3.go`
+- `internal/httpui/httpui.go`
+- `internal/httpui/httpui_test.go`
+- `internal/ops/v3.go`
+- `internal/ops/v3_test.go`
+- `docs/CHANGELOG.md`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/features/v3.ops-import-admin/README.md`
+- `workflow/features/v3.ops-import-admin/audit-backup-snapshots/README.md`
+- `workflow/features/v3.ops-import-admin/audit-backup-snapshots/evidence/2026-07-16-audit-backup-snapshots.md`
+- `workflow/features/v3.ops-import-admin/mailu-import/README.md`
+- `workflow/features/v3.ops-import-admin/mailu-import/evidence/2026-07-16-mailu-import.md`
+- `workflow/features/v3.ops-import-admin/abuse-bulk-ui/README.md`
+- `workflow/features/v3.ops-import-admin/abuse-bulk-ui/evidence/2026-07-16-abuse-bulk-ui.md`
+- `workflow/features/v3.ops-import-admin/evidence/2026-07-16-v3-root-completion.md`
+
+Explanation:
+
+Implemented v3 operator surfaces for audit filtering/export/retention, backup verification, snapshot rollback guidance, Mailu import preview/apply, abuse/rate-limit/deferred correlation, and mature bulk admin workflows. Preview/apply flows now keep server-side import and bulk preview/job state instead of trusting caller-supplied preview bodies. Backup verification reads a storage artifact, restores into an isolated modeled state, runs schema migration checks, and validates daemon contracts before marking a backup verified. Rollback guidance refuses fake safety without verified restore state.
+
+Mailu import preview classifies unsupported/weakening inputs, rejects plaintext secrets and unsupported verifier algorithms, requires source fingerprint/hash/actor/expiry binding, exposes `GET /api/v1/imports/{id}`, and audits apply. Bulk workflows whitelist operations, store previews/jobs server-side, require confirmation/hash/actor/expiry checks, emit per-item audit events, and expose `GET /api/v1/bulk/jobs/{id}`. v3 UI sections include working backup verify, Mailu preview, and bulk preview forms rather than dead links.
+
+Verification:
+
+- Confirmed `go test ./cmd/gmf` passes.
+- Confirmed `go test ./internal/ops` passes.
+- Confirmed `go test ./internal/api` passes.
+- Confirmed `go test ./internal/httpui` passes.
+- Confirmed `git diff --check -- .` passes.
+- Confirmed `go test ./...` passes.
+
+### 2026-07-16 12:05 CDT — Finish v2 identity provisioning
+
+Commit: fc2ce0e
 
 Affected files:
 

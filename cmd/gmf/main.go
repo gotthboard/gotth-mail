@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"forgejo/linus/gophermailforge/internal/apply"
 	"forgejo/linus/gophermailforge/internal/audit"
@@ -27,7 +28,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: gmf <config|render|diff|apply|migrate|authz|doctor>")
+		return fmt.Errorf("usage: gmf <config|render|diff|apply|migrate|authz|doctor|audit>")
 	}
 	switch args[0] {
 	case "config":
@@ -106,6 +107,34 @@ func run(args []string) error {
 			return nil
 		default:
 			return fmt.Errorf("unsupported doctor format %q", format)
+		}
+	case "audit":
+		if len(args) < 4 || args[1] != "retention" {
+			return fmt.Errorf("usage: gmf audit retention <preview|apply> --policy <policy>")
+		}
+		policy, ok := flagValue(args, "--policy")
+		if !ok || policy == "" {
+			return fmt.Errorf("--policy required")
+		}
+		preview, err := ops.PreviewRetention(nil, policy, time.Now())
+		if err != nil {
+			return err
+		}
+		switch args[2] {
+		case "preview":
+			return json.NewEncoder(os.Stdout).Encode(preview)
+		case "apply":
+			confirm, ok := flagValue(args, "--confirm")
+			if !ok || confirm == "" {
+				return fmt.Errorf("--confirm <preview-id> required")
+			}
+			w := &audit.MemoryWriter{}
+			if err := ops.ApplyRetention(context.Background(), w, audit.ActorRef{Type: "local_admin", ID: "cli"}, preview, confirm); err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(w.Events)
+		default:
+			return fmt.Errorf("usage: gmf audit retention <preview|apply> --policy <policy>")
 		}
 	case "authz":
 		ex, _ := authz.StaticAuthorizer{}.Explain(context.Background(), authz.Actor{Type: "local_admin", ID: "cli"}, authz.Action("system:admin"), authz.Resource{Type: "system", ID: "self"})
