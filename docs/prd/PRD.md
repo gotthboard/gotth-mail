@@ -41,6 +41,7 @@ Preserve where valuable:
 - daemon-facing lookup endpoints
 - DNS guidance semantics
 - DKIM lifecycle expectations
+- Mandatory per-user OpenPGP signing for every outbound email; unsigned outbound mail is not allowed.
 - REST API coverage in spirit
 - SCIM user provisioning shape
 - admin/delegation concepts
@@ -128,3 +129,16 @@ Architecture work may begin only after the PRD set is clean and followed by:
 - explicit MVP cutline
 
 Do not jump straight into coding. That is how control planes become piles of accidental behavior.
+
+## Global outbound email signing invariant
+
+Every outbound email produced or relayed by GopherMailForge must carry a valid OpenPGP signature for the asserted sender/user identity. DKIM remains required for domain/server authenticity, but it is not enough: OpenPGP is the user-origin proof.
+
+Rules:
+
+- no unsigned outbound email;
+- no silent fallback to unsigned mail;
+- signing failure blocks send and produces actionable doctor/audit status;
+- signatures bind the canonical MIME body and relevant headers according to the selected OpenPGP/MIME profile;
+- key ownership, rotation, revocation, expiry, and disabled-user behavior must be explicit and auditable;
+- imported messages may remain historically unsigned, but any newly sent, resent, automated, notification, approval, or system-generated outbound message must be signed before leaving the system.

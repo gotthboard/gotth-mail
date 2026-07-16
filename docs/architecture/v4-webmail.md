@@ -85,3 +85,15 @@ HTML email is hostile input. Treat it as data, not UI code.
 - attachments handled safely
 - mobile/basic workflows usable
 - webmail control-plane actions route through core service/auth/audit paths without bypass
+
+## Mandatory OpenPGP signing
+
+Compose/send flows must OpenPGP-sign every outbound email with the sending user's configured signing identity. The UI may expose identity/signature state, but it may not offer a bypass that sends unsigned mail.
+
+Required behavior:
+
+- missing, expired, revoked, disabled, or mismatched signing key blocks send;
+- signing failures are visible to the user and recorded in audit/doctor state;
+- signatures use OpenPGP/MIME for MIME messages rather than ad-hoc headers;
+- canonicalization and signed header/body coverage are specified and tested;
+- DKIM signing remains domain-level proof and does not replace per-user OpenPGP signatures.

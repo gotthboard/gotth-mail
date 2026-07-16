@@ -106,3 +106,16 @@ These remain notification backends, not authorities.
 - every Telegram request maps to identity and audit event
 - approval workflows use core authorization/confirmation/mutation/audit paths
 - approval workflows reject stale/replayed/mismatched/expired approvals
+
+## Mandatory OpenPGP signing for email notifications
+
+Any email notification backend introduced in v5 must OpenPGP-sign every outbound email notification with the responsible user or system notification identity before delivery. Telegram/webhook transports may use their own authenticated transport semantics, but email output is never exempt from the global OpenPGP signing invariant.
+
+Required behavior:
+
+- unsigned email notifications are rejected before delivery;
+- signing key lookup, fingerprint, signature status, and failure reason are auditable;
+- per-user notification emails use that user's signing identity when the message asserts that user as sender;
+- system notifications use a configured system notification signing identity;
+- key rotation/revocation must not allow fallback to unsigned mail;
+- verification tests must prove that outbound notification email contains an OpenPGP/MIME signature and that missing/revoked keys block send.

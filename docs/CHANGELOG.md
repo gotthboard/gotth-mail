@@ -21,6 +21,36 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-16 10:21 CDT — Require OpenPGP signing for every outbound email
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `docs/prd/PRD.md`
+- `docs/prd/PRD-v4-webmail.md`
+- `docs/architecture/v4-webmail.md`
+- `docs/implementation/v4-webmail.md`
+- `docs/prd/PRD-v5-notifications.md`
+- `docs/architecture/v5-notifications.md`
+- `docs/implementation/v5-notifications.md`
+- `workflow.toml`
+- `workflow/COVERAGE.md`
+- `workflow.events.jsonl`
+- `workflow/features/v5.notifications/openpgp-signed-email/README.md`
+- `workflow/features/v5.notifications/openpgp-signed-email/evidence/2026-07-16-openpgp-requirement.md`
+
+Explanation:
+
+Made Danny's OpenPGP requirement canonical: every outbound email must be OpenPGP/MIME signed. DKIM remains required as domain/server proof, but it is not accepted as user-origin proof. Missing, revoked, expired, disabled, mismatched, or failed signing keys block send. The system must not silently fall back to unsigned email for convenience, notification delivery, resend, approval, or automated mail.
+
+The requirement is recorded as a global product invariant, tied into v4 compose/send behavior, and added to v5 notification/email backend scope through a new planned feature `v5.notifications.openpgp-signed-email`. Verification requirements now include OpenPGP/MIME signed outbound email tests, no-unsigned-fallback tests, key-state rejection tests, identity mismatch tests, and audit fingerprint/signature-status tests.
+
+Verification:
+
+- Must pass `git diff --check -- .`.
+- Must pass `go test ./...`.
+
 ### 2026-07-16 09:03 CDT — Finish v1 mail core root
 
 Commit: current commit; hash assigned by Git after commit

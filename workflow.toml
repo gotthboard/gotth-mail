@@ -103,7 +103,7 @@ source_path = "."
 branch = "workflow/root/v5.notifications"
 worktree = "/tmp/gophermailforge-worktrees/v5.notifications"
 dependencies = ["v3.ops-import-admin"]
-required_verification = ["git diff --check", "go test ./...", "notification plugin/approval binding tests"]
+required_verification = ["git diff --check", "go test ./...", "notification plugin/approval binding tests", "OpenPGP/MIME signed outbound email tests"]
 
 [[features]]
 id = "v0.foundation.repo-skeleton"
@@ -368,6 +368,19 @@ branch = "workflow/feature/v5.notifications.telegram-plugin-alerts"
 dependencies = ["v3.ops-import-admin", "v0.foundation.plugin-runtime"]
 implementation_spec_sections = ["Notification protobuf", "Telegram plugin", "Alerts"]
 verification = ["separate container/gRPC tests", "authenticated/unauthenticated plugin tests", "alert redaction tests", "delivery failure core status tests", "go test ./...", "git diff --check"]
+
+
+[[features]]
+id = "v5.notifications.openpgp-signed-email"
+root = "v5.notifications"
+title = "Mandatory OpenPGP signing for every outbound email"
+state = "planned"
+path = "workflow/features/v5.notifications/openpgp-signed-email"
+source_path = "internal/notification"
+branch = "workflow/feature/v5.notifications.openpgp-signed-email"
+dependencies = ["v5.notifications.telegram-plugin-alerts", "v2.identity-provisioning.app-passwords"]
+implementation_spec_sections = ["Mandatory OpenPGP signing for email notifications", "OpenPGP email signing contract"]
+verification = ["OpenPGP/MIME signed email tests", "missing/revoked/expired key blocks send tests", "identity mismatch tests", "no unsigned fallback tests", "audit fingerprint/signature-status tests", "go test ./...", "git diff --check"]
 
 [[features]]
 id = "v5.notifications.commands-approvals"
