@@ -21,6 +21,25 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-16 10:50 CDT — Start v2 identity provisioning
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/features/v2.identity-provisioning/oidc-sessions/evidence/2026-07-16-start.md`
+
+Explanation:
+
+Started the v2 identity/provisioning root from the merged v1 admission baseline. The active child is `v2.identity-provisioning.oidc-sessions`, covering OIDC authorization-code login, single-use state, nonce/redirect validation, signed token validation through the configured issuer/JWKS, session behavior, no unsigned-claim fallback, and no token disclosure.
+
+Verification:
+
+- Must pass `git diff --check -- .`.
+- Must pass `go test ./...`.
+
 ### 2026-07-16 10:22 CDT — Clarify exact-user OpenPGP identity binding
 
 Commit: current commit; hash assigned by Git after commit

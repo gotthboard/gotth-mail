@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GopherMailForge"
 profile = "medium"
-active_feature = "v1.mail-core"
+active_feature = "v2.identity-provisioning.oidc-sessions"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -52,7 +52,7 @@ required_verification = ["git diff --check", "go test ./...", "reference compose
 [[root_features]]
 id = "v2.identity-provisioning"
 title = "v2 Identity + Provisioning"
-state = "planned"
+state = "in_progress"
 prd = "docs/prd/PRD-v2-identity-provisioning.md"
 architecture = "docs/architecture/v2-identity-provisioning.md"
 implementation_spec = "docs/implementation/v2-identity-provisioning.md"
@@ -253,7 +253,7 @@ verification = ["real Postfix SMTP alias delivery smoke", "real Dovecot IMAP log
 id = "v2.identity-provisioning.oidc-sessions"
 root = "v2.identity-provisioning"
 title = "OIDC authorization-code login, state, token validation, sessions"
-state = "planned"
+state = "in_progress"
 path = "workflow/features/v2.identity-provisioning/oidc-sessions"
 source_path = "internal/authn"
 branch = "workflow/feature/v2.identity-provisioning.oidc-sessions"
