@@ -21,9 +21,9 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-16 13:15 CDT — Draft v4 custom webmail protocol seams (not admitted)
+### 2026-07-16 13:15 CDT — Admit v4 custom webmail protocol seams
 
-Commit: current commit; hash assigned by Git after commit
+Commit: f599e15
 
 Affected files:
 
@@ -41,13 +41,14 @@ Affected files:
 
 Explanation:
 
-Drafted the v4 custom webmail protocol seam implementation: external-provider continuity, folder list, message list/read, pagination/windowing, quota display, current-folder search, draft save, submit, send failure reporting, and mandatory OpenPGP/MIME signing structure validation for outbound sends. The webmail sender rejects unsigned or mismatched signing identity attempts and records audit metadata without treating OIDC as SMTP.
+Admitted the v4 custom webmail protocol seam implementation by owner direction: external-provider continuity, folder list, message list/read, pagination/windowing, quota display, current-folder search, draft save, submit, send failure reporting, and mandatory OpenPGP/MIME signing structure validation for outbound sends. The webmail sender rejects unsigned or mismatched signing identity attempts and records audit metadata without treating OIDC as SMTP.
 
 Added MIME/HTML safety foundations: script stripping, event-handler blocking, javascript URL blocking, remote image blocking, CSP baseline, attachment filename traversal sanitization, and oversized attachment fallback behavior. Webmail remains a provider/client model and does not replace Dovecot/SMTP or mutate control-plane state directly.
 
 Verification:
 
-- Confirmed `go test ./internal/webmail` passes for seam/model draft coverage.
+- Confirmed `go test ./internal/webmail` passes for admitted seam/model coverage.
+- Cold review rejected this as full production webmail; owner-directed admission accepts the seam cut with known gaps recorded in workflow evidence.
 - Confirmed `git diff --check -- .` passes.
 - Confirmed `go test ./...` passes.
 

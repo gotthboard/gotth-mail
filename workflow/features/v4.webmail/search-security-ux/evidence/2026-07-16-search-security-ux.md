@@ -15,4 +15,12 @@ Drafted current-folder search, safe MIME/HTML rendering foundation, remote-image
 
 ## Coverage gaps
 
-Admission pending; no accepted coverage gap shall be recorded until cold review passes.
+Owner-directed admission accepted the current protocol-seam draft with known gaps recorded below.
+
+## Known admitted gaps
+
+- Full production IMAP client implementation remains future work.
+- Full production SMTP submission integration remains future work.
+- OpenPGP/MIME cryptographic signing integration, canonicalization, and verification remain future work beyond the structural seam checks.
+- Hostile HTML/MIME rendering requires a real parser/sanitizer integration before production exposure.
+- Full mobile/basic browser UI remains future work.

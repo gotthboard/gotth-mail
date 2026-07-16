@@ -2,6 +2,6 @@
 
 ID: `v4.webmail`
 
-State: `in_progress`
+State: `done`
 
 Canonical state lives in `workflow.toml`. This folder holds scoped evidence, review notes, and postmortems only.

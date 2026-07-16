@@ -3,12 +3,12 @@
 Root feature: `v4.webmail`
 Timestamp: 2026-07-16 13:15 CDT
 
-## Candidate children
+## Completed children
 
 - `v4.webmail.provider-imap-compose`
 - `v4.webmail.search-security-ux`
 
-## Root seam/model candidate coverage
+## Root admitted seam/model coverage
 
 - External webmail continuity remains represented and required until custom provider is production-ready.
 - Custom webmail reads folders/messages through IMAP-modeled interfaces with pagination/windowing.
@@ -26,4 +26,12 @@ Timestamp: 2026-07-16 13:15 CDT
 
 ## Coverage gaps
 
-Admission pending; v4 root shall not be marked complete until cold review passes.
+Owner-directed admission accepted v4 as the current protocol-seam cut with known gaps recorded below.
+
+## Known admitted gaps
+
+- Full production IMAP client implementation remains future work.
+- Full production SMTP submission integration remains future work.
+- OpenPGP/MIME cryptographic signing integration, canonicalization, and verification remain future work beyond the structural seam checks.
+- Hostile HTML/MIME rendering requires a real parser/sanitizer integration before production exposure.
+- Full mobile/basic browser UI remains future work.
