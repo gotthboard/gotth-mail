@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GopherMailForge"
 profile = "medium"
-active_feature = "v1.mail-core.generated-config"
+active_feature = "v1.mail-core.dns-tls-acme"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -205,7 +205,7 @@ verification = ["deterministic daemon config render", "generated header checks",
 id = "v1.mail-core.dns-tls-acme"
 root = "v1.mail-core"
 title = "DNS readiness, TLS validation, ACME, MTA-STS/TLS-RPT"
-state = "planned"
+state = "done"
 path = "workflow/features/v1.mail-core/dns-tls-acme"
 source_path = "internal/diag"
 branch = "workflow/feature/v1.mail-core.dns-tls-acme"

@@ -21,6 +21,31 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-16 01:45 CDT — Add v1 DNS/TLS/ACME diagnostics
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `docs/CHANGELOG.md`
+- `internal/diag/dns_tls.go`
+- `internal/diag/dns_tls_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/dns-tls-acme/evidence/2026-07-16-dns-tls-acme.md`
+
+Explanation:
+
+Completed `v1.mail-core.dns-tls-acme` by adding the diagnostic primitives for exact DNS readiness, TLS certificate validation, MTA-STS/TLS-RPT generation, and loud ACME failure reporting. DNS checks now return the documented status enum with expected values, observed values, and remediation text instead of hand-wavy readiness booleans. TLS checks parse certificates, validate expiry windows, and fail on missing SAN coverage. ACME failure construction is explicit and actionable rather than silently falling back to self-signed behavior.
+
+This is deliberately not the full doctor or live ACME plugin. Those belong to later v1 children. This patch provides the deterministic mechanism and tests they will consume.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Added tests for DNS present/missing/mismatch/unsupported states, MTA-STS/TLS-RPT generation, certificate OK/warn/expired/SAN-mismatch behavior, and loud ACME failure output.
+
 ### 2026-07-16 01:41 CDT — Generate daemon config for v1 mail core
 
 Commit: current commit; hash assigned by Git after commit
