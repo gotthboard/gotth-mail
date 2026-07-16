@@ -119,3 +119,6 @@ Required behavior:
 - system notifications use a configured system notification signing identity;
 - key rotation/revocation must not allow fallback to unsigned mail;
 - verification tests must prove that outbound notification email contains an OpenPGP/MIME signature and that missing/revoked keys block send.
+
+
+The signature requirement is not merely provenance for a domain or server. Verification must answer exactly which configured user identity signed the message. If the signer cannot be mapped to the asserted From/Sender identity and active user/key binding, the message is treated as unsigned/invalid.

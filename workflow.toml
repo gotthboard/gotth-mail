@@ -380,7 +380,7 @@ source_path = "internal/notification"
 branch = "workflow/feature/v5.notifications.openpgp-signed-email"
 dependencies = ["v5.notifications.telegram-plugin-alerts", "v2.identity-provisioning.app-passwords"]
 implementation_spec_sections = ["Mandatory OpenPGP signing for email notifications", "OpenPGP email signing contract"]
-verification = ["OpenPGP/MIME signed email tests", "missing/revoked/expired key blocks send tests", "identity mismatch tests", "no unsigned fallback tests", "audit fingerprint/signature-status tests", "go test ./...", "git diff --check"]
+verification = ["OpenPGP/MIME signed email tests", "missing/revoked/expired key blocks send tests", "exact signer identity binding tests", "no unsigned fallback tests", "audit fingerprint/signature-status tests", "go test ./...", "git diff --check"]
 
 [[features]]
 id = "v5.notifications.commands-approvals"

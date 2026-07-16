@@ -21,6 +21,32 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-16 10:22 CDT — Clarify exact-user OpenPGP identity binding
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `docs/prd/PRD.md`
+- `docs/prd/PRD-v4-webmail.md`
+- `docs/architecture/v4-webmail.md`
+- `docs/implementation/v4-webmail.md`
+- `docs/prd/PRD-v5-notifications.md`
+- `docs/architecture/v5-notifications.md`
+- `docs/implementation/v5-notifications.md`
+- `workflow.toml`
+- `workflow/COVERAGE.md`
+- `workflow/features/v5.notifications/openpgp-signed-email/evidence/2026-07-16-openpgp-requirement.md`
+
+Explanation:
+
+Tightened the OpenPGP requirement so it cannot be misread as domain provenance. DKIM answers which domain/server handled a message; GopherMailForge requires exact-user-origin proof. Every outbound email signature must verify to exactly one configured active user or system notification identity, and that identity must be allowed to assert the message `From`/`Sender`. Ambiguous, unmapped, shared, revoked, expired, disabled, or mismatched signing keys fail closed and are treated as unsigned/invalid.
+
+Verification:
+
+- Must pass `git diff --check -- .`.
+- Must pass `go test ./...`.
+
 ### 2026-07-16 10:21 CDT — Require OpenPGP signing for every outbound email
 
 Commit: current commit; hash assigned by Git after commit

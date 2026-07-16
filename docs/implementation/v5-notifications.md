@@ -184,6 +184,9 @@ Required behavior:
 
 Email notification signing contract:
 
+
+Identity binding requirement: verification must resolve the OpenPGP signing key fingerprint to exactly one configured active user or system notification identity, then confirm that identity is allowed to assert the message `From`/`Sender`. Ambiguous, shared, revoked, expired, disabled, or unmapped keys fail closed.
+
 ```text
 build bounded notification MIME -> resolve signing identity -> verify key usable -> OpenPGP/MIME sign -> hand to mail transport -> audit fingerprint/signature status
 ```
@@ -197,3 +200,6 @@ Failure states:
 - `openpgp_sign_failed`
 
 All failure states block delivery and surface in core status. The email backend must not send unsigned mail to preserve alert delivery convenience. That would be security theater.
+
+
+The signature requirement is not merely provenance for a domain or server. Verification must answer exactly which configured user identity signed the message. If the signer cannot be mapped to the asserted From/Sender identity and active user/key binding, the message is treated as unsigned/invalid.

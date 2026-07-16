@@ -37,4 +37,4 @@ For v1 admission, run a fresh cold root review over the reference runtime smoke 
 
 The v1 completion pass added coverage for `gmf doctor --format text|json`, domain/user/alias admin CRUD backing behavior, server-rendered admin screens, seam-specific first-plugin contracts, deterministic SMTP smoke, and live reference doctor output for loud ACME/manual-certificate failure. Remaining hostile-content webmail security and production public-domain ACME issuance are explicitly later-version/deployment-scope work, not hidden v1 gaps.
 
-| OpenPGP outbound signing | Per-user OpenPGP/MIME signatures for every outbound email, key state failures, audit fingerprints | planned v5 feature `v5.notifications.openpgp-signed-email`; docs/spec requirement recorded | implementation pending; unsigned fallback must remain blocked |
+| OpenPGP outbound signing | Exact-user OpenPGP/MIME signatures for every outbound email, key state failures, audit fingerprints | planned v5 feature `v5.notifications.openpgp-signed-email`; docs/spec requirement recorded | implementation pending; unsigned fallback must remain blocked |

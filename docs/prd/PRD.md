@@ -41,7 +41,7 @@ Preserve where valuable:
 - daemon-facing lookup endpoints
 - DNS guidance semantics
 - DKIM lifecycle expectations
-- Mandatory per-user OpenPGP signing for every outbound email; unsigned outbound mail is not allowed.
+- Mandatory exact-user OpenPGP signing for every outbound email; unsigned outbound mail is not allowed.
 - REST API coverage in spirit
 - SCIM user provisioning shape
 - admin/delegation concepts
@@ -132,7 +132,9 @@ Do not jump straight into coding. That is how control planes become piles of acc
 
 ## Global outbound email signing invariant
 
-Every outbound email produced or relayed by GopherMailForge must carry a valid OpenPGP signature for the asserted sender/user identity. DKIM remains required for domain/server authenticity, but it is not enough: OpenPGP is the user-origin proof.
+Every outbound email produced or relayed by GopherMailForge must carry a valid OpenPGP signature for the asserted sender/user identity. DKIM remains required for domain/server authenticity, but it is not enough: OpenPGP is the exact-user-origin proof.
+
+The verifier must be able to answer **exactly which configured user identity signed this message**. A valid domain signature, relay signature, shared mailbox signature, or unmapped OpenPGP key is not sufficient. The signing key must be bound to the asserted `From`/`Sender` identity and current user/key state.
 
 Rules:
 
@@ -142,3 +144,6 @@ Rules:
 - signatures bind the canonical MIME body and relevant headers according to the selected OpenPGP/MIME profile;
 - key ownership, rotation, revocation, expiry, and disabled-user behavior must be explicit and auditable;
 - imported messages may remain historically unsigned, but any newly sent, resent, automated, notification, approval, or system-generated outbound message must be signed before leaving the system.
+
+
+The signature requirement is not merely provenance for a domain or server. Verification must answer exactly which configured user identity signed the message. If the signer cannot be mapped to the asserted From/Sender identity and active user/key binding, the message is treated as unsigned/invalid.

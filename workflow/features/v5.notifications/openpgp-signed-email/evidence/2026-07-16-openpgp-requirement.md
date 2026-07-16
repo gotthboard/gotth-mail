@@ -11,7 +11,7 @@ Danny required OpenPGP and required every outbound email to be signed.
 ## Canonicalized behavior
 
 - Every outbound email must be OpenPGP/MIME signed.
-- DKIM remains domain/server proof but does not replace per-user OpenPGP signatures.
+- DKIM remains domain/server proof but does not replace exact-user OpenPGP signatures.
 - Missing, revoked, expired, disabled, mismatched, or failed signing key state blocks send.
 - No unsigned fallback is allowed for convenience or alert delivery.
 - Signing fingerprint/status/failure reason must be auditable.
@@ -39,3 +39,6 @@ Required for this docs/spec change:
 git diff --check -- .
 go test ./...
 ```
+
+
+The signature requirement is not merely provenance for a domain or server. Verification must answer exactly which configured user identity signed the message. If the signer cannot be mapped to the asserted From/Sender identity and active user/key binding, the message is treated as unsigned/invalid.
