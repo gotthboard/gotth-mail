@@ -1,39 +1,91 @@
 package config
 
 import (
-	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Server    Server
-	Database  Database
-	TLS       TLS
-	Authentik Authentik
-	Roles     Roles
-	Render    Render
-	Plugins   []Plugin
+	Server    Server    `yaml:"server"`
+	Database  Database  `yaml:"database"`
+	TLS       TLS       `yaml:"tls"`
+	Authentik Authentik `yaml:"authentik"`
+	Roles     Roles     `yaml:"roles"`
+	Render    Render    `yaml:"render"`
+	Plugins   []Plugin  `yaml:"plugins"`
 }
-type Server struct{ PublicURL, Listen, Environment string }
-type Database struct{ DSN string }
-type TLS struct{ Mode, CertPath, KeyPath string }
+type Server struct {
+	PublicURL   string `yaml:"public_url"`
+	Listen      string `yaml:"listen"`
+	Environment string `yaml:"environment"`
+}
+type Database struct {
+	DSN string `yaml:"dsn"`
+}
+type TLS struct {
+	Mode     string `yaml:"mode"`
+	CertPath string `yaml:"cert_path"`
+	KeyPath  string `yaml:"key_path"`
+}
 type Authentik struct {
-	Enabled                            bool
-	BaseURL, OIDCClientID, SCIMBaseURL string
+	Enabled      bool   `yaml:"enabled"`
+	BaseURL      string `yaml:"base_url"`
+	OIDCClientID string `yaml:"oidc_client_id"`
+	SCIMBaseURL  string `yaml:"scim_base_url"`
 }
-type Roles struct{ GlobalAdminGroup, DomainManagerGroup, ScopedDomainGroupPrefix string }
+type Roles struct {
+	GlobalAdminGroup        string `yaml:"global_admin_group"`
+	DomainManagerGroup      string `yaml:"domain_manager_group"`
+	ScopedDomainGroupPrefix string `yaml:"scoped_domain_group_prefix"`
+}
 type Render struct {
-	StagingDir, AppliedDir string
-	OverrideDirs           []string
+	StagingDir   string   `yaml:"staging_dir"`
+	AppliedDir   string   `yaml:"applied_dir"`
+	OverrideDirs []string `yaml:"override_dir"`
 }
-type Plugin struct{ Name, Seam, Image, Endpoint string }
 
-var allowedTop = map[string]bool{"server": true, "database": true, "tls": true, "authentik": true, "roles": true, "render": true, "plugins": true}
+func (r *Render) UnmarshalYAML(value *yaml.Node) error {
+	type rawRender struct {
+		StagingDir string    `yaml:"staging_dir"`
+		AppliedDir string    `yaml:"applied_dir"`
+		Override   yaml.Node `yaml:"override_dir"`
+	}
+	var rr rawRender
+	if err := value.Decode(&rr); err != nil {
+		return err
+	}
+	r.StagingDir = rr.StagingDir
+	r.AppliedDir = rr.AppliedDir
+	if rr.Override.Kind == 0 {
+		return nil
+	}
+	if rr.Override.Kind == yaml.SequenceNode {
+		return rr.Override.Decode(&r.OverrideDirs)
+	}
+	var one string
+	if err := rr.Override.Decode(&one); err != nil {
+		return err
+	}
+	if one != "" {
+		r.OverrideDirs = []string{one}
+	}
+	return nil
+}
+
+type Plugin struct {
+	Name     string `yaml:"name"`
+	Seam     string `yaml:"seam"`
+	Image    string `yaml:"image"`
+	Endpoint string `yaml:"endpoint"`
+}
+
 var allowedSeams = map[string]bool{"webmail": true, "dns": true, "acme": true, "backup": true, "notification": true, "import": true}
 
 func Load(path string) (Config, error) {
@@ -43,131 +95,17 @@ func Load(path string) (Config, error) {
 	}
 	return Parse(string(b))
 }
+
 func Parse(s string) (Config, error) {
 	var c Config
-	scanner := bufio.NewScanner(strings.NewReader(s))
-	section := ""
-	inPlugin := false
-	var cur *Plugin
-	for scanner.Scan() {
-		raw := scanner.Text()
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if !strings.HasPrefix(raw, " ") && strings.HasSuffix(line, ":") {
-			section = strings.TrimSuffix(line, ":")
-			if !allowedTop[section] {
-				return c, fmt.Errorf("unknown top-level section %q", section)
-			}
-			inPlugin = false
-			continue
-		}
-		if section == "plugins" && strings.HasPrefix(line, "- ") {
-			p := Plugin{}
-			c.Plugins = append(c.Plugins, p)
-			cur = &c.Plugins[len(c.Plugins)-1]
-			inPlugin = true
-			kv := strings.TrimSpace(strings.TrimPrefix(line, "- "))
-			if kv != "" {
-				setPlugin(cur, kv)
-			}
-			continue
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			return c, fmt.Errorf("invalid line %q", line)
-		}
-		key := strings.TrimSpace(parts[0])
-		val := unquote(strings.TrimSpace(parts[1]))
-		if inPlugin && cur != nil {
-			setPlugin(cur, key+":"+val)
-			continue
-		}
-		switch section {
-		case "server":
-			if key == "public_url" {
-				c.Server.PublicURL = val
-			} else if key == "listen" {
-				c.Server.Listen = val
-			} else if key == "environment" {
-				c.Server.Environment = val
-			} else {
-				return c, fmt.Errorf("unknown server key %q", key)
-			}
-		case "database":
-			if key == "dsn" {
-				c.Database.DSN = val
-			} else {
-				return c, fmt.Errorf("unknown database key %q", key)
-			}
-		case "tls":
-			if key == "mode" {
-				c.TLS.Mode = val
-			} else if key == "cert_path" {
-				c.TLS.CertPath = val
-			} else if key == "key_path" {
-				c.TLS.KeyPath = val
-			} else {
-				return c, fmt.Errorf("unknown tls key %q", key)
-			}
-		case "authentik":
-			if key == "enabled" {
-				c.Authentik.Enabled = val == "true"
-			} else if key == "base_url" {
-				c.Authentik.BaseURL = val
-			} else if key == "oidc_client_id" {
-				c.Authentik.OIDCClientID = val
-			} else if key == "scim_base_url" {
-				c.Authentik.SCIMBaseURL = val
-			} else {
-				return c, fmt.Errorf("unknown authentik key %q", key)
-			}
-		case "roles":
-			if key == "global_admin_group" {
-				c.Roles.GlobalAdminGroup = val
-			} else if key == "domain_manager_group" {
-				c.Roles.DomainManagerGroup = val
-			} else if key == "scoped_domain_group_prefix" {
-				c.Roles.ScopedDomainGroupPrefix = val
-			} else {
-				return c, fmt.Errorf("unknown roles key %q", key)
-			}
-		case "render":
-			if key == "staging_dir" {
-				c.Render.StagingDir = val
-			} else if key == "applied_dir" {
-				c.Render.AppliedDir = val
-			} else if key == "override_dir" {
-				c.Render.OverrideDirs = append(c.Render.OverrideDirs, val)
-			} else {
-				return c, fmt.Errorf("unknown render key %q", key)
-			}
-		default:
-			return c, fmt.Errorf("key outside section %q", line)
-		}
+	dec := yaml.NewDecoder(bytes.NewBufferString(s))
+	dec.KnownFields(true)
+	if err := dec.Decode(&c); err != nil {
+		return Config{}, err
 	}
-	return c, scanner.Err()
+	return c, nil
 }
-func setPlugin(p *Plugin, kv string) {
-	parts := strings.SplitN(kv, ":", 2)
-	if len(parts) != 2 {
-		return
-	}
-	k := strings.TrimSpace(parts[0])
-	v := unquote(strings.TrimSpace(parts[1]))
-	switch k {
-	case "name":
-		p.Name = v
-	case "seam":
-		p.Seam = v
-	case "image":
-		p.Image = v
-	case "endpoint":
-		p.Endpoint = v
-	}
-}
-func unquote(s string) string { return strings.Trim(s, " \t\"") }
+
 func (c Config) Validate() error {
 	if c.Server.PublicURL == "" {
 		return errors.New("server.public_url required")
@@ -226,6 +164,7 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
+
 func samePath(a, b string) bool {
 	aa := filepath.Clean(a)
 	bb := filepath.Clean(b)

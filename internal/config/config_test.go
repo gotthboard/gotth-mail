@@ -50,6 +50,12 @@ func TestRejectUnknownTopLevel(t *testing.T) {
 		t.Fatal("expected unknown top-level rejection")
 	}
 }
+func TestRejectUnknownPluginKey(t *testing.T) {
+	_, err := Parse(good + "  - name: \"bad\"\n    seam: \"dns\"\n    image: \"stub:v0\"\n    endpoint: \"dns:9443\"\n    docker_socket: true\n")
+	if err == nil {
+		t.Fatal("expected unknown plugin key rejection")
+	}
+}
 func TestRejectProductionDevSelfSigned(t *testing.T) {
 	c, err := Parse(good)
 	if err != nil {

@@ -21,6 +21,50 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-16 01:23 CDT — Fix v0 admission blockers from cold review
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `cmd/gmf/main.go`
+- `cmd/gmf/main_test.go`
+- `docs/CHANGELOG.md`
+- `go.mod`
+- `go.sum`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/apply/apply.go`
+- `internal/audit/audit.go`
+- `internal/config/config.go`
+- `internal/config/config_test.go`
+- `internal/plugin/grpc.go`
+- `internal/plugin/grpc_test.go`
+- `internal/plugin/plugin.go`
+- `internal/plugin/plugin_test.go`
+- `internal/render/render.go`
+- `internal/store/sql.go`
+- `internal/store/sql_test.go`
+- `internal/store/store.go`
+- `migrations/0001_initial.sql`
+- `proto/gophermailforge/plugin/v1/plugin.pb.go`
+- `proto/gophermailforge/plugin/v1/plugin_grpc.pb.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v0.foundation/evidence/2026-07-14-v0-foundation-implementation.md`
+
+Explanation:
+
+Fixed the concrete v0 admission blockers found by cold review instead of merging a stub foundation. The CLI render/diff/apply path now uses real file-backed staged state: render writes a content-addressed staged directory, diff compares the staged set against the currently applied set, and apply requires an operator-provided `--confirm <staged-id>` before marking the generated set as applied. The apply library can now persist the applied marker in the configured applied directory while preserving audit emission.
+
+The HTTP API shell now exposes the required v0 control-plane routes for effective config, render, render diff, render apply, audit event listing, plugin listing, plugin health, status, health/readiness, and authz explain, with method gates instead of silent success. Audit persistence now includes source IP and user-agent fields and a SQL-backed writer that stores redacted before/after payloads. The initial Postgres schema now enforces documented enum/status/seam constraints and rejects enabled plugin registrations without service identity credentials where the database can enforce it directly.
+
+The config loader now uses a real YAML decoder with known-field rejection instead of a hand-rolled colon scanner, including rejection of unknown nested plugin keys. The plugin control transport now uses generated protobuf/gRPC bindings from `plugin.proto`, metadata for correlation/service identity, context deadlines, and canonical gRPC status codes rather than private JSON structs and string errors.
+
+Verification:
+
+- Confirmed `go test ./...` passes after the admission fixes.
+- Added regression coverage for staged CLI render/apply confirmation behavior, required API shell routes, SQL audit source persistence, database constraints, YAML unknown-field rejection, and protobuf/metadata/status-code gRPC behavior.
+
 ### 2026-07-14 23:59 CDT — Replace SQLite migration harness with embedded Postgres
 
 Commit: current commit; hash assigned by Git after commit

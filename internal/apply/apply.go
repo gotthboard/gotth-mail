@@ -9,8 +9,9 @@ import (
 )
 
 type Gate struct {
-	Audit   audit.Writer
-	Applied *render.Set
+	Audit      audit.Writer
+	Applied    *render.Set
+	AppliedDir string
 }
 
 func (g *Gate) Apply(ctx context.Context, actor audit.ActorRef, staged render.Set, confirm string) error {
@@ -20,6 +21,16 @@ func (g *Gate) Apply(ctx context.Context, actor audit.ActorRef, staged render.Se
 	before := ""
 	if g.Applied != nil {
 		before = g.Applied.ID
+	}
+	if g.AppliedDir != "" {
+		current, err := render.ReadCurrent(g.AppliedDir)
+		if err != nil {
+			return err
+		}
+		before = current.ID
+		if err := render.MarkApplied(g.AppliedDir, staged); err != nil {
+			return err
+		}
 	}
 	g.Applied = &staged
 	if g.Audit != nil {

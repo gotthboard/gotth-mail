@@ -10,13 +10,13 @@ v0 foundation implementation now exists. New features still start with missing e
 
 | Subsystem | Required harnesses | Initial state | High-risk gaps |
 | --- | --- | --- | --- |
-| Config/render/apply | unit, golden render, audit integration | initial v0 tests in `internal/config`, `internal/render`, `internal/apply` | future daemon-specific renderers still missing |
-| Store/migrations | migration, constraint, upgrade/downgrade where safe | initial v0 migration/schema helper tests plus embedded Postgres SQL execution tests in `internal/store` | downgrade path deferred beyond v0 |
-| Audit/authz | unit, negative, fail-closed integration | initial v0 audit redaction and authz explain tests in `internal/audit` and `internal/authz` | richer integration coverage required as mutations expand |
-| Plugin runtime | protobuf contract, authenticated/unauthenticated gRPC, failure isolation | initial v0 proto contract, plugin control tests, and bufconn gRPC transport tests in `internal/plugin` and `test/contract` | generated protobuf bindings remain future work |
+| Config/render/apply | unit, golden render, audit integration | v0 tests in `internal/config`, `internal/render`, `internal/apply`, and CLI staged/apply smoke in `cmd/gmf` | future daemon-specific renderers still missing |
+| Store/migrations | migration, constraint, upgrade/downgrade where safe | v0 migration/schema helper tests plus embedded Postgres SQL execution tests in `internal/store`, including enum/check constraints and SQL audit persistence | downgrade path deferred beyond v0 |
+| Audit/authz | unit, negative, fail-closed integration | v0 audit redaction, SQL audit source persistence, and authz explain tests in `internal/audit`, `internal/store`, and `internal/authz` | richer integration coverage required as mutations expand |
+| Plugin runtime | protobuf contract, authenticated/unauthenticated gRPC, failure isolation | v0 generated protobuf bindings, metadata/deadline/status-code plugin control tests, and bufconn gRPC transport tests in `internal/plugin` and `test/contract` | future plugin implementations still missing |
 | Daemon contracts | Postfix/Dovecot/Rspamd contract and negative tests | missing | fake success, Authentik-dependent mail path |
 | DNS/TLS/ACME | unit, doctor, reference integration | initial v0 TLS config validation tests in `internal/config` | ACME implementation and doctor checks deferred |
-| Diagnostics/smoke | CLI/API, machine-readable output, reference Compose smoke | initial v0 CLI/API smoke, contract checks, and Docker build smoke evidence | reference Compose runtime smoke still deferred |
+| Diagnostics/smoke | CLI/API, machine-readable output, reference Compose smoke | v0 CLI staged render/apply smoke, API shell route tests, contract checks, and Docker build smoke evidence | reference Compose runtime smoke still deferred |
 | OIDC/Auth/SCIM | token validation, replay, SCIM success/failure, Authentik-compatible integration | missing | unsigned-claim trust, provisioning bypass |
 | App passwords | verifier-only storage, Dovecot auth, secret-once behavior | missing | plaintext/replay/exposure |
 | Backup/import/rollback | isolated restore, import preview/apply binding, no silent weakening | missing | fake rollback, credential weakening |
