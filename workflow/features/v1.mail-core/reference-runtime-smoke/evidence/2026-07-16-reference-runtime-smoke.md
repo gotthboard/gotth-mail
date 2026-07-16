@@ -13,7 +13,7 @@ Added real reference runtime services:
 - Postfix container running `postfix start-fg`
 - Dovecot container running `dovecot -F`
 - Rspamd container running `rspamd -f` with generated DKIM key material
-- webmail visibility container exposing the Maildir over HTTP for smoke proof
+- Roundcube external webmail provider container wired to Dovecot IMAP and Postfix SMTP
 
 Added daemon/config integration for the reference runtime:
 
@@ -31,7 +31,7 @@ Added `scripts/reference-runtime-smoke.sh`, which starts the reference Compose s
 - real Postfix accepts SMTP for `alias@example.test` through the same policy socket
 - alias expansion delivers the message into `smoke@example.test` Maildir
 - real Dovecot accepts IMAP login using generated GopherMailForge-derived auth/userdb material and returns the delivered message subject
-- webmail visibility can fetch the delivered Maildir message body over HTTP
+- Roundcube login succeeds over HTTP using the smoke mailbox and its IMAP-backed mail view exposes the delivered message subject
 - real Rspamd runs in the Postfix milter path, DKIM-signs the delivered message, has generated DKIM material, and passes `rspamadm configtest`
 
 ## Verification performed
@@ -51,7 +51,7 @@ reference runtime smoke passed:
 - GopherMailForge daemon contracts reachable
 - real Postfix queried the GopherMailForge policy socket, rejected an unknown recipient, accepted SMTP, and delivered alias mail to Maildir
 - real Dovecot used generated GopherMailForge-derived auth/userdb material and IMAP login/read succeeded
-- webmail provider exposed delivered Maildir message
+- Roundcube external webmail provider exposed the delivered message through its IMAP-backed mail view
 - real Rspamd ran in the Postfix milter path, DKIM-signed the delivered message, and validated config
 ```
 
@@ -66,9 +66,9 @@ Covered behavior:
 - alias delivery from `alias@example.test` to `smoke@example.test` works
 - real IMAP login/read works through Dovecot using generated auth/userdb material
 - DKIM runtime key material exists, Rspamd config validates, and the delivered message contains `DKIM-Signature`
-- selected webmail visibility sees the delivered message body
+- selected Roundcube webmail provider visibility sees the delivered message through its IMAP-backed mail view
 
-No accepted gap remains for the original root blocker.
+No accepted gap remains for the original root blocker. The webmail proof is not a Maildir file-server check; it uses the selected Roundcube provider login and mail view backed by Dovecot IMAP.
 
 ## Remaining root action
 

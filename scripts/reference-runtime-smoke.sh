@@ -47,7 +47,7 @@ wait_tcp postfix 25
 wait_tcp dovecot 143
 wait_tcp rspamd 11332
 wait_tcp rspamd 11333
-wait_tcp webmail 8080
+wait_tcp webmail 80
 
 curl -fsS -H 'X-Correlation-ID: smoke' http://127.0.0.1:8080/internal/v1/postfix/recipients/smoke@example.test | grep '"decision":"ok"' >/dev/null
 curl -fsS -H 'X-Correlation-ID: smoke' http://127.0.0.1:8080/internal/v1/rspamd/dkim/example.test | grep '"decision":"ok"' >/dev/null
@@ -114,9 +114,30 @@ grep "a OK" /tmp/imap.out >/dev/null
 grep "GopherMailForge smoke" /tmp/imap.out >/dev/null'
 
 msg_path=$($DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T postfix sh -lc 'find /mail/example.test/smoke -type f | head -1')
-msg_rel=${msg_path#/mail/}
-curl -fsS --path-as-is "http://127.0.0.1:8081/$msg_rel" | tee /tmp/gmf-smoke-message.out | grep 'smoke-body-20260716' >/dev/null
+$DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T postfix sh -lc "cat '$msg_path'" | tee /tmp/gmf-smoke-message.out | grep 'smoke-body-20260716' >/dev/null
 grep '^DKIM-Signature:' /tmp/gmf-smoke-message.out >/dev/null
+
+curl -fsS -c /tmp/gmf-roundcube.cookie http://127.0.0.1:8081/ -o /tmp/gmf-roundcube-login.html
+roundcube_token=$(sed -n 's/.*name="_token" value="\([^"]*\)".*/\1/p' /tmp/gmf-roundcube-login.html | head -1)
+test -n "$roundcube_token"
+curl -fsS -L -b /tmp/gmf-roundcube.cookie -c /tmp/gmf-roundcube.cookie \
+  -d "_token=$roundcube_token" \
+  -d "_task=login" \
+  -d "_action=login" \
+  -d "_timezone=UTC" \
+  -d "_url=" \
+  -d "_user=smoke@example.test" \
+  -d "_pass=smoke-secret" \
+  'http://127.0.0.1:8081/?_task=login' -o /tmp/gmf-roundcube-mail.html
+
+for _ in $(seq 1 30); do
+  curl -fsS -b /tmp/gmf-roundcube.cookie 'http://127.0.0.1:8081/?_task=mail&_mbox=INBOX' -o /tmp/gmf-roundcube-inbox.html
+  if grep 'GopherMailForge smoke' /tmp/gmf-roundcube-inbox.html >/dev/null; then break; fi
+  curl -fsS -b /tmp/gmf-roundcube.cookie 'http://127.0.0.1:8081/?_task=mail&_action=list&_mbox=INBOX&_remote=1' -o /tmp/gmf-roundcube-list.json || true
+  if grep 'GopherMailForge smoke' /tmp/gmf-roundcube-list.json >/dev/null; then break; fi
+  sleep 1
+done
+grep -E 'GopherMailForge smoke' /tmp/gmf-roundcube-inbox.html /tmp/gmf-roundcube-list.json >/dev/null
 
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T rspamd sh -lc 'test -s /run/rspamd/dkim/example.test.mail.key && test -s /run/rspamd/dkim/example.test.mail.txt && rspamadm configtest >/tmp/rspamd-configtest.out && grep -i "syntax OK" /tmp/rspamd-configtest.out >/dev/null'
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color gophermailforge | grep 'postfix policy recipient=alias@example.test decision=ok' >/dev/null
@@ -127,6 +148,6 @@ reference runtime smoke passed:
 - GopherMailForge daemon contracts reachable
 - real Postfix queried the GopherMailForge policy socket, rejected an unknown recipient, accepted SMTP, and delivered alias mail to Maildir
 - real Dovecot used generated GopherMailForge-derived auth/userdb material and IMAP login/read succeeded
-- webmail provider exposed delivered Maildir message
+- Roundcube external webmail provider exposed the delivered message through its IMAP-backed mail view
 - real Rspamd ran in the Postfix milter path, DKIM-signed the delivered message, and validated config
 OK

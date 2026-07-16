@@ -115,17 +115,19 @@ services:
       - "11333:11333"
       - "11334:11334"
   webmail:
-    image: alpine:3.22
-    command:
-      - /bin/sh
-      - -lc
-      - |
-        apk add --no-cache busybox-extras >/dev/null
-        exec httpd -f -p 8080 -h /mail
-    volumes:
-      - maildata:/mail:ro
+    image: roundcube/roundcubemail:1.6.x-apache
+    environment:
+      ROUNDCUBEMAIL_DEFAULT_HOST: dovecot
+      ROUNDCUBEMAIL_DEFAULT_PORT: "143"
+      ROUNDCUBEMAIL_SMTP_SERVER: postfix
+      ROUNDCUBEMAIL_SMTP_PORT: "25"
+      ROUNDCUBEMAIL_USERNAME_DOMAIN: example.test
+    depends_on:
+      - dovecot
+      - postfix
+      - external-webmail-plugin
     ports:
-      - "8081:8080"
+      - "8081:80"
   external-webmail-plugin:
     build:
       context: ../..
