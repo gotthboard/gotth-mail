@@ -80,7 +80,7 @@ required_verification = ["git diff --check", "go test ./...", "backup/import/bul
 [[root_features]]
 id = "v4.webmail"
 title = "v4 Custom Webmail"
-state = "planned"
+state = "in_progress"
 prd = "docs/prd/PRD-v4-webmail.md"
 architecture = "docs/architecture/v4-webmail.md"
 implementation_spec = "docs/implementation/v4-webmail.md"

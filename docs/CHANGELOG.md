@@ -21,9 +21,39 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-16 12:55 CDT — Implement v3 ops, import, and mature admin workflows
+### 2026-07-16 13:15 CDT — Draft v4 custom webmail protocol seams (not admitted)
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/webmail/webmail.go`
+- `internal/webmail/webmail_test.go`
+- `docs/CHANGELOG.md`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/features/v4.webmail/README.md`
+- `workflow/features/v4.webmail/provider-imap-compose/README.md`
+- `workflow/features/v4.webmail/provider-imap-compose/evidence/2026-07-16-provider-imap-compose.md`
+- `workflow/features/v4.webmail/search-security-ux/README.md`
+- `workflow/features/v4.webmail/search-security-ux/evidence/2026-07-16-search-security-ux.md`
+- `workflow/features/v4.webmail/evidence/2026-07-16-v4-root-completion.md`
+
+Explanation:
+
+Drafted the v4 custom webmail protocol seam implementation: external-provider continuity, folder list, message list/read, pagination/windowing, quota display, current-folder search, draft save, submit, send failure reporting, and mandatory OpenPGP/MIME signing structure validation for outbound sends. The webmail sender rejects unsigned or mismatched signing identity attempts and records audit metadata without treating OIDC as SMTP.
+
+Added MIME/HTML safety foundations: script stripping, event-handler blocking, javascript URL blocking, remote image blocking, CSP baseline, attachment filename traversal sanitization, and oversized attachment fallback behavior. Webmail remains a provider/client model and does not replace Dovecot/SMTP or mutate control-plane state directly.
+
+Verification:
+
+- Confirmed `go test ./internal/webmail` passes for seam/model draft coverage.
+- Confirmed `git diff --check -- .` passes.
+- Confirmed `go test ./...` passes.
+
+### 2026-07-16 12:55 CDT — Implement v3 ops, import, and mature admin workflows
+
+Commit: efbfa3b
 
 Affected files:
 
