@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GopherMailForge"
 profile = "medium"
-active_feature = "v1.mail-core.first-plugins"
+active_feature = "v1.mail-core.diagnostics-smoke-snapshots"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -229,7 +229,7 @@ verification = ["authenticated health/version/capability checks", "plugin failur
 id = "v1.mail-core.diagnostics-smoke-snapshots"
 root = "v1.mail-core"
 title = "Doctor, lookup debugger, trace, queue visibility, smoke tests, snapshots"
-state = "planned"
+state = "done"
 path = "workflow/features/v1.mail-core/diagnostics-smoke-snapshots"
 source_path = "internal/diag"
 branch = "workflow/feature/v1.mail-core.diagnostics-smoke-snapshots"

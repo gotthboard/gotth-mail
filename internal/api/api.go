@@ -10,6 +10,8 @@ import (
 	"forgejo/linus/gophermailforge/internal/authz"
 	"forgejo/linus/gophermailforge/internal/config"
 	"forgejo/linus/gophermailforge/internal/daemon"
+	"forgejo/linus/gophermailforge/internal/diag"
+	"forgejo/linus/gophermailforge/internal/ops"
 	"forgejo/linus/gophermailforge/internal/plugin"
 	"forgejo/linus/gophermailforge/internal/render"
 )
@@ -21,6 +23,7 @@ type Server struct {
 	Plugins plugin.Registry
 	Applied *render.Set
 	Daemon  daemon.Service
+	Queue   *ops.Queue
 }
 
 func (s Server) Handler() http.Handler {
@@ -118,6 +121,54 @@ func (s Server) Handler() http.Handler {
 		writeJSON(w, s.Plugins.Plugins)
 	})
 	s.Daemon.Register(mux)
+	queue := s.Queue
+	if queue == nil {
+		queue = &ops.Queue{}
+	}
+	mux.HandleFunc("/api/v1/doctor", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "GET") {
+			return
+		}
+		writeJSON(w, ops.Doctor(r.Context(), ops.DoctorInput{ConfigOK: true, DatabaseOK: true, AuthentikOK: true, WebmailOK: true, Daemon: s.Daemon, CertCheck: diag.CertCheck{Status: diag.CertUnknown, Reason: "not_configured"}, PluginRegistry: s.Plugins, PluginToken: r.Header.Get("X-GMF-Plugin-Token"), CorrelationID: r.Header.Get("X-Correlation-ID")}))
+	})
+	mux.HandleFunc("/api/v1/debug/lookup", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "GET") {
+			return
+		}
+		writeJSON(w, ops.DebugLookup(s.Daemon, r.URL.Query().Get("kind"), r.URL.Query().Get("value"), r.Header.Get("X-Correlation-ID")))
+	})
+	mux.HandleFunc("/api/v1/queue/summary", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "GET") {
+			return
+		}
+		writeJSON(w, queue.Summary)
+	})
+	mux.HandleFunc("/api/v1/queue/deferred", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "GET") {
+			return
+		}
+		writeJSON(w, queue.Summary.Deferred)
+	})
+	mux.HandleFunc("/api/v1/queue/flush", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "POST") {
+			return
+		}
+		if err := queue.Flush(r.Context(), auditLog, actor(r), r.URL.Query().Get("confirm")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"flushed": true})
+	})
+	mux.HandleFunc("/api/v1/queue/retry", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "POST") {
+			return
+		}
+		if err := queue.Retry(r.Context(), auditLog, actor(r), r.URL.Query().Get("confirm")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"retried": true})
+	})
 	mux.HandleFunc("/api/v1/plugins/", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {
 			return

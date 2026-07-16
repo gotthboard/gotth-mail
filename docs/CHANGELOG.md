@@ -21,6 +21,33 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-16 01:56 CDT — Add v1 diagnostics, queue, smoke-result, and snapshot surfaces
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `docs/CHANGELOG.md`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/ops/ops.go`
+- `internal/ops/ops_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/diagnostics-smoke-snapshots/evidence/2026-07-16-diagnostics-smoke-snapshots.md`
+
+Explanation:
+
+Completed the `v1.mail-core.diagnostics-smoke-snapshots` child by adding machine-readable doctor aggregation, lookup debugging, mail-flow trace modeling, queue visibility/mutations, smoke-result modeling, and snapshot capture. Queue flush/retry require explicit confirmations and emit audit events. Snapshots are explicitly marked as not rollback, avoiding fake safety. The API handler now exposes doctor, debug lookup, queue summary/deferred, and queue flush/retry routes.
+
+This does not mark the v1 root complete. The implementation includes smoke-result modeling but has not yet proven a live reference Compose SMTP/IMAP/DKIM/webmail mail-flow smoke with real daemons. That root gap is recorded in workflow evidence and the global coverage map.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Added tests for doctor status aggregation, lookup/debug trace shape, queue confirmation/audit behavior, snapshot-not-rollback semantics, and API route wiring.
+
 ### 2026-07-16 01:50 CDT — Add first v1 mechanism plugin containers
 
 Commit: current commit; hash assigned by Git after commit
