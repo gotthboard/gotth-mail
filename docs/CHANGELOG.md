@@ -21,9 +21,281 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-16 01:23 CDT — Fix v0 admission blockers from cold review
+### 2026-07-16 10:22 CDT — Clarify exact-user OpenPGP identity binding
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `docs/prd/PRD.md`
+- `docs/prd/PRD-v4-webmail.md`
+- `docs/architecture/v4-webmail.md`
+- `docs/implementation/v4-webmail.md`
+- `docs/prd/PRD-v5-notifications.md`
+- `docs/architecture/v5-notifications.md`
+- `docs/implementation/v5-notifications.md`
+- `workflow.toml`
+- `workflow/COVERAGE.md`
+- `workflow/features/v5.notifications/openpgp-signed-email/evidence/2026-07-16-openpgp-requirement.md`
+
+Explanation:
+
+Tightened the OpenPGP requirement so it cannot be misread as domain provenance. DKIM answers which domain/server handled a message; GopherMailForge requires exact-user-origin proof. Every outbound email signature must verify to exactly one configured active user or system notification identity, and that identity must be allowed to assert the message `From`/`Sender`. Ambiguous, unmapped, shared, revoked, expired, disabled, or mismatched signing keys fail closed and are treated as unsigned/invalid.
+
+Verification:
+
+- Must pass `git diff --check -- .`.
+- Must pass `go test ./...`.
+
+### 2026-07-16 10:21 CDT — Require OpenPGP signing for every outbound email
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `docs/prd/PRD.md`
+- `docs/prd/PRD-v4-webmail.md`
+- `docs/architecture/v4-webmail.md`
+- `docs/implementation/v4-webmail.md`
+- `docs/prd/PRD-v5-notifications.md`
+- `docs/architecture/v5-notifications.md`
+- `docs/implementation/v5-notifications.md`
+- `workflow.toml`
+- `workflow/COVERAGE.md`
+- `workflow.events.jsonl`
+- `workflow/features/v5.notifications/openpgp-signed-email/README.md`
+- `workflow/features/v5.notifications/openpgp-signed-email/evidence/2026-07-16-openpgp-requirement.md`
+
+Explanation:
+
+Made Danny's OpenPGP requirement canonical: every outbound email must be OpenPGP/MIME signed. DKIM remains required as domain/server proof, but it is not accepted as user-origin proof. Missing, revoked, expired, disabled, mismatched, or failed signing keys block send. The system must not silently fall back to unsigned email for convenience, notification delivery, resend, approval, or automated mail.
+
+The requirement is recorded as a global product invariant, tied into v4 compose/send behavior, and added to v5 notification/email backend scope through a new planned feature `v5.notifications.openpgp-signed-email`. Verification requirements now include OpenPGP/MIME signed outbound email tests, no-unsigned-fallback tests, key-state rejection tests, identity mismatch tests, and audit fingerprint/signature-status tests.
+
+Verification:
+
+- Must pass `git diff --check -- .`.
+- Must pass `go test ./...`.
+
+### 2026-07-16 09:03 CDT — Finish v1 mail core root
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `cmd/gmf/main.go`
+- `cmd/gmf/main_test.go`
+- `cmd/gophermailforge/main.go`
+- `internal/admin/admin.go`
+- `internal/admin/admin_test.go`
+- `internal/api/api.go`
+- `internal/httpui/httpui.go`
+- `internal/httpui/httpui_test.go`
+- `internal/plugin/seams.go`
+- `internal/plugin/seams_test.go`
+- `scripts/reference-runtime-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/evidence/2026-07-16-v1-root-completion.md`
+- `workflow/features/v1.mail-core/review/2026-07-16-root-admission-review-final.md`
+- v1 evidence/changelog files with historical commit-hash cleanup
+
+Explanation:
+
+Finished the v1 mail-core root after a cold admission review rejected the previous branch as overclaimed. The real Postfix/Dovecot/Rspamd/Roundcube reference smoke was already passing, but v1 still lacked root admission integrity and several declared v1 surfaces. This change adds the missing `gmf doctor --format text|json` CLI, a minimal server-rendered mail admin UI with domain/user/alias CRUD backing store, DNS/DKIM/doctor/lookup/plugin screens, seam-specific first-plugin service contracts for DNS export, certificate/manual ACME failure, backup verification, and Roundcube webmail config, and reference-runtime doctor proof that ACME/manual-cert behavior fails loudly instead of pretending success for `example.test`.
+
+The reference smoke SMTP sections now use deterministic Python `smtplib` clients rather than timing-sensitive `printf | nc` scripting. Historical v1 changelog and evidence placeholders were replaced with real commit hashes. `workflow.toml` now marks `v1.mail-core` done and records root completion evidence/review.
+
+Verification:
+
+- Must pass `go test ./...`.
+- Must pass `git diff --check -- .`.
+- Must pass `scripts/reference-runtime-smoke.sh` against the reference Compose stack.
+
+### 2026-07-16 02:11 CDT — Add v1 reference runtime smoke
+
+Commit: 9f1aa30fb3920aa2ba4ccc30ed3cdf6088de3d5a
+
+Affected files:
+
+- `cmd/gophermailforge/main.go`
+- `compose/reference/docker-compose.yml`
+- `compose/reference/dovecot/dovecot.conf`
+- `compose/reference/postfix/main.cf`
+- `compose/reference/postfix/virtual_aliases`
+- `compose/reference/postfix/virtual_mailboxes`
+- `compose/reference/rspamd/local.d/dkim_signing.conf`
+- `compose/reference/rspamd/local.d/worker-controller.inc`
+- `compose/reference/rspamd/local.d/worker-normal.inc`
+- `compose/reference/rspamd/local.d/worker-proxy.inc`
+- `scripts/reference-runtime-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/reference-runtime-smoke/README.md`
+- `workflow/features/v1.mail-core/reference-runtime-smoke/evidence/2026-07-16-reference-runtime-smoke.md`
+- `workflow/features/v1.mail-core/review/2026-07-16-root-admission-review.md`
+
+Explanation:
+
+Added the narrow `v1.mail-core.reference-runtime-smoke` child required by root admission review. Reference Compose now runs real Postfix, Dovecot, Rspamd, and selected Roundcube external webmail provider service against a seeded GopherMailForge reference fixture instead of only modeling daemon contracts. The smoke harness starts the Compose stack, checks the internal daemon HTTP/JSON contracts, proves Postfix recipient policy uses the GopherMailForge policy socket by rejecting `nobody@example.test`, sends a real SMTP message to `alias@example.test`, proves alias delivery into the `smoke@example.test` Maildir, logs in over real Dovecot IMAP using generated GopherMailForge-derived auth/userdb material, fetches the delivered subject, logs into Roundcube over HTTP and verifies the delivered message appears through Roundcube’s IMAP-backed mail view, and proves Rspamd is in the Postfix milter path by requiring `DKIM-Signature` on the delivered message plus valid DKIM material/config.
+
+This fixes the root blocker recorded by the previous v1 admission review, but it does not itself admit the root. A fresh cold root review should inspect this commit before opening a v1 admission PR.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Confirmed `git diff --check -- .` passes.
+- Confirmed `scripts/reference-runtime-smoke.sh` passes against the real reference Compose stack.
+
+### 2026-07-16 01:56 CDT — Add v1 diagnostics, queue, smoke-result, and snapshot surfaces
+
+Commit: f7f8162c93dac3f7ddc024c135936d553db09fbc
+
+Affected files:
+
+- `docs/CHANGELOG.md`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/ops/ops.go`
+- `internal/ops/ops_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/diagnostics-smoke-snapshots/evidence/2026-07-16-diagnostics-smoke-snapshots.md`
+
+Explanation:
+
+Completed the `v1.mail-core.diagnostics-smoke-snapshots` child by adding machine-readable doctor aggregation, lookup debugging, mail-flow trace modeling, queue visibility/mutations, smoke-result modeling, and snapshot capture. Queue flush/retry require explicit confirmations and emit audit events. Snapshots are explicitly marked as not rollback, avoiding fake safety. The API handler now exposes doctor, debug lookup, queue summary/deferred, and queue flush/retry routes.
+
+This does not mark the v1 root complete. The implementation includes smoke-result modeling but has not yet proven a live reference Compose SMTP/IMAP/DKIM/webmail mail-flow smoke with real daemons. That root gap is recorded in workflow evidence and the global coverage map.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Added tests for doctor status aggregation, lookup/debug trace shape, queue confirmation/audit behavior, snapshot-not-rollback semantics, and API route wiring.
+
+### 2026-07-16 01:50 CDT — Add first v1 mechanism plugin containers
+
+Commit: 6456a60cb0a5d86ea2ceb4bf83d9ae5e8fa6f8bf
+
+Affected files:
+
+- `Dockerfile`
+- `cmd/gmf-plugin/main.go`
+- `compose/reference/docker-compose.yml`
+- `docs/CHANGELOG.md`
+- `internal/plugin/first.go`
+- `internal/plugin/first_test.go`
+- `test/contract/v1_plugins_contract_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/first-plugins/evidence/2026-07-16-first-plugins.md`
+
+Explanation:
+
+Completed `v1.mail-core.first-plugins` by adding the first mechanism plugin identities and reference container wiring for the selected external webmail provider, manual DNS export, manual/Let’s Encrypt certificate handling, and local filesystem backup storage. The new `gmf-plugin` runner exposes the existing v0 generated protobuf/gRPC `PluginControl` service, so first plugins authenticate with service identity metadata, require deadlines, and report capabilities through the same control contract as the rest of the plugin runtime.
+
+The reference Compose file now includes all four plugin services and still avoids Docker socket mounts. The backup plugin receives only a named `/backup` volume. This patch intentionally does not pretend the seam-specific DNS/cert/backup/webmail APIs are complete; it establishes the first plugin container/control-plane surface and records the remaining live integration work as future scope.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Added tests for first plugin seams/capabilities, authenticated and unauthenticated gRPC control behavior, Dockerfile plugin runner output, required Compose services, and absence of Docker socket mounts.
+
+### 2026-07-16 01:45 CDT — Add v1 DNS/TLS/ACME diagnostics
+
+Commit: 6b8fa6603a0e47580dbc3c6996c6f9a8397aec2b
+
+Affected files:
+
+- `docs/CHANGELOG.md`
+- `internal/diag/dns_tls.go`
+- `internal/diag/dns_tls_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/dns-tls-acme/evidence/2026-07-16-dns-tls-acme.md`
+
+Explanation:
+
+Completed `v1.mail-core.dns-tls-acme` by adding the diagnostic primitives for exact DNS readiness, TLS certificate validation, MTA-STS/TLS-RPT generation, and loud ACME failure reporting. DNS checks now return the documented status enum with expected values, observed values, and remediation text instead of hand-wavy readiness booleans. TLS checks parse certificates, validate expiry windows, and fail on missing SAN coverage. ACME failure construction is explicit and actionable rather than silently falling back to self-signed behavior.
+
+This is deliberately not the full doctor or live ACME plugin. Those belong to later v1 children. This patch provides the deterministic mechanism and tests they will consume.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Added tests for DNS present/missing/mismatch/unsupported states, MTA-STS/TLS-RPT generation, certificate OK/warn/expired/SAN-mismatch behavior, and loud ACME failure output.
+
+### 2026-07-16 01:41 CDT — Generate daemon config for v1 mail core
+
+Commit: d77df0eef449559f03f4075cfe1b35b84590c95c
+
+Affected files:
+
+- `docs/CHANGELOG.md`
+- `internal/render/render.go`
+- `internal/render/render_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/generated-config/evidence/2026-07-16-generated-config.md`
+
+Explanation:
+
+Completed `v1.mail-core.generated-config` by expanding the deterministic render set with daemon-facing generated config files for front/proxy, Postfix, Dovecot, Rspamd, and the selected external webmail provider placeholder. Generated daemon config now points the daemon mechanisms at the v1 internal HTTP/JSON contract endpoints from `v1.mail-core.daemon-contracts` instead of leaving the rendered output as only v0 control-plane/plugin files.
+
+Every generated file now uses the v1 source header form with the generated config set ID and input hash. The render ID is computed from sorted file paths and bodies before source headers are stamped, avoiding a dishonest circular hash while still giving operators traceability from files back to the generated set. Existing staged render/apply behavior remains intact with the larger render set.
+
+Updated workflow state to mark `v1.mail-core.generated-config` done and recorded feature evidence plus the global coverage posture.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Confirmed `git diff --check -- .` passes.
+- Added render tests proving daemon config files exist and carry `generated_config_set` plus `input_hash` source headers.
+
+### 2026-07-16 01:37 CDT — Implement v1 daemon contract surface
+
+Commit: 824faf10b78352124887aa654bac3f8518ae59fe
+
+Affected files:
+
+- `docs/CHANGELOG.md`
+- `go.mod`
+- `go.sum`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/daemon/daemon.go`
+- `internal/daemon/daemon_test.go`
+- `internal/daemon/http.go`
+- `internal/daemon/http_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/daemon-contracts/evidence/2026-07-16-daemon-contracts.md`
+
+Explanation:
+
+Started v1 mail-core after v0 admission by implementing the first manifest child, `v1.mail-core.daemon-contracts`. This adds the internal HTTP/JSON daemon contract surface used by Postfix, Dovecot, and Rspamd. The implementation uses explicit daemon decisions (`ok`, `not_found`, `reject`, `defer`, `error`), correlation IDs, reason codes, and safe diagnostic messages rather than fake success or stringly hidden failures.
+
+Postfix contract coverage now includes domain, recipient, mailbox, alias, sender-login, sender-policy, rate-limit, and transport behavior. Dovecot coverage now includes passdb, userdb, quota, and default sieve behavior, including Authentik/Django-compatible PBKDF2-SHA256 verifier checks and explicit rejection of OIDC tokens as IMAP/SMTP credentials. Rspamd coverage now includes local domains, DKIM key runtime path lookup, signing decisions, and rate signals. The main API handler now registers the `/internal/v1/postfix/*`, `/internal/v1/dovecot/*`, and `/internal/v1/rspamd/*` routes.
+
+Updated workflow state to make `v1.mail-core.daemon-contracts` the active completed child and `v1.mail-core` in progress. Updated workflow evidence and the global coverage map with the remaining v1 gaps assigned to later planned children.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Added contract tests for Postfix happy/failure paths, Dovecot passdb/userdb/quota behavior, Rspamd DKIM/local-domain behavior, malformed JSON/method gates, correlation propagation, and API route wiring.
+
+### 2026-07-16 01:23 CDT — Fix v0 admission blockers from cold review
+
+Commit: 7e6633f
 
 Affected files:
 
@@ -67,7 +339,7 @@ Verification:
 
 ### 2026-07-14 23:59 CDT — Replace SQLite migration harness with embedded Postgres
 
-Commit: current commit; hash assigned by Git after commit
+Commit: 55c9302
 
 Affected files:
 

@@ -7,6 +7,8 @@ import (
 
 	"forgejo/linus/gophermailforge/internal/authz"
 	"forgejo/linus/gophermailforge/internal/config"
+	"forgejo/linus/gophermailforge/internal/daemon"
+	"forgejo/linus/gophermailforge/internal/ops"
 	"forgejo/linus/gophermailforge/internal/plugin"
 )
 
@@ -42,7 +44,7 @@ plugins:
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := Server{Authz: authz.StaticAuthorizer{}, Config: cfg, Plugins: plugin.Registry{Plugins: map[string]plugin.Registration{"stub-dns": {Name: "stub-dns", Enabled: true}}}}.Handler()
+	h := Server{Authz: authz.StaticAuthorizer{}, Config: cfg, Plugins: plugin.Registry{Plugins: map[string]plugin.Registration{"stub-dns": {Name: "stub-dns", Enabled: true, ServiceToken: "tok", Capabilities: []string{"dns.lookup"}}}}, Daemon: daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}}, Queue: &ops.Queue{Summary: ops.QueueSummary{Active: 1, Deferred: []string{"abc"}}}}.Handler()
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodGet, "/healthz"},
 		{http.MethodGet, "/readyz"},
@@ -53,6 +55,12 @@ plugins:
 		{http.MethodPost, "/api/v1/authz/explain"},
 		{http.MethodGet, "/api/v1/plugins"},
 		{http.MethodGet, "/api/v1/plugins/stub-dns/health"},
+		{http.MethodGet, "/internal/v1/postfix/domains/example.test"},
+		{http.MethodGet, "/internal/v1/rspamd/local-domains"},
+		{http.MethodGet, "/api/v1/doctor"},
+		{http.MethodGet, "/api/v1/debug/lookup?kind=recipient&value=postmaster@example.test"},
+		{http.MethodGet, "/api/v1/queue/summary"},
+		{http.MethodGet, "/api/v1/queue/deferred"},
 	} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(tc.method, tc.path, nil))

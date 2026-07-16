@@ -166,3 +166,40 @@ Required tests:
 - no broad remote shell over chat
 - `git diff --check`
 - `go test ./...`
+
+## Mandatory OpenPGP signing for email notifications
+
+Any email notification backend introduced in v5 must OpenPGP-sign every outbound email notification with the responsible user or system notification identity before delivery. Telegram/webhook transports may use their own authenticated transport semantics, but email output is never exempt from the global OpenPGP signing invariant.
+
+Required behavior:
+
+- unsigned email notifications are rejected before delivery;
+- signing key lookup, fingerprint, signature status, and failure reason are auditable;
+- per-user notification emails use that user's signing identity when the message asserts that user as sender;
+- system notifications use a configured system notification signing identity;
+- key rotation/revocation must not allow fallback to unsigned mail;
+- verification tests must prove that outbound notification email contains an OpenPGP/MIME signature and that missing/revoked keys block send.
+
+## OpenPGP email signing contract
+
+Email notification signing contract:
+
+
+Identity binding requirement: verification must resolve the OpenPGP signing key fingerprint to exactly one configured active user or system notification identity, then confirm that identity is allowed to assert the message `From`/`Sender`. Ambiguous, shared, revoked, expired, disabled, or unmapped keys fail closed.
+
+```text
+build bounded notification MIME -> resolve signing identity -> verify key usable -> OpenPGP/MIME sign -> hand to mail transport -> audit fingerprint/signature status
+```
+
+Failure states:
+
+- `signing_key_missing`
+- `signing_key_revoked`
+- `signing_key_expired`
+- `signing_identity_mismatch`
+- `openpgp_sign_failed`
+
+All failure states block delivery and surface in core status. The email backend must not send unsigned mail to preserve alert delivery convenience. That would be security theater.
+
+
+The signature requirement is not merely provenance for a domain or server. Verification must answer exactly which configured user identity signed the message. If the signer cannot be mapped to the asserted From/Sender identity and active user/key binding, the message is treated as unsigned/invalid.

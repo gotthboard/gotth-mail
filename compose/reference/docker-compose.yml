@@ -4,11 +4,16 @@ services:
       context: ../..
     environment:
       GMF_LISTEN: ":8080"
+      GMF_REFERENCE_FIXTURE: "1"
+      GMF_POSTFIX_POLICY_LISTEN: ":10025"
     ports:
       - "8080:8080"
     depends_on:
       - database
-      - authentik
+      - external-webmail-plugin
+      - manual-dns-plugin
+      - cert-plugin
+      - backup-plugin
   database:
     image: postgres:17-alpine
     environment:
@@ -25,3 +30,135 @@ services:
       AUTHENTIK_POSTGRESQL__USER: gmf
       AUTHENTIK_POSTGRESQL__PASSWORD: gmf-dev-only
       AUTHENTIK_POSTGRESQL__NAME: gophermailforge
+  postfix:
+    image: alpine:3.22
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        apk add --no-cache postfix busybox-extras curl jq >/dev/null
+        addgroup -g 5000 vmail || true
+        adduser -D -H -u 5000 -G vmail vmail || true
+        mkdir -p /mail/example.test/smoke/{cur,new,tmp} /mail/example.test/postmaster/{cur,new,tmp}
+        chown -R 5000:5000 /mail
+        cp /reference/postfix/main.cf /etc/postfix/main.cf
+        until curl -fsS http://gophermailforge:8080/healthz >/dev/null; do sleep 1; done
+        curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gophermailforge:8080/internal/v1/postfix/mailboxes/smoke@example.test | jq -e '.decision == "ok"' >/dev/null
+        curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gophermailforge:8080/internal/v1/postfix/mailboxes/postmaster@example.test | jq -e '.decision == "ok"' >/dev/null
+        alias_targets=$$(curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gophermailforge:8080/internal/v1/postfix/aliases/alias@example.test | jq -r 'select(.decision == "ok") | .targets | join(",")')
+        test "$$alias_targets" = "smoke@example.test"
+        printf 'smoke@example.test example.test/smoke/\npostmaster@example.test example.test/postmaster/\n' > /etc/postfix/virtual_mailboxes
+        printf 'alias@example.test %s\n' "$$alias_targets" > /etc/postfix/virtual_aliases
+        postmap lmdb:/etc/postfix/virtual_mailboxes
+        postmap lmdb:/etc/postfix/virtual_aliases
+        postfix check
+        exec postfix start-fg
+    volumes:
+      - maildata:/mail
+      - ./postfix:/reference/postfix:ro
+    depends_on:
+      - gophermailforge
+      - rspamd
+    ports:
+      - "2525:25"
+  dovecot:
+    image: alpine:3.19
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        apk add --no-cache dovecot busybox-extras curl jq >/dev/null
+        addgroup -g 5000 vmail || true
+        adduser -D -H -u 5000 -G vmail vmail || true
+        mkdir -p /mail/example.test/smoke/{cur,new,tmp} /mail/example.test/postmaster/{cur,new,tmp}
+        chown -R 5000:5000 /mail
+        cp /reference/dovecot/dovecot.conf /etc/dovecot/dovecot.conf
+        until curl -fsS http://gophermailforge:8080/healthz >/dev/null; do sleep 1; done
+        curl -fsS -H 'X-Correlation-ID: dovecot-passdb-gen' -H 'Content-Type: application/json' -d '{"username":"smoke@example.test","secret":"smoke-secret","protocol":"imap"}' http://gophermailforge:8080/internal/v1/dovecot/passdb | jq -e '.decision == "ok"' >/dev/null
+        curl -fsS -H 'X-Correlation-ID: dovecot-passdb-gen' http://gophermailforge:8080/internal/v1/dovecot/userdb/smoke@example.test >/tmp/smoke-userdb.json
+        smoke_home=$$(jq -r 'select(.decision == "ok") | .home' /tmp/smoke-userdb.json)
+        smoke_uid=$$(jq -r 'select(.decision == "ok") | .uid' /tmp/smoke-userdb.json)
+        smoke_gid=$$(jq -r 'select(.decision == "ok") | .gid' /tmp/smoke-userdb.json)
+        smoke_hash=$$(doveadm pw -s SHA512-CRYPT -p smoke-secret)
+        printf 'smoke@example.test:%s:%s:%s::%s::\n' "$$smoke_hash" "$$smoke_uid" "$$smoke_gid" "$$smoke_home" > /etc/dovecot/passwd
+        exec dovecot -F
+    volumes:
+      - maildata:/mail
+      - ./dovecot:/reference/dovecot:ro
+    depends_on:
+      - gophermailforge
+    ports:
+      - "2143:143"
+  rspamd:
+    image: alpine:3.22
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        apk add --no-cache rspamd curl jq >/dev/null
+        mkdir -p /run/rspamd/dkim /etc/rspamd/local.d
+        cp /reference/rspamd/local.d/* /etc/rspamd/local.d/
+        until curl -fsS http://gophermailforge:8080/healthz >/dev/null; do sleep 1; done
+        curl -fsS -H 'X-Correlation-ID: rspamd-dkim-gen' http://gophermailforge:8080/internal/v1/rspamd/dkim/example.test | jq -e '.decision == "ok" and .selector == "mail"' >/dev/null
+        curl -fsS -H 'X-Correlation-ID: rspamd-dkim-gen' -H 'Content-Type: application/json' -d '{"domain":"example.test"}' http://gophermailforge:8080/internal/v1/rspamd/signing-decision | jq -e '.decision == "ok"' >/dev/null
+        rspamadm dkim_keygen -d example.test -s mail -k /run/rspamd/dkim/example.test.mail.key >/run/rspamd/dkim/example.test.mail.txt
+        chown -R rspamd:rspamd /run/rspamd/dkim
+        chmod 0400 /run/rspamd/dkim/example.test.mail.key
+        exec rspamd -f -u rspamd -g rspamd
+    volumes:
+      - dkimdata:/run/rspamd/dkim
+      - ./rspamd:/reference/rspamd:ro
+    depends_on:
+      - gophermailforge
+    ports:
+      - "11332:11332"
+      - "11333:11333"
+      - "11334:11334"
+  webmail:
+    image: roundcube/roundcubemail:1.6.x-apache
+    environment:
+      ROUNDCUBEMAIL_DEFAULT_HOST: dovecot
+      ROUNDCUBEMAIL_DEFAULT_PORT: "143"
+      ROUNDCUBEMAIL_SMTP_SERVER: postfix
+      ROUNDCUBEMAIL_SMTP_PORT: "25"
+      ROUNDCUBEMAIL_USERNAME_DOMAIN: example.test
+    depends_on:
+      - dovecot
+      - postfix
+      - external-webmail-plugin
+    ports:
+      - "8081:80"
+  external-webmail-plugin:
+    build:
+      context: ../..
+    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    environment:
+      GMF_PLUGIN_NAME: external-webmail
+      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+  manual-dns-plugin:
+    build:
+      context: ../..
+    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    environment:
+      GMF_PLUGIN_NAME: manual-dns-export
+      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+  cert-plugin:
+    build:
+      context: ../..
+    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    environment:
+      GMF_PLUGIN_NAME: manual-letsencrypt-cert
+      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+  backup-plugin:
+    build:
+      context: ../..
+    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    environment:
+      GMF_PLUGIN_NAME: local-filesystem-backup
+      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+    volumes:
+      - backup-data:/backup
+volumes:
+  backup-data:
+  maildata:
+  dkimdata:

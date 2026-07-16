@@ -69,3 +69,18 @@ Custom webmail must not block the control-plane product.
 - Attachments are handled safely.
 - Mobile/basic workflows are usable.
 - Webmail UI does not bypass core authorization/audit paths for control-plane actions.
+
+## Mandatory OpenPGP signing
+
+Compose/send flows must OpenPGP-sign every outbound email with the sending user's configured signing identity. The UI may expose identity/signature state, but it may not offer a bypass that sends unsigned mail.
+
+Required behavior:
+
+- missing, expired, revoked, disabled, or mismatched signing key blocks send;
+- signing failures are visible to the user and recorded in audit/doctor state;
+- signatures use OpenPGP/MIME for MIME messages rather than ad-hoc headers;
+- canonicalization and signed header/body coverage are specified and tested;
+- DKIM signing remains domain-level proof and does not replace exact-user OpenPGP signatures.
+
+
+The signature requirement is not merely provenance for a domain or server. Verification must answer exactly which configured user identity signed the message. If the signer cannot be mapped to the asserted From/Sender identity and active user/key binding, the message is treated as unsigned/invalid.
