@@ -21,6 +21,31 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-16 11:05 CDT — Implement v2 OIDC sessions
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/authn/oidc.go`
+- `internal/authn/oidc_test.go`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/features/v2.identity-provisioning/oidc-sessions/evidence/2026-07-16-oidc-sessions.md`
+
+Explanation:
+
+Completed the first v2 child, `v2.identity-provisioning.oidc-sessions`. The implementation adds OIDC discovery validation, login state and nonce generation, authorization URL construction, exact redirect URI validation, browser-bound single-use callback state consumption, RS256 ID-token signature verification against JWKS, strict issuer/subject/audience/azp/exp/iat/nbf/nonce claim validation, session creation, and safe token-free error handling. API surfaces expose login start and callback validation without treating OIDC as IMAP/SMTP authentication.
+
+The feature explicitly rejects unsigned `alg=none` tokens and has no unsigned-claim fallback. The next active v2 child is Authentik role mapping and permission simulator coverage.
+
+Verification:
+
+- Must pass `go test ./...`.
+- Must pass `git diff --check -- .`.
+
 ### 2026-07-16 10:50 CDT — Start v2 identity provisioning
 
 Commit: current commit; hash assigned by Git after commit

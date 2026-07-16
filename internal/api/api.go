@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"forgejo/linus/gophermailforge/internal/apply"
 	"forgejo/linus/gophermailforge/internal/audit"
+	"forgejo/linus/gophermailforge/internal/authn"
 	"forgejo/linus/gophermailforge/internal/authz"
 	"forgejo/linus/gophermailforge/internal/config"
 	"forgejo/linus/gophermailforge/internal/daemon"
@@ -17,16 +19,20 @@ import (
 )
 
 type Server struct {
-	Authz     authz.Authorizer
-	Config    config.Config
-	Audit     *audit.MemoryWriter
-	Plugins   plugin.Registry
-	Applied   *render.Set
-	Daemon    daemon.Service
-	Queue     *ops.Queue
-	DNSChecks []diag.DNSRecordCheck
-	CertCheck diag.CertCheck
-	WebmailOK bool
+	Authz                 authz.Authorizer
+	Config                config.Config
+	Audit                 *audit.MemoryWriter
+	Plugins               plugin.Registry
+	Applied               *render.Set
+	Daemon                daemon.Service
+	Queue                 *ops.Queue
+	DNSChecks             []diag.DNSRecordCheck
+	CertCheck             diag.CertCheck
+	WebmailOK             bool
+	OIDCConfig            authn.OIDCConfig
+	OIDCStore             *authn.Store
+	OIDCAuthorizeEndpoint string
+	OIDCJWKS              authn.JWKS
 }
 
 func (s Server) Handler() http.Handler {
@@ -51,6 +57,52 @@ func (s Server) Handler() http.Handler {
 			return
 		}
 		writeJSON(w, map[string]any{"status": "v0-foundation", "mail_stack_complete": false})
+	})
+	mux.HandleFunc("/api/v1/oidc/login", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "GET") {
+			return
+		}
+		store := s.OIDCStore
+		if store == nil {
+			store = authn.NewStore()
+			s.OIDCStore = store
+		}
+		browser := r.Header.Get("X-GMF-Browser-Binding")
+		if browser == "" {
+			http.Error(w, "browser binding required", http.StatusBadRequest)
+			return
+		}
+		start, err := authn.StartLogin(s.OIDCConfig, store, s.OIDCAuthorizeEndpoint, browser, r.URL.Query().Get("redirect"), 10*time.Minute)
+		if err != nil {
+			http.Error(w, authn.SafeOIDCError(err), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, start)
+	})
+	mux.HandleFunc("/api/v1/oidc/callback", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "POST") {
+			return
+		}
+		store := s.OIDCStore
+		if store == nil {
+			http.Error(w, "oidc state store unavailable", http.StatusBadRequest)
+			return
+		}
+		var in struct {
+			State       string `json:"state"`
+			IDToken     string `json:"id_token"`
+			RedirectURI string `json:"redirect_uri"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
+			http.Error(w, "bad oidc callback", http.StatusBadRequest)
+			return
+		}
+		res, err := authn.CompleteCallback(r.Context(), s.OIDCConfig, store, authn.CallbackInput{StateID: in.State, BrowserBindingHash: r.Header.Get("X-GMF-Browser-Binding"), RedirectURI: in.RedirectURI, IDToken: in.IDToken, JWKS: s.OIDCJWKS})
+		if err != nil {
+			http.Error(w, authn.SafeOIDCError(err), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"identity": res.Identity, "session": map[string]any{"id": res.Session.ID, "expires_at": res.Session.ExpiresAt, "auth_method": res.Session.AuthMethod}})
 	})
 	mux.HandleFunc("/api/v1/authz/explain", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "POST") {

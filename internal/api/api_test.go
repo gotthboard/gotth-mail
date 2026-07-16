@@ -74,3 +74,12 @@ plugins:
 		t.Fatalf("method gate status %d", rr.Code)
 	}
 }
+
+func TestOIDCLoginRouteRequiresBrowserBinding(t *testing.T) {
+	h := Server{}.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/oidc/login", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("missing browser binding status %d", rr.Code)
+	}
+}
