@@ -21,6 +21,39 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-16 01:37 CDT — Implement v1 daemon contract surface
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `docs/CHANGELOG.md`
+- `go.mod`
+- `go.sum`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/daemon/daemon.go`
+- `internal/daemon/daemon_test.go`
+- `internal/daemon/http.go`
+- `internal/daemon/http_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/daemon-contracts/evidence/2026-07-16-daemon-contracts.md`
+
+Explanation:
+
+Started v1 mail-core after v0 admission by implementing the first manifest child, `v1.mail-core.daemon-contracts`. This adds the internal HTTP/JSON daemon contract surface used by Postfix, Dovecot, and Rspamd. The implementation uses explicit daemon decisions (`ok`, `not_found`, `reject`, `defer`, `error`), correlation IDs, reason codes, and safe diagnostic messages rather than fake success or stringly hidden failures.
+
+Postfix contract coverage now includes domain, recipient, mailbox, alias, sender-login, sender-policy, rate-limit, and transport behavior. Dovecot coverage now includes passdb, userdb, quota, and default sieve behavior, including Authentik/Django-compatible PBKDF2-SHA256 verifier checks and explicit rejection of OIDC tokens as IMAP/SMTP credentials. Rspamd coverage now includes local domains, DKIM key runtime path lookup, signing decisions, and rate signals. The main API handler now registers the `/internal/v1/postfix/*`, `/internal/v1/dovecot/*`, and `/internal/v1/rspamd/*` routes.
+
+Updated workflow state to make `v1.mail-core.daemon-contracts` the active completed child and `v1.mail-core` in progress. Updated workflow evidence and the global coverage map with the remaining v1 gaps assigned to later planned children.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Added contract tests for Postfix happy/failure paths, Dovecot passdb/userdb/quota behavior, Rspamd DKIM/local-domain behavior, malformed JSON/method gates, correlation propagation, and API route wiring.
+
 ### 2026-07-16 01:23 CDT — Fix v0 admission blockers from cold review
 
 Commit: current commit; hash assigned by Git after commit

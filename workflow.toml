@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GopherMailForge"
 profile = "medium"
-active_feature = "v0.foundation"
+active_feature = "v1.mail-core.daemon-contracts"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -38,7 +38,7 @@ required_verification = ["git diff --check", "go test ./..."]
 [[root_features]]
 id = "v1.mail-core"
 title = "v1 Mail Core"
-state = "planned"
+state = "in_progress"
 prd = "docs/prd/PRD-v1-mail-core.md"
 architecture = "docs/architecture/v1-mail-core.md"
 implementation_spec = "docs/implementation/v1-mail-core.md"
@@ -181,7 +181,7 @@ verification = ["plugin_service credential rejection", "authenticated health/ver
 id = "v1.mail-core.daemon-contracts"
 root = "v1.mail-core"
 title = "HTTP/JSON Postfix, Dovecot, Rspamd internal daemon contracts"
-state = "planned"
+state = "done"
 path = "workflow/features/v1.mail-core/daemon-contracts"
 source_path = "internal/daemon"
 branch = "workflow/feature/v1.mail-core.daemon-contracts"

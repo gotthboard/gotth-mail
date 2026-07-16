@@ -9,6 +9,7 @@ import (
 	"forgejo/linus/gophermailforge/internal/audit"
 	"forgejo/linus/gophermailforge/internal/authz"
 	"forgejo/linus/gophermailforge/internal/config"
+	"forgejo/linus/gophermailforge/internal/daemon"
 	"forgejo/linus/gophermailforge/internal/plugin"
 	"forgejo/linus/gophermailforge/internal/render"
 )
@@ -19,6 +20,7 @@ type Server struct {
 	Audit   *audit.MemoryWriter
 	Plugins plugin.Registry
 	Applied *render.Set
+	Daemon  daemon.Service
 }
 
 func (s Server) Handler() http.Handler {
@@ -115,6 +117,7 @@ func (s Server) Handler() http.Handler {
 		}
 		writeJSON(w, s.Plugins.Plugins)
 	})
+	s.Daemon.Register(mux)
 	mux.HandleFunc("/api/v1/plugins/", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {
 			return
