@@ -60,3 +60,12 @@ Add a narrow child feature, e.g. `v1.mail-core.reference-runtime-smoke`, that wi
 - No v1 admission PR should be opened as complete from this branch yet.
 - Do not start v2 until this root blocker is resolved or explicitly split with an approved exception.
 - This is not userspace breakage yet because the branch has not merged. It would become userspace damage if merged as “v1 Mail Core.”
+
+
+## Follow-up blocker fix evidence
+
+`v1.mail-core.reference-runtime-smoke` was added after this rejection to address the missing runtime proof. The new evidence lives at:
+
+- `workflow/features/v1.mail-core/reference-runtime-smoke/evidence/2026-07-16-reference-runtime-smoke.md`
+
+Do not rewrite this rejected verdict as if it had passed originally. Run a fresh root admission review against the later commit before opening the v1 admission PR.

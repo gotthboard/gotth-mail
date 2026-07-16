@@ -21,6 +21,42 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-16 02:11 CDT — Add v1 reference runtime smoke
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `cmd/gophermailforge/main.go`
+- `compose/reference/docker-compose.yml`
+- `compose/reference/dovecot/dovecot.conf`
+- `compose/reference/dovecot/passwd`
+- `compose/reference/postfix/main.cf`
+- `compose/reference/postfix/virtual_aliases`
+- `compose/reference/postfix/virtual_mailboxes`
+- `compose/reference/rspamd/local.d/worker-controller.inc`
+- `compose/reference/rspamd/local.d/worker-normal.inc`
+- `scripts/reference-runtime-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/reference-runtime-smoke/README.md`
+- `workflow/features/v1.mail-core/reference-runtime-smoke/evidence/2026-07-16-reference-runtime-smoke.md`
+- `workflow/features/v1.mail-core/review/2026-07-16-root-admission-review.md`
+
+Explanation:
+
+Added the narrow `v1.mail-core.reference-runtime-smoke` child required by root admission review. Reference Compose now runs real Postfix, Dovecot, Rspamd, and a selected webmail visibility service against a seeded GopherMailForge reference fixture instead of only modeling daemon contracts. The smoke harness starts the Compose stack, checks the internal daemon HTTP/JSON contracts, sends a real SMTP message to `alias@example.test`, proves alias delivery into the `smoke@example.test` Maildir, logs in over real Dovecot IMAP, fetches the delivered subject, verifies webmail visibility of the delivered body, and validates Rspamd DKIM material/config.
+
+This fixes the root blocker recorded by the previous v1 admission review, but it does not itself admit the root. A fresh cold root review should inspect this commit before opening a v1 admission PR.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Confirmed `git diff --check -- .` passes.
+- Confirmed `scripts/reference-runtime-smoke.sh` passes against the real reference Compose stack.
+
 ### 2026-07-16 01:56 CDT — Add v1 diagnostics, queue, smoke-result, and snapshot surfaces
 
 Commit: current commit; hash assigned by Git after commit

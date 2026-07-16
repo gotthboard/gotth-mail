@@ -4,11 +4,15 @@ services:
       context: ../..
     environment:
       GMF_LISTEN: ":8080"
+      GMF_REFERENCE_FIXTURE: "1"
     ports:
       - "8080:8080"
     depends_on:
       - database
-      - authentik
+      - postfix
+      - dovecot
+      - rspamd
+      - webmail
       - external-webmail-plugin
       - manual-dns-plugin
       - cert-plugin
@@ -29,6 +33,77 @@ services:
       AUTHENTIK_POSTGRESQL__USER: gmf
       AUTHENTIK_POSTGRESQL__PASSWORD: gmf-dev-only
       AUTHENTIK_POSTGRESQL__NAME: gophermailforge
+  postfix:
+    image: alpine:3.22
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        apk add --no-cache postfix busybox-extras >/dev/null
+        addgroup -g 5000 vmail || true
+        adduser -D -H -u 5000 -G vmail vmail || true
+        mkdir -p /mail/example.test/smoke/{cur,new,tmp} /mail/example.test/postmaster/{cur,new,tmp}
+        chown -R 5000:5000 /mail
+        cp /reference/postfix/main.cf /etc/postfix/main.cf
+        cp /reference/postfix/virtual_mailboxes /etc/postfix/virtual_mailboxes
+        cp /reference/postfix/virtual_aliases /etc/postfix/virtual_aliases
+        postmap lmdb:/etc/postfix/virtual_mailboxes
+        postmap lmdb:/etc/postfix/virtual_aliases
+        postfix check
+        exec postfix start-fg
+    volumes:
+      - maildata:/mail
+      - ./postfix:/reference/postfix:ro
+    ports:
+      - "2525:25"
+  dovecot:
+    image: alpine:3.19
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        apk add --no-cache dovecot busybox-extras >/dev/null
+        addgroup -g 5000 vmail || true
+        adduser -D -H -u 5000 -G vmail vmail || true
+        mkdir -p /mail/example.test/smoke/{cur,new,tmp} /mail/example.test/postmaster/{cur,new,tmp}
+        chown -R 5000:5000 /mail
+        cp /reference/dovecot/dovecot.conf /etc/dovecot/dovecot.conf
+        cp /reference/dovecot/passwd /etc/dovecot/passwd
+        exec dovecot -F
+    volumes:
+      - maildata:/mail
+      - ./dovecot:/reference/dovecot:ro
+    ports:
+      - "2143:143"
+  rspamd:
+    image: alpine:3.22
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        apk add --no-cache rspamd curl >/dev/null
+        mkdir -p /run/rspamd/dkim /etc/rspamd/local.d
+        cp /reference/rspamd/local.d/* /etc/rspamd/local.d/
+        rspamadm dkim_keygen -d example.test -s mail -k /run/rspamd/dkim/example.test.mail.key >/run/rspamd/dkim/example.test.mail.txt
+        exec rspamd -f -u rspamd -g rspamd
+    volumes:
+      - dkimdata:/run/rspamd/dkim
+      - ./rspamd:/reference/rspamd:ro
+    ports:
+      - "11333:11333"
+      - "11334:11334"
+  webmail:
+    image: alpine:3.22
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        apk add --no-cache busybox-extras >/dev/null
+        exec httpd -f -p 8080 -h /mail
+    volumes:
+      - maildata:/mail:ro
+    ports:
+      - "8081:8080"
   external-webmail-plugin:
     build:
       context: ../..
@@ -61,3 +136,5 @@ services:
       - backup-data:/backup
 volumes:
   backup-data:
+  maildata:
+  dkimdata:

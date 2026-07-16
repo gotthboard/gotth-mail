@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GopherMailForge"
 profile = "medium"
-active_feature = "v1.mail-core.diagnostics-smoke-snapshots"
+active_feature = "v1.mail-core.reference-runtime-smoke"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -236,6 +236,18 @@ branch = "workflow/feature/v1.mail-core.diagnostics-smoke-snapshots"
 dependencies = ["v1.mail-core.daemon-contracts", "v1.mail-core.first-plugins"]
 implementation_spec_sections = ["Doctor", "Lookup debugger", "Mail flow trace", "Queue visibility", "Smoke test", "Snapshots"]
 verification = ["doctor JSON/text checks", "lookup debugger tests", "queue mutation audit tests", "smoke test with webmail visibility", "snapshot-not-rollback tests", "go test ./...", "git diff --check"]
+
+[[features]]
+id = "v1.mail-core.reference-runtime-smoke"
+root = "v1.mail-core"
+title = "Reference runtime and real mail-flow smoke"
+state = "done"
+path = "workflow/features/v1.mail-core/reference-runtime-smoke"
+source_path = "."
+branch = "workflow/feature/v1.mail-core.reference-runtime-smoke"
+dependencies = ["v1.mail-core.daemon-contracts", "v1.mail-core.generated-config", "v1.mail-core.first-plugins", "v1.mail-core.diagnostics-smoke-snapshots"]
+implementation_spec_sections = ["Reference deployment", "Generated daemon config", "Internal daemon API", "Smoke test"]
+verification = ["real Postfix SMTP alias delivery smoke", "real Dovecot IMAP login/read smoke", "real Rspamd DKIM material/config smoke", "webmail delivered-message visibility smoke", "go test ./...", "git diff --check", "scripts/reference-runtime-smoke.sh"]
 
 [[features]]
 id = "v2.identity-provisioning.oidc-sessions"

@@ -32,3 +32,29 @@ func TestDockerImageBuildsPluginRunner(t *testing.T) {
 		t.Fatal("Dockerfile must build and copy gmf-plugin")
 	}
 }
+
+func TestV1ReferenceComposeIncludesRealDaemonRuntime(t *testing.T) {
+	b, err := os.ReadFile("../../compose/reference/docker-compose.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"postfix:", "dovecot:", "rspamd:", "webmail:", "postfix start-fg", "dovecot -F", "rspamd -f", "maildata:", "dkimdata:"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("compose missing runtime marker %q", want)
+		}
+	}
+}
+
+func TestReferenceRuntimeSmokeScriptCoversMailFlow(t *testing.T) {
+	b, err := os.ReadFile("../../scripts/reference-runtime-smoke.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"RCPT TO:<alias@example.test>", "find /mail/example.test/smoke/new", "a login smoke@example.test smoke-secret", "GopherMailForge smoke", "rspamadm configtest", "/internal/v1/postfix/recipients/smoke@example.test", "/internal/v1/rspamd/dkim/example.test"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("smoke script missing %q", want)
+		}
+	}
+}
