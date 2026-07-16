@@ -4,19 +4,19 @@ This file is the project-level coverage artifact referenced by `workflow.toml`.
 
 ## Coverage posture
 
-No implementation code exists yet. Every feature starts with missing executable coverage. A feature cannot move to done until it records relevant tests for the behavior it touches or records an explicit accepted gap with reason, risk, owner, and next coverage increment.
+v0 foundation implementation now exists. New features still start with missing executable coverage. A feature cannot move to done until it records relevant tests for the behavior it touches or records an explicit accepted gap with reason, risk, owner, and next coverage increment.
 
 ## Subsystems and required harnesses
 
 | Subsystem | Required harnesses | Initial state | High-risk gaps |
 | --- | --- | --- | --- |
-| Config/render/apply | unit, golden render, audit integration | missing | generated config drift, unaudited apply |
-| Store/migrations | migration, constraint, upgrade/downgrade where safe | missing | weak DB constraints, token plaintext |
-| Audit/authz | unit, negative, fail-closed integration | missing | unaudited mutation, bypassed authz |
-| Plugin runtime | protobuf contract, authenticated/unauthenticated gRPC, failure isolation | missing | uncredentialed plugin, state corruption on failure |
+| Config/render/apply | unit, golden render, audit integration | v0 tests in `internal/config`, `internal/render`, `internal/apply`, and CLI staged/apply smoke in `cmd/gmf` | future daemon-specific renderers still missing |
+| Store/migrations | migration, constraint, upgrade/downgrade where safe | v0 migration/schema helper tests plus embedded Postgres SQL execution tests in `internal/store`, including enum/check constraints and SQL audit persistence | downgrade path deferred beyond v0 |
+| Audit/authz | unit, negative, fail-closed integration | v0 audit redaction, SQL audit source persistence, and authz explain tests in `internal/audit`, `internal/store`, and `internal/authz` | richer integration coverage required as mutations expand |
+| Plugin runtime | protobuf contract, authenticated/unauthenticated gRPC, failure isolation | v0 generated protobuf bindings, metadata/deadline/status-code plugin control tests, and bufconn gRPC transport tests in `internal/plugin` and `test/contract` | future plugin implementations still missing |
 | Daemon contracts | Postfix/Dovecot/Rspamd contract and negative tests | missing | fake success, Authentik-dependent mail path |
-| DNS/TLS/ACME | unit, doctor, reference integration | missing | silent self-signed fallback, bad remediation |
-| Diagnostics/smoke | CLI/API, machine-readable output, reference Compose smoke | missing | green local tests with broken deployment |
+| DNS/TLS/ACME | unit, doctor, reference integration | initial v0 TLS config validation tests in `internal/config` | ACME implementation and doctor checks deferred |
+| Diagnostics/smoke | CLI/API, machine-readable output, reference Compose smoke | v0 CLI staged render/apply smoke, API shell route tests, contract checks, and Docker build smoke evidence | reference Compose runtime smoke still deferred |
 | OIDC/Auth/SCIM | token validation, replay, SCIM success/failure, Authentik-compatible integration | missing | unsigned-claim trust, provisioning bypass |
 | App passwords | verifier-only storage, Dovecot auth, secret-once behavior | missing | plaintext/replay/exposure |
 | Backup/import/rollback | isolated restore, import preview/apply binding, no silent weakening | missing | fake rollback, credential weakening |

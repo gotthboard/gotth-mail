@@ -1,0 +1,28 @@
+server:
+  public_url: "https://mail.example.test"
+  listen: ":8080"
+  environment: "development"
+database:
+  dsn: "postgres://gmf:gmf-dev-only@database/gophermailforge"
+tls:
+  mode: "manual"
+  cert_path: "./test/fixtures/mail.crt"
+  key_path: "./test/fixtures/mail.key"
+authentik:
+  enabled: true
+  base_url: "https://auth.example.test"
+  oidc_client_id: "gophermailforge"
+  scim_base_url: "https://auth.example.test/application/scim/gophermailforge"
+roles:
+  global_admin_group: "gmf-admins"
+  domain_manager_group: "gmf-domain-managers"
+  scoped_domain_group_prefix: "gmf-domain-"
+render:
+  staging_dir: "./var/generated/staged"
+  applied_dir: "./var/generated/applied"
+  override_dir: "./var/overrides"
+plugins:
+  - name: "stub-dns"
+    seam: "dns"
+    image: "example/stub-dns:v0"
+    endpoint: "dns-plugin:9443"

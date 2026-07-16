@@ -1,0 +1,27 @@
+services:
+  gophermailforge:
+    build:
+      context: ../..
+    environment:
+      GMF_LISTEN: ":8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - database
+      - authentik
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: gophermailforge
+      POSTGRES_USER: gmf
+      POSTGRES_PASSWORD: gmf-dev-only
+  authentik:
+    image: ghcr.io/goauthentik/server:latest
+    command: server
+    profiles: ["identity"]
+    environment:
+      AUTHENTIK_SECRET_KEY: dev-only-change-me
+      AUTHENTIK_POSTGRESQL__HOST: database
+      AUTHENTIK_POSTGRESQL__USER: gmf
+      AUTHENTIK_POSTGRESQL__PASSWORD: gmf-dev-only
+      AUTHENTIK_POSTGRESQL__NAME: gophermailforge

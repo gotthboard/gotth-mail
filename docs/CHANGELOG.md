@@ -21,9 +21,185 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-14 23:31 CDT — Expand changelog entry requirements
+### 2026-07-16 01:23 CDT — Fix v0 admission blockers from cold review
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `cmd/gmf/main.go`
+- `cmd/gmf/main_test.go`
+- `docs/CHANGELOG.md`
+- `go.mod`
+- `go.sum`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/apply/apply.go`
+- `internal/audit/audit.go`
+- `internal/config/config.go`
+- `internal/config/config_test.go`
+- `internal/plugin/grpc.go`
+- `internal/plugin/grpc_test.go`
+- `internal/plugin/plugin.go`
+- `internal/plugin/plugin_test.go`
+- `internal/render/render.go`
+- `internal/store/sql.go`
+- `internal/store/sql_test.go`
+- `internal/store/store.go`
+- `migrations/0001_initial.sql`
+- `proto/gophermailforge/plugin/v1/plugin.pb.go`
+- `proto/gophermailforge/plugin/v1/plugin_grpc.pb.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v0.foundation/evidence/2026-07-14-v0-foundation-implementation.md`
+
+Explanation:
+
+Fixed the concrete v0 admission blockers found by cold review instead of merging a stub foundation. The CLI render/diff/apply path now uses real file-backed staged state: render writes a content-addressed staged directory, diff compares the staged set against the currently applied set, and apply requires an operator-provided `--confirm <staged-id>` before marking the generated set as applied. The apply library can now persist the applied marker in the configured applied directory while preserving audit emission.
+
+The HTTP API shell now exposes the required v0 control-plane routes for effective config, render, render diff, render apply, audit event listing, plugin listing, plugin health, status, health/readiness, and authz explain, with method gates instead of silent success. Audit persistence now includes source IP and user-agent fields and a SQL-backed writer that stores redacted before/after payloads. The initial Postgres schema now enforces documented enum/status/seam constraints and rejects enabled plugin registrations without service identity credentials where the database can enforce it directly.
+
+The config loader now uses a real YAML decoder with known-field rejection instead of a hand-rolled colon scanner, including rejection of unknown nested plugin keys. The plugin control transport now uses generated protobuf/gRPC bindings from `plugin.proto`, metadata for correlation/service identity, context deadlines, and canonical gRPC status codes rather than private JSON structs and string errors.
+
+Verification:
+
+- Confirmed `go test ./...` passes after the admission fixes.
+- Added regression coverage for staged CLI render/apply confirmation behavior, required API shell routes, SQL audit source persistence, database constraints, YAML unknown-field rejection, and protobuf/metadata/status-code gRPC behavior.
+
+### 2026-07-14 23:59 CDT — Replace SQLite migration harness with embedded Postgres
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `docs/CHANGELOG.md`
+- `go.mod`
+- `go.sum`
+- `internal/store/sql.go`
+- `internal/store/sql_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v0.foundation/evidence/2026-07-14-v0-foundation-implementation.md`
+
+Explanation:
+
+Corrected the v0 migration test harness after review caught that SQLite was the wrong database target. GopherMailForge's v0 docs and Compose topology use Postgres, and the intended direction is embedded Postgres for local/test verification. SQLite is a different database with different type, constraint, locking, default, and SQL dialect behavior; passing SQLite migration tests would be false confidence.
+
+This change removes the SQLite harness and uses `github.com/fergusstrange/embedded-postgres` plus `github.com/lib/pq` to start a real embedded Postgres instance in the migration test. The test now applies the v0 schema through Postgres, verifies migration-history rows, verifies the domain uniqueness constraint, and verifies mailbox foreign-key rejection against actual Postgres behavior. The migration executor now uses Postgres-style `$1` placeholders.
+
+Verification:
+
+- Confirmed embedded Postgres migration test starts a real local Postgres instance and verifies migration history, unique constraint rejection, and foreign-key rejection.
+- Confirmed full `go test ./...` passes.
+- Confirmed `sudo docker build -t gophermailforge:v0-smoke .` passes with build-stage tests running as the unprivileged `gmf` user.
+- Confirmed `git diff --check -- .` passes.
+
+### 2026-07-15 00:03 CDT — Harden v0 migration and plugin transport tests
+
+Commit: `b36612b3e5aeeed50b1906d082174938887f0cc3`
+
+Affected files:
+
+- `Dockerfile`
+- `docs/CHANGELOG.md`
+- `go.mod`
+- `go.sum`
+- `internal/plugin/grpc.go`
+- `internal/plugin/grpc_test.go`
+- `internal/store/sql.go`
+- `internal/store/sql_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v0.foundation/evidence/2026-07-14-v0-foundation-implementation.md`
+
+Explanation:
+
+Strengthened the v0 foundation implementation after review exposed two weak spots. The first pass had migration coverage that proved the schema list existed but did not execute the schema through a real SQL engine. It also had plugin control behavior as an in-process contract, with the protobuf file present but no actual gRPC transport skeleton test. That was too close to paperwork theater for a foundation release.
+
+This change originally added SQLite-backed migration execution tests using `modernc.org/sqlite`, which was later corrected because the project database contract is Postgres. The gRPC server/client skeleton portion remains: it adds a registered JSON codec over gRPC and `bufconn` tests for authenticated and unauthenticated health calls. The protobuf file remains the contract layout; the transport skeleton now proves the health path crosses a real gRPC boundary instead of only a local function call.
+
+The Go toolchain and Docker builder were aligned to Go 1.25 after dependency resolution raised the module version.
+
+Verification:
+
+- Confirmed `go test ./internal/plugin ./internal/store` passes after the hardening change.
+- Full final project verification is recorded in the v0 evidence file and rerun before commit.
+
+### 2026-07-14 23:56 CDT — Record v0 implementation commit hash
+
+Commit: `ca8965fdb74135f19000e3fca8dec0d5f9483a27`
+
+Affected files:
+
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Updated the v0 implementation changelog entry with the real Git commit hash after Git assigned it. This is the honest way to satisfy the changelog requirement without pretending a commit can contain its own final hash.
+
+Verification:
+
+- Confirmed the v0 implementation entry now records commit `6cf655c37451a8da63e7360e5bde9b7b2664e176`.
+- Confirmed `git diff --check -- .` passes.
+
+### 2026-07-14 23:52 CDT — Implement v0 foundation
+
+Commit: `6cf655c37451a8da63e7360e5bde9b7b2664e176`
+
+Affected files:
+
+- `Dockerfile`
+- `cmd/gmf/main.go`
+- `cmd/gophermailforge/main.go`
+- `compose/reference/docker-compose.yml`
+- `go.mod`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/apply/apply.go`
+- `internal/apply/apply_test.go`
+- `internal/audit/audit.go`
+- `internal/audit/audit_test.go`
+- `internal/authn/authn.go`
+- `internal/authn/authn_test.go`
+- `internal/authz/authz.go`
+- `internal/authz/authz_test.go`
+- `internal/config/config.go`
+- `internal/config/config_test.go`
+- `internal/httpui/httpui.go`
+- `internal/plugin/plugin.go`
+- `internal/plugin/plugin_test.go`
+- `internal/render/render.go`
+- `internal/render/render_test.go`
+- `internal/store/store.go`
+- `internal/store/store_test.go`
+- `internal/version/version.go`
+- `migrations/0001_initial.sql`
+- `proto/gophermailforge/plugin/v1/plugin.proto`
+- `test/contract/sample-config.yaml`
+- `test/contract/v0_contract_test.go`
+- `test/fixtures/mail.crt`
+- `test/fixtures/mail.key`
+- `workflow/COVERAGE.md`
+- `workflow.events.jsonl`
+- `workflow.toml`
+- `workflow/features/v0.foundation/evidence/2026-07-14-v0-foundation-implementation.md`
+
+Explanation:
+
+Implemented the v0 foundation as a narrow control-plane baseline. This adds the Go module, server and CLI entrypoints, HTTP/API health/status/authz shell, GOTTH-compatible server-rendered UI shell, typed config parser and validator, TLS safety validation, deterministic render output, explicit apply gate, audit writer and redaction, static v0 authorization simulator, Authentik base model, initial schema/migration representation, plugin registry/control skeleton, protobuf contract layout, Dockerfile, reference Compose topology, contract fixtures, tests, workflow evidence, coverage updates, and workflow state updates for v0.
+
+The implementation intentionally does not add v1 mail-daemon behavior, SCIM provisioning, full OIDC login, real plugin implementations, or custom webmail. v0 remains the foundation: it establishes package boundaries, validation, audit/authz behavior, render/apply mechanics, plugin contract seams, Authentik-adjacent topology, and verification harnesses.
+
+The workflow manifest now marks `v0.foundation` and its v0 child features as done. Evidence for the verification commands and coverage posture is recorded under `workflow/features/v0.foundation/evidence/`.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Confirmed explicit binary builds for `cmd/gmf` and `cmd/gophermailforge` pass.
+- Confirmed CLI config validation, render, diff, apply, migrate, and authz smoke commands pass against `test/contract/sample-config.yaml`.
+- Confirmed `sudo docker build -t gophermailforge:v0-smoke .` passes and runs `go test ./...` inside the build stage.
+- Confirmed `git diff --check -- .` passes.
+
+### 2026-07-14 23:31 CDT — Expand changelog entry requirements
+
+Commit: `9d84ad3aa567a9579c73afb4c4b74b686ea9ec6c`
 
 Affected files:
 

@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package gophermailforge.plugin.v1;
+
+option go_package = "forgejo/linus/gophermailforge/proto/gophermailforge/plugin/v1;pluginv1";
+
+service PluginControl {
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Version(VersionRequest) returns (VersionResponse);
+  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
+}
+
+message HealthRequest { string correlation_id = 1; }
+message HealthResponse { bool healthy = 1; string message = 2; }
+message VersionRequest { string correlation_id = 1; }
+message VersionResponse { string name = 1; string version = 2; }
+message CapabilitiesRequest { string correlation_id = 1; }
+message CapabilitiesResponse { repeated string capabilities = 1; }
