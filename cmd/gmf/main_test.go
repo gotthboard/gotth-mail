@@ -70,3 +70,15 @@ plugins:
 		t.Fatalf("applied current=%q want %q", got, id+"\n")
 	}
 }
+
+func TestCLIDoctorTextAndJSON(t *testing.T) {
+	if err := run([]string{"doctor", "--format", "text"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"doctor", "--format", "json"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"doctor", "--format", "xml"}); err == nil {
+		t.Fatal("unsupported doctor format accepted")
+	}
+}

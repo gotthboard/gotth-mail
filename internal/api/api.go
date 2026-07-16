@@ -17,13 +17,16 @@ import (
 )
 
 type Server struct {
-	Authz   authz.Authorizer
-	Config  config.Config
-	Audit   *audit.MemoryWriter
-	Plugins plugin.Registry
-	Applied *render.Set
-	Daemon  daemon.Service
-	Queue   *ops.Queue
+	Authz     authz.Authorizer
+	Config    config.Config
+	Audit     *audit.MemoryWriter
+	Plugins   plugin.Registry
+	Applied   *render.Set
+	Daemon    daemon.Service
+	Queue     *ops.Queue
+	DNSChecks []diag.DNSRecordCheck
+	CertCheck diag.CertCheck
+	WebmailOK bool
 }
 
 func (s Server) Handler() http.Handler {
@@ -129,7 +132,12 @@ func (s Server) Handler() http.Handler {
 		if !method(w, r, "GET") {
 			return
 		}
-		writeJSON(w, ops.Doctor(r.Context(), ops.DoctorInput{ConfigOK: true, DatabaseOK: true, AuthentikOK: true, WebmailOK: true, Daemon: s.Daemon, CertCheck: diag.CertCheck{Status: diag.CertUnknown, Reason: "not_configured"}, PluginRegistry: s.Plugins, PluginToken: r.Header.Get("X-GMF-Plugin-Token"), CorrelationID: r.Header.Get("X-Correlation-ID")}))
+		cert := s.CertCheck
+		if cert.Status == "" {
+			cert = diag.CertCheck{Status: diag.CertUnknown, Reason: "not_configured"}
+		}
+		webmailOK := s.WebmailOK
+		writeJSON(w, ops.Doctor(r.Context(), ops.DoctorInput{ConfigOK: true, DatabaseOK: true, AuthentikOK: true, WebmailOK: webmailOK, Daemon: s.Daemon, DNSChecks: s.DNSChecks, CertCheck: cert, PluginRegistry: s.Plugins, PluginToken: r.Header.Get("X-GMF-Plugin-Token"), CorrelationID: r.Header.Get("X-Correlation-ID")}))
 	})
 	mux.HandleFunc("/api/v1/debug/lookup", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {

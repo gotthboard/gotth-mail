@@ -21,9 +21,46 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-16 02:11 CDT — Add v1 reference runtime smoke
+### 2026-07-16 09:03 CDT — Finish v1 mail core root
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `cmd/gmf/main.go`
+- `cmd/gmf/main_test.go`
+- `cmd/gophermailforge/main.go`
+- `internal/admin/admin.go`
+- `internal/admin/admin_test.go`
+- `internal/api/api.go`
+- `internal/httpui/httpui.go`
+- `internal/httpui/httpui_test.go`
+- `internal/plugin/seams.go`
+- `internal/plugin/seams_test.go`
+- `scripts/reference-runtime-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/evidence/2026-07-16-v1-root-completion.md`
+- `workflow/features/v1.mail-core/review/2026-07-16-root-admission-review-final.md`
+- v1 evidence/changelog files with historical commit-hash cleanup
+
+Explanation:
+
+Finished the v1 mail-core root after a cold admission review rejected the previous branch as overclaimed. The real Postfix/Dovecot/Rspamd/Roundcube reference smoke was already passing, but v1 still lacked root admission integrity and several declared v1 surfaces. This change adds the missing `gmf doctor --format text|json` CLI, a minimal server-rendered mail admin UI with domain/user/alias CRUD backing store, DNS/DKIM/doctor/lookup/plugin screens, seam-specific first-plugin service contracts for DNS export, certificate/manual ACME failure, backup verification, and Roundcube webmail config, and reference-runtime doctor proof that ACME/manual-cert behavior fails loudly instead of pretending success for `example.test`.
+
+The reference smoke SMTP sections now use deterministic Python `smtplib` clients rather than timing-sensitive `printf | nc` scripting. Historical v1 changelog and evidence placeholders were replaced with real commit hashes. `workflow.toml` now marks `v1.mail-core` done and records root completion evidence/review.
+
+Verification:
+
+- Must pass `go test ./...`.
+- Must pass `git diff --check -- .`.
+- Must pass `scripts/reference-runtime-smoke.sh` against the reference Compose stack.
+
+### 2026-07-16 02:11 CDT — Add v1 reference runtime smoke
+
+Commit: 9f1aa30fb3920aa2ba4ccc30ed3cdf6088de3d5a
 
 Affected files:
 
@@ -60,7 +97,7 @@ Verification:
 
 ### 2026-07-16 01:56 CDT — Add v1 diagnostics, queue, smoke-result, and snapshot surfaces
 
-Commit: current commit; hash assigned by Git after commit
+Commit: f7f8162c93dac3f7ddc024c135936d553db09fbc
 
 Affected files:
 
@@ -87,7 +124,7 @@ Verification:
 
 ### 2026-07-16 01:50 CDT — Add first v1 mechanism plugin containers
 
-Commit: current commit; hash assigned by Git after commit
+Commit: 6456a60cb0a5d86ea2ceb4bf83d9ae5e8fa6f8bf
 
 Affected files:
 
@@ -116,7 +153,7 @@ Verification:
 
 ### 2026-07-16 01:45 CDT — Add v1 DNS/TLS/ACME diagnostics
 
-Commit: current commit; hash assigned by Git after commit
+Commit: 6b8fa6603a0e47580dbc3c6996c6f9a8397aec2b
 
 Affected files:
 
@@ -141,7 +178,7 @@ Verification:
 
 ### 2026-07-16 01:41 CDT — Generate daemon config for v1 mail core
 
-Commit: current commit; hash assigned by Git after commit
+Commit: d77df0eef449559f03f4075cfe1b35b84590c95c
 
 Affected files:
 
@@ -169,7 +206,7 @@ Verification:
 
 ### 2026-07-16 01:37 CDT — Implement v1 daemon contract surface
 
-Commit: current commit; hash assigned by Git after commit
+Commit: 824faf10b78352124887aa654bac3f8518ae59fe
 
 Affected files:
 
@@ -202,7 +239,7 @@ Verification:
 
 ### 2026-07-16 01:23 CDT — Fix v0 admission blockers from cold review
 
-Commit: current commit; hash assigned by Git after commit
+Commit: 7e6633f
 
 Affected files:
 
@@ -246,7 +283,7 @@ Verification:
 
 ### 2026-07-14 23:59 CDT — Replace SQLite migration harness with embedded Postgres
 
-Commit: current commit; hash assigned by Git after commit
+Commit: 55c9302
 
 Affected files:
 

@@ -51,43 +51,46 @@ wait_tcp webmail 80
 
 curl -fsS -H 'X-Correlation-ID: smoke' http://127.0.0.1:8080/internal/v1/postfix/recipients/smoke@example.test | grep '"decision":"ok"' >/dev/null
 curl -fsS -H 'X-Correlation-ID: smoke' http://127.0.0.1:8080/internal/v1/rspamd/dkim/example.test | grep '"decision":"ok"' >/dev/null
+curl -fsS -H 'X-Correlation-ID: smoke' -H 'X-GMF-Plugin-Token: dev-plugin-token' http://127.0.0.1:8080/api/v1/doctor -o /tmp/gmf-doctor.json
+grep 'acme_not_configured_reference_manual_mode' /tmp/gmf-doctor.json >/dev/null
+grep '"category":"plugin"' /tmp/gmf-doctor.json >/dev/null
 
-$DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T postfix sh -lc '(
-  sleep 1
-  printf "EHLO smoke.example.test\r\n"
-  sleep 1
-  printf "MAIL FROM:<smoke@example.test>\r\n"
-  sleep 1
-  printf "RCPT TO:<nobody@example.test>\r\n"
-  sleep 1
-  printf "QUIT\r\n"
-) | nc 127.0.0.1 25 | tee /tmp/smtp-reject.out
-grep -E "recipient unknown|Recipient address rejected|550|554" /tmp/smtp-reject.out >/dev/null'
+python3 - <<'PYSMTPREJECT'
+import smtplib
+import sys
+
+with smtplib.SMTP("127.0.0.1", 2525, timeout=30) as smtp:
+    smtp.set_debuglevel(1)
+    smtp.ehlo("smoke.example.test")
+    smtp.mail("smoke@example.test")
+    code, message = smtp.rcpt("nobody@example.test")  # RCPT TO:<nobody@example.test>
+    text = message.decode("utf-8", "replace") if isinstance(message, bytes) else str(message)
+    print(f"reject rcpt code={code} message={text}")
+    if code < 500 or not any(marker in text.lower() for marker in ("recipient unknown", "recipient address rejected", "not found")):
+        sys.exit("expected unknown-recipient rejection")
+PYSMTPREJECT
 
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T dovecot sh -lc 'grep "SHA512-CRYPT" /etc/dovecot/passwd >/dev/null'
 
 before=$($DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T postfix sh -lc 'find /mail/example.test/smoke/new -type f 2>/dev/null | wc -l')
 
-$DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T postfix sh -lc '(
-  sleep 1
-  printf "EHLO smoke.example.test\r\n"
-  sleep 1
-  printf "MAIL FROM:<smoke@example.test>\r\n"
-  sleep 1
-  printf "RCPT TO:<alias@example.test>\r\n"
-  sleep 1
-  printf "DATA\r\n"
-  sleep 1
-  printf "Subject: GopherMailForge smoke\r\n"
-  printf "From: smoke@example.test\r\n"
-  printf "To: alias@example.test\r\n"
-  printf "\r\n"
-  printf "smoke-body-20260716\r\n"
-  printf ".\r\n"
-  sleep 1
-  printf "QUIT\r\n"
-) | nc 127.0.0.1 25 | tee /tmp/smtp.out
-grep -E "250 2.0.0|250 Ok|queued as" /tmp/smtp.out >/dev/null'
+python3 - <<'PYSMTPDELIVER'
+from email.message import EmailMessage
+import smtplib
+
+message = EmailMessage()
+message["Subject"] = "GopherMailForge smoke"
+message["From"] = "smoke@example.test"
+message["To"] = "alias@example.test"  # RCPT TO:<alias@example.test>
+message.set_content("smoke-body-20260716")
+
+with smtplib.SMTP("127.0.0.1", 2525, timeout=30) as smtp:
+    smtp.set_debuglevel(1)
+    smtp.ehlo("smoke.example.test")
+    refused = smtp.send_message(message)
+    if refused:
+        raise SystemExit(f"unexpected SMTP refusal: {refused!r}")
+PYSMTPDELIVER
 
 for _ in $(seq 1 60); do
   after=$($DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T postfix sh -lc 'find /mail/example.test/smoke/new -type f 2>/dev/null | wc -l')
@@ -146,6 +149,7 @@ $DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color gophermailforge | gr
 cat <<'OK'
 reference runtime smoke passed:
 - GopherMailForge daemon contracts reachable
+- doctor output exposes loud ACME/manual-certificate reference failure and plugin health
 - real Postfix queried the GopherMailForge policy socket, rejected an unknown recipient, accepted SMTP, and delivered alias mail to Maildir
 - real Dovecot used generated GopherMailForge-derived auth/userdb material and IMAP login/read succeeded
 - Roundcube external webmail provider exposed the delivered message through its IMAP-backed mail view

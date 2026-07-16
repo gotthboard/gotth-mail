@@ -62,9 +62,48 @@ func TestReferenceRuntimeSmokeScriptCoversMailFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"RCPT TO:<nobody@example.test>", "recipient unknown", "RCPT TO:<alias@example.test>", "find /mail/example.test/smoke/new", "a login smoke@example.test smoke-secret", "GopherMailForge smoke", "roundcube_token", "?_task=mail&_mbox=INBOX", "?_task=mail&_action=list", "^DKIM-Signature:", "rspamadm configtest", "postfix policy recipient=alias@example.test decision=ok", "/internal/v1/postfix/recipients/smoke@example.test", "/internal/v1/rspamd/dkim/example.test"} {
+	for _, want := range []string{"RCPT TO:<nobody@example.test>", "recipient unknown", "RCPT TO:<alias@example.test>", "find /mail/example.test/smoke/new", "a login smoke@example.test smoke-secret", "GopherMailForge smoke", "roundcube_token", "?_task=mail&_mbox=INBOX", "?_task=mail&_action=list", "acme_not_configured_reference_manual_mode", "\"category\":\"plugin\"", "^DKIM-Signature:", "rspamadm configtest", "postfix policy recipient=alias@example.test decision=ok", "/internal/v1/postfix/recipients/smoke@example.test", "/internal/v1/rspamd/dkim/example.test"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("smoke script missing %q", want)
+		}
+	}
+}
+
+func TestV1MailAdminUIScreensExist(t *testing.T) {
+	b, err := os.ReadFile("../../internal/httpui/httpui.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"Domain CRUD", "User CRUD", "Alias CRUD", "DNS/DKIM screens", "Doctor screens", "Plugin status/config screens", "Lookup debugger UI", "/admin/domains", "/admin/users", "/admin/aliases"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("mail admin UI missing %q", want)
+		}
+	}
+}
+
+func TestV1CLIDoctorCommandExists(t *testing.T) {
+	b, err := os.ReadFile("../../cmd/gmf/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"case \"doctor\"", "--format", "json.NewEncoder", "unsupported doctor format"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("gmf doctor missing %q", want)
+		}
+	}
+}
+
+func TestV1PluginSeamSpecificServicesExist(t *testing.T) {
+	b, err := os.ReadFile("../../internal/plugin/seams.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"ExportDNSZone", "RequestCertificate", "VerifyBackup", "WebmailProviderConfig", "acme_not_configured_reference_manual_mode"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("plugin seam service missing %q", want)
 		}
 	}
 }

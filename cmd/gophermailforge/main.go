@@ -9,9 +9,11 @@ import (
 	"os"
 	"strings"
 
+	"forgejo/linus/gophermailforge/internal/admin"
 	"forgejo/linus/gophermailforge/internal/api"
 	"forgejo/linus/gophermailforge/internal/authz"
 	"forgejo/linus/gophermailforge/internal/daemon"
+	"forgejo/linus/gophermailforge/internal/diag"
 	"forgejo/linus/gophermailforge/internal/httpui"
 	"forgejo/linus/gophermailforge/internal/plugin"
 )
@@ -27,7 +29,7 @@ func main() {
 	mux.Handle("/internal/", server.Handler())
 	mux.Handle("/healthz", server.Handler())
 	mux.Handle("/readyz", server.Handler())
-	mux.Handle("/", httpui.Handler())
+	mux.Handle("/", httpui.HandlerWithAdmin(referenceAdminStore()))
 	addr := os.Getenv("GMF_LISTEN")
 	if addr == "" {
 		addr = ":8080"
@@ -95,6 +97,17 @@ func referenceServer() api.Server {
 			},
 			Aliases: map[string]daemon.Alias{"alias@example.test": {Address: "alias@example.test", Enabled: true, Targets: []string{"smoke@example.test"}}},
 		},
-		Plugins: plugin.FirstMechanismPlugins("dev-plugin-token"),
+		Plugins:   plugin.FirstMechanismPlugins("dev-plugin-token"),
+		DNSChecks: []diag.DNSRecordCheck{{Family: "MX", Name: "example.test", Status: diag.Present, Remediation: "ok"}},
+		CertCheck: diag.CertCheck{Status: diag.CertFail, Reason: "acme_not_configured_reference_manual_mode"},
+		WebmailOK: true,
 	}
+}
+
+func referenceAdminStore() *admin.Store {
+	s := admin.NewStore()
+	_ = s.UpsertDomain(admin.Domain{Name: "example.test", Enabled: true, MailHost: "mail.example.test", DKIMSelector: "mail"})
+	_ = s.UpsertUser(admin.User{Address: "smoke@example.test", Enabled: true, QuotaMB: 1024})
+	_ = s.UpsertAlias(admin.Alias{Address: "alias@example.test", Enabled: true, Targets: []string{"smoke@example.test"}})
+	return s
 }
