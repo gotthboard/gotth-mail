@@ -108,7 +108,16 @@ func (s Server) Handler() http.Handler {
 		if !method(w, r, "POST") {
 			return
 		}
-		ex, _ := s.authorizer().Explain(r.Context(), authz.Actor{Type: "local_admin", ID: "local"}, authz.Action("status:read"), authz.Resource{Type: "system", ID: "self"})
+		var req struct {
+			Actor    authz.Actor    `json:"actor"`
+			Action   authz.Action   `json:"action"`
+			Resource authz.Resource `json:"resource"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "bad authz explain request", http.StatusBadRequest)
+			return
+		}
+		ex, _ := s.authorizer().Explain(r.Context(), req.Actor, req.Action, req.Resource)
 		writeJSON(w, ex)
 	})
 	mux.HandleFunc("/api/v1/config/effective", func(w http.ResponseWriter, r *http.Request) {

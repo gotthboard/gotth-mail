@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"forgejo/linus/gophermailforge/internal/authz"
@@ -63,7 +64,13 @@ plugins:
 		{http.MethodGet, "/api/v1/queue/deferred"},
 	} {
 		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, httptest.NewRequest(tc.method, tc.path, nil))
+		var body *strings.Reader
+		if tc.path == "/api/v1/authz/explain" {
+			body = strings.NewReader(`{"actor":{"type":"local_admin","id":"local"},"action":"status:read","resource":{"type":"system","id":"self"}}`)
+		} else {
+			body = strings.NewReader("")
+		}
+		h.ServeHTTP(rr, httptest.NewRequest(tc.method, tc.path, body))
 		if rr.Code != http.StatusOK {
 			t.Fatalf("%s %s status %d", tc.method, tc.path, rr.Code)
 		}
@@ -81,5 +88,18 @@ func TestOIDCLoginRouteRequiresBrowserBinding(t *testing.T) {
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/oidc/login", nil))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("missing browser binding status %d", rr.Code)
+	}
+}
+
+func TestAuthzExplainUsesRequestActorActionResource(t *testing.T) {
+	h := Server{Authz: authz.StaticAuthorizer{Mappings: []authz.RoleMapping{{AuthentikGroup: "domain-managers", Role: authz.RoleDomainManager, Domain: "example.test", Verified: true}}}}.Handler()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/authz/explain", strings.NewReader(`{"actor":{"type":"oidc_subject","groups":["domain-managers"]},"action":"mailbox:create","resource":{"type":"mailbox","id":"user@example.test"}}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "domain manager role matched") || !strings.Contains(rr.Body.String(), "oidc:domain_manager:example.test") {
+		t.Fatalf("unexpected explain %s", rr.Body.String())
 	}
 }

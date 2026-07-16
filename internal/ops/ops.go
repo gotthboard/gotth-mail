@@ -2,9 +2,11 @@ package ops
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"forgejo/linus/gophermailforge/internal/audit"
+	"forgejo/linus/gophermailforge/internal/authz"
 	"forgejo/linus/gophermailforge/internal/daemon"
 	"forgejo/linus/gophermailforge/internal/diag"
 	"forgejo/linus/gophermailforge/internal/plugin"
@@ -35,6 +37,8 @@ type DoctorInput struct {
 	ConfigOK       bool
 	DatabaseOK     bool
 	AuthentikOK    bool
+	RoleMappings   []authz.RoleMapping
+	KnownDomains   []string
 	WebmailOK      bool
 	Daemon         daemon.Service
 	DNSChecks      []diag.DNSRecordCheck
@@ -49,6 +53,7 @@ func Doctor(ctx context.Context, in DoctorInput) DoctorReport {
 	checks = append(checks, boolCheck("config", "typed-config", in.ConfigOK))
 	checks = append(checks, boolCheck("database", "postgres", in.DatabaseOK))
 	checks = append(checks, boolCheck("identity", "authentik", in.AuthentikOK))
+	checks = append(checks, roleMappingCheck(in.RoleMappings, in.KnownDomains))
 	checks = append(checks, boolCheck("webmail", "provider", in.WebmailOK))
 	for _, d := range in.DNSChecks {
 		checks = append(checks, Check{Category: "DNS", Name: d.Family + " " + d.Name, Status: dnsStatus(d.Status), Reason: d.Remediation})
@@ -68,6 +73,14 @@ func Doctor(ctx context.Context, in DoctorInput) DoctorReport {
 		}
 	}
 	return DoctorReport{Status: worst(checks), Checks: checks}
+}
+
+func roleMappingCheck(mappings []authz.RoleMapping, knownDomains []string) Check {
+	problems := authz.ValidateRoleMappings(mappings, knownDomains)
+	if len(problems) == 0 {
+		return Check{Category: "identity", Name: "authentik-role-mapping", Status: OK, Reason: "global_admin/domain_manager/scoped_domain_access mappings verified"}
+	}
+	return Check{Category: "identity", Name: "authentik-role-mapping", Status: Fail, Reason: strings.Join(problems, ",")}
 }
 
 func boolCheck(cat, name string, ok bool) Check {

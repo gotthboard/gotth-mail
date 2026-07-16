@@ -2,10 +2,12 @@ package ops
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"forgejo/linus/gophermailforge/internal/audit"
+	"forgejo/linus/gophermailforge/internal/authz"
 	"forgejo/linus/gophermailforge/internal/daemon"
 	"forgejo/linus/gophermailforge/internal/diag"
 	"forgejo/linus/gophermailforge/internal/plugin"
@@ -24,6 +26,32 @@ func TestDoctorAggregatesFailuresAndWarnings(t *testing.T) {
 	if len(report.Checks) == 0 {
 		t.Fatal("no checks")
 	}
+}
+
+func TestDoctorChecksAuthentikRoleMappings(t *testing.T) {
+	good := Doctor(context.Background(), DoctorInput{ConfigOK: true, DatabaseOK: true, AuthentikOK: true, RoleMappings: []authz.RoleMapping{
+		{AuthentikGroup: "admins", Role: authz.RoleGlobalAdmin, Verified: true},
+		{AuthentikGroup: "managers", Role: authz.RoleDomainManager, Domain: "example.test", Verified: true},
+		{AuthentikGroup: "domain-example", Role: authz.RoleScopedDomainAccess, Domain: "example.test", Verified: true},
+	}, KnownDomains: []string{"example.test"}, WebmailOK: true, Daemon: daemonFixture(), PluginRegistry: plugin.Registry{}, CertCheck: diag.CertCheck{Status: diag.CertOK}, CorrelationID: "c"})
+	if good.Status != OK {
+		t.Fatalf("good doctor status=%s checks=%#v", good.Status, good.Checks)
+	}
+	bad := Doctor(context.Background(), DoctorInput{ConfigOK: true, DatabaseOK: true, AuthentikOK: true, RoleMappings: []authz.RoleMapping{
+		{AuthentikGroup: "admins", Role: authz.RoleGlobalAdmin, Verified: true},
+	}, KnownDomains: []string{"example.test"}, WebmailOK: true, Daemon: daemonFixture(), PluginRegistry: plugin.Registry{}, CertCheck: diag.CertCheck{Status: diag.CertOK}, CorrelationID: "c"})
+	if bad.Status != Fail || !hasCheckReason(bad.Checks, "missing_required_mapping:domain_manager") {
+		t.Fatalf("bad doctor did not report missing mapping: status=%s checks=%#v", bad.Status, bad.Checks)
+	}
+}
+
+func hasCheckReason(checks []Check, needle string) bool {
+	for _, c := range checks {
+		if strings.Contains(c.Reason, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDebugLookupAndTraceAreMachineReadable(t *testing.T) {

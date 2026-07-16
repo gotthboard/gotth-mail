@@ -21,9 +21,38 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-16 11:05 CDT — Implement v2 OIDC sessions
+### 2026-07-16 11:52 CDT — Add Authentik role mapping and permission simulator coverage
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/authz/authz.go`
+- `internal/authz/authz_test.go`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/ops/ops.go`
+- `internal/ops/ops_test.go`
+- `docs/CHANGELOG.md`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/features/v2.identity-provisioning/authentik-roles-authz/README.md`
+- `workflow/features/v2.identity-provisioning/authentik-roles-authz/evidence/2026-07-16-authentik-roles-authz.md`
+
+Explanation:
+
+Implemented the Authentik role-mapping child for v2 identity provisioning. OIDC actors now carry Authentik groups and are evaluated against verified role mappings for global admin, domain manager, and scoped domain access. Authorization explanations now include matched rules for allowed decisions and missing requirements for denied decisions, so the permission simulator can explain the actual mechanism instead of returning a hardcoded local-admin answer.
+
+The `/api/v1/authz/explain` route now decodes the submitted actor/action/resource request and evaluates it. Doctor now validates required role mappings and fails loudly when required mappings are missing, unverified, or reference unknown domains.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Confirmed `git diff --check -- .` passes.
+
+### 2026-07-16 11:05 CDT — Implement v2 OIDC sessions
+
+Commit: b887c75
 
 Affected files:
 
@@ -48,7 +77,7 @@ Verification:
 
 ### 2026-07-16 10:50 CDT — Start v2 identity provisioning
 
-Commit: current commit; hash assigned by Git after commit
+Commit: 43a56ca
 
 Affected files:
 
@@ -67,7 +96,7 @@ Verification:
 
 ### 2026-07-16 10:22 CDT — Clarify exact-user OpenPGP identity binding
 
-Commit: current commit; hash assigned by Git after commit
+Commit: fcfdcdf
 
 Affected files:
 
@@ -93,7 +122,7 @@ Verification:
 
 ### 2026-07-16 10:21 CDT — Require OpenPGP signing for every outbound email
 
-Commit: current commit; hash assigned by Git after commit
+Commit: 6e3d5e1
 
 Affected files:
 
@@ -123,7 +152,7 @@ Verification:
 
 ### 2026-07-16 09:03 CDT — Finish v1 mail core root
 
-Commit: current commit; hash assigned by Git after commit
+Commit: a75b0f1
 
 Affected files:
 
