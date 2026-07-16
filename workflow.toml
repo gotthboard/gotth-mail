@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GopherMailForge"
 profile = "medium"
-active_feature = "v1.mail-core.dns-tls-acme"
+active_feature = "v1.mail-core.first-plugins"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -217,7 +217,7 @@ verification = ["exact DNS mismatch reporting", "ACME success/loud failure", "MT
 id = "v1.mail-core.first-plugins"
 root = "v1.mail-core"
 title = "First webmail, DNS, certificate, backup plugin containers"
-state = "planned"
+state = "done"
 path = "workflow/features/v1.mail-core/first-plugins"
 source_path = "proto"
 branch = "workflow/feature/v1.mail-core.first-plugins"

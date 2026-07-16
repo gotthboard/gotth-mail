@@ -9,6 +9,10 @@ services:
     depends_on:
       - database
       - authentik
+      - external-webmail-plugin
+      - manual-dns-plugin
+      - cert-plugin
+      - backup-plugin
   database:
     image: postgres:17-alpine
     environment:
@@ -25,3 +29,35 @@ services:
       AUTHENTIK_POSTGRESQL__USER: gmf
       AUTHENTIK_POSTGRESQL__PASSWORD: gmf-dev-only
       AUTHENTIK_POSTGRESQL__NAME: gophermailforge
+  external-webmail-plugin:
+    build:
+      context: ../..
+    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    environment:
+      GMF_PLUGIN_NAME: external-webmail
+      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+  manual-dns-plugin:
+    build:
+      context: ../..
+    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    environment:
+      GMF_PLUGIN_NAME: manual-dns-export
+      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+  cert-plugin:
+    build:
+      context: ../..
+    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    environment:
+      GMF_PLUGIN_NAME: manual-letsencrypt-cert
+      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+  backup-plugin:
+    build:
+      context: ../..
+    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    environment:
+      GMF_PLUGIN_NAME: local-filesystem-backup
+      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+    volumes:
+      - backup-data:/backup
+volumes:
+  backup-data:

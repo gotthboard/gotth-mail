@@ -21,6 +21,35 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-16 01:50 CDT — Add first v1 mechanism plugin containers
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `Dockerfile`
+- `cmd/gmf-plugin/main.go`
+- `compose/reference/docker-compose.yml`
+- `docs/CHANGELOG.md`
+- `internal/plugin/first.go`
+- `internal/plugin/first_test.go`
+- `test/contract/v1_plugins_contract_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/first-plugins/evidence/2026-07-16-first-plugins.md`
+
+Explanation:
+
+Completed `v1.mail-core.first-plugins` by adding the first mechanism plugin identities and reference container wiring for the selected external webmail provider, manual DNS export, manual/Let’s Encrypt certificate handling, and local filesystem backup storage. The new `gmf-plugin` runner exposes the existing v0 generated protobuf/gRPC `PluginControl` service, so first plugins authenticate with service identity metadata, require deadlines, and report capabilities through the same control contract as the rest of the plugin runtime.
+
+The reference Compose file now includes all four plugin services and still avoids Docker socket mounts. The backup plugin receives only a named `/backup` volume. This patch intentionally does not pretend the seam-specific DNS/cert/backup/webmail APIs are complete; it establishes the first plugin container/control-plane surface and records the remaining live integration work as future scope.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Added tests for first plugin seams/capabilities, authenticated and unauthenticated gRPC control behavior, Dockerfile plugin runner output, required Compose services, and absence of Docker socket mounts.
+
 ### 2026-07-16 01:45 CDT — Add v1 DNS/TLS/ACME diagnostics
 
 Commit: current commit; hash assigned by Git after commit
