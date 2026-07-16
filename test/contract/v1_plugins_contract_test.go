@@ -34,14 +34,24 @@ func TestDockerImageBuildsPluginRunner(t *testing.T) {
 }
 
 func TestV1ReferenceComposeIncludesRealDaemonRuntime(t *testing.T) {
-	b, err := os.ReadFile("../../compose/reference/docker-compose.yml")
-	if err != nil {
-		t.Fatal(err)
+	var combined strings.Builder
+	for _, path := range []string{
+		"../../compose/reference/docker-compose.yml",
+		"../../compose/reference/postfix/main.cf",
+		"../../compose/reference/rspamd/local.d/dkim_signing.conf",
+		"../../compose/reference/rspamd/local.d/worker-proxy.inc",
+	} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		combined.Write(b)
+		combined.WriteByte('\n')
 	}
-	s := string(b)
-	for _, want := range []string{"postfix:", "dovecot:", "rspamd:", "webmail:", "postfix start-fg", "dovecot -F", "rspamd -f", "maildata:", "dkimdata:"} {
+	s := combined.String()
+	for _, want := range []string{"postfix:", "dovecot:", "rspamd:", "webmail:", "postfix start-fg", "dovecot -F", "rspamd -f", "check_policy_service inet:gophermailforge:10025", "smtpd_milters = inet:rspamd:11332", "bind_socket = \"*:11332\"", "/internal/v1/postfix/aliases/alias@example.test", "/internal/v1/dovecot/passdb", "/internal/v1/rspamd/signing-decision", "maildata:", "dkimdata:"} {
 		if !strings.Contains(s, want) {
-			t.Fatalf("compose missing runtime marker %q", want)
+			t.Fatalf("reference runtime missing marker %q", want)
 		}
 	}
 }
@@ -52,7 +62,7 @@ func TestReferenceRuntimeSmokeScriptCoversMailFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"RCPT TO:<alias@example.test>", "find /mail/example.test/smoke/new", "a login smoke@example.test smoke-secret", "GopherMailForge smoke", "rspamadm configtest", "/internal/v1/postfix/recipients/smoke@example.test", "/internal/v1/rspamd/dkim/example.test"} {
+	for _, want := range []string{"RCPT TO:<nobody@example.test>", "recipient unknown", "RCPT TO:<alias@example.test>", "find /mail/example.test/smoke/new", "a login smoke@example.test smoke-secret", "GopherMailForge smoke", "^DKIM-Signature:", "rspamadm configtest", "postfix policy recipient=alias@example.test decision=ok", "/internal/v1/postfix/recipients/smoke@example.test", "/internal/v1/rspamd/dkim/example.test"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("smoke script missing %q", want)
 		}

@@ -30,12 +30,13 @@ Affected files:
 - `cmd/gophermailforge/main.go`
 - `compose/reference/docker-compose.yml`
 - `compose/reference/dovecot/dovecot.conf`
-- `compose/reference/dovecot/passwd`
 - `compose/reference/postfix/main.cf`
 - `compose/reference/postfix/virtual_aliases`
 - `compose/reference/postfix/virtual_mailboxes`
+- `compose/reference/rspamd/local.d/dkim_signing.conf`
 - `compose/reference/rspamd/local.d/worker-controller.inc`
 - `compose/reference/rspamd/local.d/worker-normal.inc`
+- `compose/reference/rspamd/local.d/worker-proxy.inc`
 - `scripts/reference-runtime-smoke.sh`
 - `test/contract/v1_plugins_contract_test.go`
 - `workflow.toml`
@@ -47,7 +48,7 @@ Affected files:
 
 Explanation:
 
-Added the narrow `v1.mail-core.reference-runtime-smoke` child required by root admission review. Reference Compose now runs real Postfix, Dovecot, Rspamd, and a selected webmail visibility service against a seeded GopherMailForge reference fixture instead of only modeling daemon contracts. The smoke harness starts the Compose stack, checks the internal daemon HTTP/JSON contracts, sends a real SMTP message to `alias@example.test`, proves alias delivery into the `smoke@example.test` Maildir, logs in over real Dovecot IMAP, fetches the delivered subject, verifies webmail visibility of the delivered body, and validates Rspamd DKIM material/config.
+Added the narrow `v1.mail-core.reference-runtime-smoke` child required by root admission review. Reference Compose now runs real Postfix, Dovecot, Rspamd, and a selected webmail visibility service against a seeded GopherMailForge reference fixture instead of only modeling daemon contracts. The smoke harness starts the Compose stack, checks the internal daemon HTTP/JSON contracts, proves Postfix recipient policy uses the GopherMailForge policy socket by rejecting `nobody@example.test`, sends a real SMTP message to `alias@example.test`, proves alias delivery into the `smoke@example.test` Maildir, logs in over real Dovecot IMAP using generated GopherMailForge-derived auth/userdb material, fetches the delivered subject, verifies webmail visibility of the delivered body, and proves Rspamd is in the Postfix milter path by requiring `DKIM-Signature` on the delivered message plus valid DKIM material/config.
 
 This fixes the root blocker recorded by the previous v1 admission review, but it does not itself admit the root. A fresh cold root review should inspect this commit before opening a v1 admission PR.
 

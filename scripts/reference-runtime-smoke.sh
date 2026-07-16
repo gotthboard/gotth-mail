@@ -10,6 +10,11 @@ if ! $DOCKER info >/dev/null 2>&1; then
 fi
 
 cleanup() {
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    $DOCKER compose -p "$PROJECT" -f "$COMPOSE" ps >&2 || true
+    $DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color --tail=160 gophermailforge postfix dovecot rspamd >&2 || true
+  fi
   $DOCKER compose -p "$PROJECT" -f "$COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -40,11 +45,26 @@ wait_tcp() {
 wait_http http://127.0.0.1:8080/healthz
 wait_tcp postfix 25
 wait_tcp dovecot 143
+wait_tcp rspamd 11332
 wait_tcp rspamd 11333
 wait_tcp webmail 8080
 
 curl -fsS -H 'X-Correlation-ID: smoke' http://127.0.0.1:8080/internal/v1/postfix/recipients/smoke@example.test | grep '"decision":"ok"' >/dev/null
 curl -fsS -H 'X-Correlation-ID: smoke' http://127.0.0.1:8080/internal/v1/rspamd/dkim/example.test | grep '"decision":"ok"' >/dev/null
+
+$DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T postfix sh -lc '(
+  sleep 1
+  printf "EHLO smoke.example.test\r\n"
+  sleep 1
+  printf "MAIL FROM:<smoke@example.test>\r\n"
+  sleep 1
+  printf "RCPT TO:<nobody@example.test>\r\n"
+  sleep 1
+  printf "QUIT\r\n"
+) | nc 127.0.0.1 25 | tee /tmp/smtp-reject.out
+grep -E "recipient unknown|Recipient address rejected|550|554" /tmp/smtp-reject.out >/dev/null'
+
+$DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T dovecot sh -lc 'grep "SHA512-CRYPT" /etc/dovecot/passwd >/dev/null'
 
 before=$($DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T postfix sh -lc 'find /mail/example.test/smoke/new -type f 2>/dev/null | wc -l')
 
@@ -95,15 +115,18 @@ grep "GopherMailForge smoke" /tmp/imap.out >/dev/null'
 
 msg_path=$($DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T postfix sh -lc 'find /mail/example.test/smoke -type f | head -1')
 msg_rel=${msg_path#/mail/}
-curl -fsS --path-as-is "http://127.0.0.1:8081/$msg_rel" | grep 'smoke-body-20260716' >/dev/null
+curl -fsS --path-as-is "http://127.0.0.1:8081/$msg_rel" | tee /tmp/gmf-smoke-message.out | grep 'smoke-body-20260716' >/dev/null
+grep '^DKIM-Signature:' /tmp/gmf-smoke-message.out >/dev/null
 
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T rspamd sh -lc 'test -s /run/rspamd/dkim/example.test.mail.key && test -s /run/rspamd/dkim/example.test.mail.txt && rspamadm configtest >/tmp/rspamd-configtest.out && grep -i "syntax OK" /tmp/rspamd-configtest.out >/dev/null'
+$DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color gophermailforge | grep 'postfix policy recipient=alias@example.test decision=ok' >/dev/null
+$DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color gophermailforge | grep 'postfix policy recipient=nobody@example.test decision=not_found' >/dev/null
 
 cat <<'OK'
 reference runtime smoke passed:
 - GopherMailForge daemon contracts reachable
-- real Postfix accepted SMTP and delivered alias mail to Maildir
-- real Dovecot IMAP login/read succeeded
+- real Postfix queried the GopherMailForge policy socket, rejected an unknown recipient, accepted SMTP, and delivered alias mail to Maildir
+- real Dovecot used generated GopherMailForge-derived auth/userdb material and IMAP login/read succeeded
 - webmail provider exposed delivered Maildir message
-- real Rspamd started with generated DKIM key material and valid config
+- real Rspamd ran in the Postfix milter path, DKIM-signed the delivered message, and validated config
 OK

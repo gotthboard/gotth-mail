@@ -5,14 +5,11 @@ services:
     environment:
       GMF_LISTEN: ":8080"
       GMF_REFERENCE_FIXTURE: "1"
+      GMF_POSTFIX_POLICY_LISTEN: ":10025"
     ports:
       - "8080:8080"
     depends_on:
       - database
-      - postfix
-      - dovecot
-      - rspamd
-      - webmail
       - external-webmail-plugin
       - manual-dns-plugin
       - cert-plugin
@@ -39,14 +36,19 @@ services:
       - /bin/sh
       - -lc
       - |
-        apk add --no-cache postfix busybox-extras >/dev/null
+        apk add --no-cache postfix busybox-extras curl jq >/dev/null
         addgroup -g 5000 vmail || true
         adduser -D -H -u 5000 -G vmail vmail || true
         mkdir -p /mail/example.test/smoke/{cur,new,tmp} /mail/example.test/postmaster/{cur,new,tmp}
         chown -R 5000:5000 /mail
         cp /reference/postfix/main.cf /etc/postfix/main.cf
-        cp /reference/postfix/virtual_mailboxes /etc/postfix/virtual_mailboxes
-        cp /reference/postfix/virtual_aliases /etc/postfix/virtual_aliases
+        until curl -fsS http://gophermailforge:8080/healthz >/dev/null; do sleep 1; done
+        curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gophermailforge:8080/internal/v1/postfix/mailboxes/smoke@example.test | jq -e '.decision == "ok"' >/dev/null
+        curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gophermailforge:8080/internal/v1/postfix/mailboxes/postmaster@example.test | jq -e '.decision == "ok"' >/dev/null
+        alias_targets=$$(curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gophermailforge:8080/internal/v1/postfix/aliases/alias@example.test | jq -r 'select(.decision == "ok") | .targets | join(",")')
+        test "$$alias_targets" = "smoke@example.test"
+        printf 'smoke@example.test example.test/smoke/\npostmaster@example.test example.test/postmaster/\n' > /etc/postfix/virtual_mailboxes
+        printf 'alias@example.test %s\n' "$$alias_targets" > /etc/postfix/virtual_aliases
         postmap lmdb:/etc/postfix/virtual_mailboxes
         postmap lmdb:/etc/postfix/virtual_aliases
         postfix check
@@ -54,6 +56,9 @@ services:
     volumes:
       - maildata:/mail
       - ./postfix:/reference/postfix:ro
+    depends_on:
+      - gophermailforge
+      - rspamd
     ports:
       - "2525:25"
   dovecot:
@@ -62,17 +67,26 @@ services:
       - /bin/sh
       - -lc
       - |
-        apk add --no-cache dovecot busybox-extras >/dev/null
+        apk add --no-cache dovecot busybox-extras curl jq >/dev/null
         addgroup -g 5000 vmail || true
         adduser -D -H -u 5000 -G vmail vmail || true
         mkdir -p /mail/example.test/smoke/{cur,new,tmp} /mail/example.test/postmaster/{cur,new,tmp}
         chown -R 5000:5000 /mail
         cp /reference/dovecot/dovecot.conf /etc/dovecot/dovecot.conf
-        cp /reference/dovecot/passwd /etc/dovecot/passwd
+        until curl -fsS http://gophermailforge:8080/healthz >/dev/null; do sleep 1; done
+        curl -fsS -H 'X-Correlation-ID: dovecot-passdb-gen' -H 'Content-Type: application/json' -d '{"username":"smoke@example.test","secret":"smoke-secret","protocol":"imap"}' http://gophermailforge:8080/internal/v1/dovecot/passdb | jq -e '.decision == "ok"' >/dev/null
+        curl -fsS -H 'X-Correlation-ID: dovecot-passdb-gen' http://gophermailforge:8080/internal/v1/dovecot/userdb/smoke@example.test >/tmp/smoke-userdb.json
+        smoke_home=$$(jq -r 'select(.decision == "ok") | .home' /tmp/smoke-userdb.json)
+        smoke_uid=$$(jq -r 'select(.decision == "ok") | .uid' /tmp/smoke-userdb.json)
+        smoke_gid=$$(jq -r 'select(.decision == "ok") | .gid' /tmp/smoke-userdb.json)
+        smoke_hash=$$(doveadm pw -s SHA512-CRYPT -p smoke-secret)
+        printf 'smoke@example.test:%s:%s:%s::%s::\n' "$$smoke_hash" "$$smoke_uid" "$$smoke_gid" "$$smoke_home" > /etc/dovecot/passwd
         exec dovecot -F
     volumes:
       - maildata:/mail
       - ./dovecot:/reference/dovecot:ro
+    depends_on:
+      - gophermailforge
     ports:
       - "2143:143"
   rspamd:
@@ -81,15 +95,23 @@ services:
       - /bin/sh
       - -lc
       - |
-        apk add --no-cache rspamd curl >/dev/null
+        apk add --no-cache rspamd curl jq >/dev/null
         mkdir -p /run/rspamd/dkim /etc/rspamd/local.d
         cp /reference/rspamd/local.d/* /etc/rspamd/local.d/
+        until curl -fsS http://gophermailforge:8080/healthz >/dev/null; do sleep 1; done
+        curl -fsS -H 'X-Correlation-ID: rspamd-dkim-gen' http://gophermailforge:8080/internal/v1/rspamd/dkim/example.test | jq -e '.decision == "ok" and .selector == "mail"' >/dev/null
+        curl -fsS -H 'X-Correlation-ID: rspamd-dkim-gen' -H 'Content-Type: application/json' -d '{"domain":"example.test"}' http://gophermailforge:8080/internal/v1/rspamd/signing-decision | jq -e '.decision == "ok"' >/dev/null
         rspamadm dkim_keygen -d example.test -s mail -k /run/rspamd/dkim/example.test.mail.key >/run/rspamd/dkim/example.test.mail.txt
+        chown -R rspamd:rspamd /run/rspamd/dkim
+        chmod 0400 /run/rspamd/dkim/example.test.mail.key
         exec rspamd -f -u rspamd -g rspamd
     volumes:
       - dkimdata:/run/rspamd/dkim
       - ./rspamd:/reference/rspamd:ro
+    depends_on:
+      - gophermailforge
     ports:
+      - "11332:11332"
       - "11333:11333"
       - "11334:11334"
   webmail:
