@@ -10,7 +10,7 @@ v0 foundation implementation now exists. New features still start with missing e
 
 | Subsystem | Required harnesses | Initial state | High-risk gaps |
 | --- | --- | --- | --- |
-| Config/render/apply | unit, golden render, audit integration | v0 tests in `internal/config`, `internal/render`, `internal/apply`, and CLI staged/apply smoke in `cmd/gmf` | future daemon-specific renderers still missing |
+| Config/render/apply | unit, golden render, audit integration | v0 config/render/apply tests, CLI staged/apply smoke in `cmd/gmf`, and v1 daemon config render/source-header tests in `internal/render` | future DNS/TLS/plugin-specific renderers still pending |
 | Store/migrations | migration, constraint, upgrade/downgrade where safe | v0 migration/schema helper tests plus embedded Postgres SQL execution tests in `internal/store`, including enum/check constraints and SQL audit persistence | downgrade path deferred beyond v0 |
 | Audit/authz | unit, negative, fail-closed integration | v0 audit redaction, SQL audit source persistence, and authz explain tests in `internal/audit`, `internal/store`, and `internal/authz` | richer integration coverage required as mutations expand |
 | Plugin runtime | protobuf contract, authenticated/unauthenticated gRPC, failure isolation | v0 generated protobuf bindings, metadata/deadline/status-code plugin control tests, and bufconn gRPC transport tests in `internal/plugin` and `test/contract` | future plugin implementations still missing |

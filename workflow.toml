@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GopherMailForge"
 profile = "medium"
-active_feature = "v1.mail-core.daemon-contracts"
+active_feature = "v1.mail-core.generated-config"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -193,7 +193,7 @@ verification = ["Postfix happy/failure contract tests", "Dovecot passdb/userdb/q
 id = "v1.mail-core.generated-config"
 root = "v1.mail-core"
 title = "Generated daemon config renderers"
-state = "planned"
+state = "done"
 path = "workflow/features/v1.mail-core/generated-config"
 source_path = "internal/render"
 branch = "workflow/feature/v1.mail-core.generated-config"

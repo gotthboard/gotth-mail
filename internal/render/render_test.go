@@ -54,3 +54,27 @@ func TestDiff(t *testing.T) {
 		t.Fatalf("bad diff: %#v", d)
 	}
 }
+
+func TestRenderIncludesDaemonConfigWithSourceHeader(t *testing.T) {
+	s := Render(cfg())
+	want := map[string]bool{
+		"front/nginx.conf":             false,
+		"postfix/gophermailforge.conf": false,
+		"dovecot/gophermailforge.conf": false,
+		"rspamd/gophermailforge.conf":  false,
+		"webmail/provider.conf":        false,
+	}
+	for _, f := range s.Files {
+		if _, ok := want[f.Path]; ok {
+			want[f.Path] = true
+			if !strings.Contains(f.Content, "generated_config_set="+s.ID) || !strings.Contains(f.Content, "input_hash="+s.InputHash) {
+				t.Fatalf("missing source header in %s: %q", f.Path, f.Content)
+			}
+		}
+	}
+	for path, ok := range want {
+		if !ok {
+			t.Fatalf("missing daemon config %s", path)
+		}
+	}
+}

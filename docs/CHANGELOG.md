@@ -21,6 +21,34 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-16 01:41 CDT — Generate daemon config for v1 mail core
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `docs/CHANGELOG.md`
+- `internal/render/render.go`
+- `internal/render/render_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v1.mail-core/generated-config/evidence/2026-07-16-generated-config.md`
+
+Explanation:
+
+Completed `v1.mail-core.generated-config` by expanding the deterministic render set with daemon-facing generated config files for front/proxy, Postfix, Dovecot, Rspamd, and the selected external webmail provider placeholder. Generated daemon config now points the daemon mechanisms at the v1 internal HTTP/JSON contract endpoints from `v1.mail-core.daemon-contracts` instead of leaving the rendered output as only v0 control-plane/plugin files.
+
+Every generated file now uses the v1 source header form with the generated config set ID and input hash. The render ID is computed from sorted file paths and bodies before source headers are stamped, avoiding a dishonest circular hash while still giving operators traceability from files back to the generated set. Existing staged render/apply behavior remains intact with the larger render set.
+
+Updated workflow state to mark `v1.mail-core.generated-config` done and recorded feature evidence plus the global coverage posture.
+
+Verification:
+
+- Confirmed `go test ./...` passes.
+- Confirmed `git diff --check -- .` passes.
+- Added render tests proving daemon config files exist and carry `generated_config_set` plus `input_hash` source headers.
+
 ### 2026-07-16 01:37 CDT — Implement v1 daemon contract surface
 
 Commit: current commit; hash assigned by Git after commit
