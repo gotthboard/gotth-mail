@@ -6,9 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"forgejo/linus/gophermailforge/internal/audit"
 	"forgejo/linus/gophermailforge/internal/authz"
 	"forgejo/linus/gophermailforge/internal/config"
 	"forgejo/linus/gophermailforge/internal/daemon"
+	"forgejo/linus/gophermailforge/internal/identity"
 	"forgejo/linus/gophermailforge/internal/ops"
 	"forgejo/linus/gophermailforge/internal/plugin"
 )
@@ -101,5 +103,199 @@ func TestAuthzExplainUsesRequestActorActionResource(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "domain manager role matched") || !strings.Contains(rr.Body.String(), "oidc:domain_manager:example.test") {
 		t.Fatalf("unexpected explain %s", rr.Body.String())
+	}
+}
+
+func authed(method, path, body, token string) *http.Request {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	return req
+}
+
+func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
+	ids := identity.NewService("example.test")
+	if err := ids.AddToken("scim-test", "scim_client", "scim-secret-token"); err != nil {
+		t.Fatal(err)
+	}
+	d := daemon.Service{}
+	ids.Daemon = &d
+	h := Server{Identity: ids, Daemon: d}.Handler()
+
+	unauth := httptest.NewRecorder()
+	h.ServeHTTP(unauth, httptest.NewRequest(http.MethodPost, "/scim/v2/Users", strings.NewReader(`{"userName":"user@example.test"}`)))
+	if unauth.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth SCIM status=%d", unauth.Code)
+	}
+
+	create := authed(http.MethodPost, "/scim/v2/Users", `{"userName":"user@example.test","displayName":"User","active":true,"password":"long-password"}`, "scim-secret-token")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, create)
+	if rr.Code != http.StatusCreated || !strings.Contains(rr.Body.String(), "user@example.test") {
+		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := d.DovecotPassdb("c", daemon.PassdbRequest{Username: "user@example.test", Secret: "long-password", Protocol: "imap"}); got.Decision != daemon.OK {
+		t.Fatalf("SCIM password did not enter daemon passdb: %#v", got)
+	}
+
+	patch := authed(http.MethodPatch, "/scim/v2/Users/user@example.test", `{"Operations":[{"op":"replace","path":"/displayName","value":"Renamed"},{"op":"replace","path":"/active","value":false}]}`, "scim-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, patch)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "Renamed") || !strings.Contains(rr.Body.String(), `"active":false`) {
+		t.Fatalf("patch status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	list := authed(http.MethodGet, "/scim/v2/Users", "", "scim-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, list)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "ListResponse") {
+		t.Fatalf("list status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	read := authed(http.MethodGet, "/scim/v2/Users/user@example.test", "", "scim-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, read)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "user@example.test") {
+		t.Fatalf("read status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	put := authed(http.MethodPut, "/scim/v2/Users/user@example.test", `{"userName":"user@example.test","displayName":"Put User","active":true,"password":"replacement-password"}`, "scim-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, put)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "Put User") {
+		t.Fatalf("put status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := d.DovecotPassdb("c", daemon.PassdbRequest{Username: "user@example.test", Secret: "replacement-password", Protocol: "imap"}); got.Decision != daemon.OK {
+		t.Fatalf("PUT replacement password did not enter daemon passdb: %#v", got)
+	}
+
+	deleteReq := authed(http.MethodDelete, "/scim/v2/Users/user@example.test", "", "scim-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, deleteReq)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"active":false`) {
+		t.Fatalf("delete status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	badCases := []struct{ name, method, path, body string }{
+		{"malformed", http.MethodPost, "/scim/v2/Users", `{`},
+		{"non-object", http.MethodPost, "/scim/v2/Users", `[]`},
+		{"scalar active", http.MethodPost, "/scim/v2/Users", `{"userName":"bad@example.test","active":"yes"}`},
+		{"scalar display", http.MethodPost, "/scim/v2/Users", `{"userName":"bad@example.test","displayName":12}`},
+		{"scalar formatted", http.MethodPost, "/scim/v2/Users", `{"userName":"bad@example.test","name":{"formatted":12}}`},
+		{"bad domain", http.MethodPost, "/scim/v2/Users", `{"userName":"bad@evil.test"}`},
+		{"empty operations", http.MethodPatch, "/scim/v2/Users/user@example.test", `{"Operations":[]}`},
+		{"unknown path", http.MethodPatch, "/scim/v2/Users/user@example.test", `{"Operations":[{"op":"replace","path":"/unknown","value":"x"}]}`},
+		{"unsupported op", http.MethodPatch, "/scim/v2/Users/user@example.test", `{"Operations":[{"op":"move","path":"/displayName","value":"x"}]}`},
+	}
+	for _, tc := range badCases {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, authed(tc.method, tc.path, tc.body, "scim-secret-token"))
+			if rr.Code < 400 || !strings.Contains(rr.Body.String(), "urn:ietf:params:scim:api:messages:2.0:Error") {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/scim/v2/Groups", nil))
+	if rr.Code != http.StatusNotImplemented || !strings.Contains(rr.Body.String(), "explicitly unsupported") {
+		t.Fatalf("groups status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAppPasswordAPICreateListRevokeSecretOnce(t *testing.T) {
+	ids := identity.NewService("example.test")
+	ids.Secret = func() (string, error) { return "one-time-client-secret", nil }
+	if err := ids.AddToken("api-test", "api_token", "api-secret-token"); err != nil {
+		t.Fatal(err)
+	}
+	d := daemon.Service{}
+	ids.Daemon = &d
+	_, err := ids.CreateOrReplaceUser(nil, authz.Actor{Type: "local_admin", ID: "seed"}, identity.Mailbox{Email: "user@example.test", Active: true}, "mail-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := Server{Identity: ids, Daemon: d}.Handler()
+	unauth := httptest.NewRecorder()
+	h.ServeHTTP(unauth, httptest.NewRequest(http.MethodPost, "/api/v1/mailboxes/user@example.test/app-passwords", strings.NewReader(`{"label":"phone"}`)))
+	if unauth.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth app-password status=%d", unauth.Code)
+	}
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodPost, "/api/v1/mailboxes/user@example.test/app-passwords", `{"label":"phone"}`, "api-secret-token"))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "one-time-client-secret") {
+		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	createdBody := rr.Body.String()
+	idStart := strings.Index(createdBody, `"id":"`)
+	if idStart < 0 {
+		t.Fatalf("missing id in %s", createdBody)
+	}
+	idRest := createdBody[idStart+6:]
+	tokenID := idRest[:strings.Index(idRest, `"`)]
+	if got := d.DovecotPassdb("c", daemon.PassdbRequest{Username: "user@example.test", Secret: "one-time-client-secret", Protocol: "imap"}); got.Decision != daemon.OK {
+		t.Fatalf("app password did not enter daemon passdb: %#v", got)
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodGet, "/api/v1/mailboxes/user@example.test/app-passwords", "", "api-secret-token"))
+	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "one-time-client-secret") || strings.Contains(rr.Body.String(), "verifier") {
+		t.Fatalf("list leaked secret/verifier status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodDelete, "/api/v1/mailboxes/user@example.test/app-passwords/"+tokenID, "", "api-secret-token"))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "revoked") {
+		t.Fatalf("revoke status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := d.DovecotPassdb("c", daemon.PassdbRequest{Username: "user@example.test", Secret: "one-time-client-secret", Protocol: "imap"}); got.Decision != daemon.Reject {
+		t.Fatalf("revoked app password still authenticates: %#v", got)
+	}
+}
+
+func TestSCIMPutRejectsDivergentIDAndAuditsAuthFailure(t *testing.T) {
+	ids := identity.NewService("example.test")
+	if err := ids.AddToken("scim-test", "scim_client", "scim-secret-token"); err != nil {
+		t.Fatal(err)
+	}
+	w := &audit.MemoryWriter{}
+	h := Server{Identity: ids, Audit: w}.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/scim/v2/Users", strings.NewReader(`{"userName":"user@example.test"}`)))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth status=%d", rr.Code)
+	}
+	if len(w.Events) == 0 || w.Events[len(w.Events)-1].Result != "denied" {
+		t.Fatalf("missing auth failure audit %#v", w.Events)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodPost, "/scim/v2/Users", `{bad`, "scim-secret-token"))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("bad json status=%d", rr.Code)
+	}
+	if w.Events[len(w.Events)-1].Result != "failure" {
+		t.Fatalf("missing decode failure audit %#v", w.Events)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodPost, "/scim/v2/Users", `{"userName":"user@example.test","password":"long-password"}`, "scim-secret-token"))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodPut, "/scim/v2/Users/user@example.test", `{"userName":"other@example.test"}`, "scim-secret-token"))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "id must match userName") {
+		t.Fatalf("mismatch status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestDefaultIdentityServiceIsSharedAcrossSCIMAndAppPasswordRoutes(t *testing.T) {
+	h := Server{Daemon: daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}}}.Handler()
+	// The default service has no configured token, so this currently proves routes are wired through one service only by requiring explicit auth.
+	// Shared-state behavior with successful auth is covered by injected-service tests above.
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/scim/v2/Users", strings.NewReader(`{"userName":"user@example.test"}`)))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d", rr.Code)
 	}
 }

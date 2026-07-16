@@ -13,6 +13,7 @@ import (
 	"forgejo/linus/gophermailforge/internal/config"
 	"forgejo/linus/gophermailforge/internal/daemon"
 	"forgejo/linus/gophermailforge/internal/diag"
+	"forgejo/linus/gophermailforge/internal/identity"
 	"forgejo/linus/gophermailforge/internal/ops"
 	"forgejo/linus/gophermailforge/internal/plugin"
 	"forgejo/linus/gophermailforge/internal/render"
@@ -33,6 +34,7 @@ type Server struct {
 	OIDCStore             *authn.Store
 	OIDCAuthorizeEndpoint string
 	OIDCJWKS              authn.JWKS
+	Identity              *identity.Service
 }
 
 func (s Server) Handler() http.Handler {
@@ -104,6 +106,9 @@ func (s Server) Handler() http.Handler {
 		}
 		writeJSON(w, map[string]any{"identity": res.Identity, "session": map[string]any{"id": res.Session.ID, "expires_at": res.Session.ExpiresAt, "auth_method": res.Session.AuthMethod}})
 	})
+	identitySvc := s.identityService(auditLog)
+	s.registerSCIM(mux, auditLog, identitySvc)
+	s.registerIdentityAPI(mux, auditLog, identitySvc)
 	mux.HandleFunc("/api/v1/authz/explain", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "POST") {
 			return

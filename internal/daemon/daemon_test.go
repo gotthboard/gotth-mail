@@ -1,6 +1,10 @@
 package daemon
 
-import "testing"
+import (
+	"testing"
+
+	"forgejo/linus/gophermailforge/internal/audit"
+)
 
 func fixture() Service {
 	verifier := MakeDjangoPBKDF2SHA256("app-secret", "testsalt", 1200)
@@ -90,5 +94,22 @@ func TestRspamdContracts(t *testing.T) {
 func TestVerifierRejectsUnsupportedHash(t *testing.T) {
 	if err := VerifyDjangoPBKDF2SHA256("plaintext", "secret"); err == nil {
 		t.Fatal("unsupported verifier accepted")
+	}
+}
+
+func TestDovecotPassdbAuditsAppPasswordUse(t *testing.T) {
+	w := &audit.MemoryWriter{}
+	s := Service{Audit: w, Mailboxes: map[string]Mailbox{"user@example.test": {Address: "user@example.test", Enabled: true, Verifier: MakeDjangoPBKDF2SHA256("mail-secret", "salt", 1200)}}, AppPasswordVerifiers: map[string][]string{"user@example.test": {MakeDjangoPBKDF2SHA256("app-secret", "salt2", 1200)}}}
+	if got := s.DovecotPassdb("c", PassdbRequest{Username: "user@example.test", Secret: "app-secret", Protocol: "imap"}); got.Decision != OK {
+		t.Fatalf("got %#v", got)
+	}
+	if len(w.Events) != 1 || w.Events[0].Action != "app_password.use" || w.Events[0].Result != "success" {
+		t.Fatalf("events %#v", w.Events)
+	}
+	if got := s.DovecotPassdb("c", PassdbRequest{Username: "user@example.test", Secret: "wrong", Protocol: "imap"}); got.Decision != Reject {
+		t.Fatalf("got %#v", got)
+	}
+	if len(w.Events) != 2 || w.Events[1].Result != "failure" || w.Events[1].ErrorCode != "invalid_secret" {
+		t.Fatalf("events %#v", w.Events)
 	}
 }

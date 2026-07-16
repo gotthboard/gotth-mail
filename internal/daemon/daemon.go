@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+
+	"forgejo/linus/gophermailforge/internal/audit"
 	"net/mail"
 	"strconv"
 	"strings"
@@ -73,11 +75,13 @@ type RateLimit struct {
 }
 
 type Service struct {
-	Unavailable bool
-	Domains     map[string]Domain
-	Mailboxes   map[string]Mailbox
-	Aliases     map[string]Alias
-	RateLimits  map[string]RateLimit
+	Unavailable          bool
+	Domains              map[string]Domain
+	Mailboxes            map[string]Mailbox
+	Aliases              map[string]Alias
+	RateLimits           map[string]RateLimit
+	AppPasswordVerifiers map[string][]string
+	Audit                audit.Writer
 }
 
 type SenderLoginRequest struct {
@@ -223,10 +227,19 @@ func (s Service) DovecotPassdb(correlationID string, req PassdbRequest) Response
 	if strings.HasPrefix(req.Secret, "oidc:") || strings.Count(req.Secret, ".") == 2 && strings.HasPrefix(req.Secret, "eyJ") {
 		return resp(correlationID, Reject, "oidc_token_not_mail_secret")
 	}
-	if err := VerifyDjangoPBKDF2SHA256(m.Verifier, req.Secret); err != nil {
-		return resp(correlationID, Reject, "invalid_secret")
+	addr := normalizeAddress(req.Username)
+	if VerifyDjangoPBKDF2SHA256(m.Verifier, req.Secret) == nil {
+		s.auditPassdb(correlationID, req, "mailbox_password", "success", "")
+		return resp(correlationID, OK, "passdb_authenticated")
 	}
-	return resp(correlationID, OK, "passdb_authenticated")
+	for _, verifier := range s.appPasswordVerifiers()[addr] {
+		if VerifyDjangoPBKDF2SHA256(verifier, req.Secret) == nil {
+			s.auditPassdb(correlationID, req, "app_password", "success", "")
+			return resp(correlationID, OK, "passdb_authenticated")
+		}
+	}
+	s.auditPassdb(correlationID, req, "mail_secret", "failure", "invalid_secret")
+	return resp(correlationID, Reject, "invalid_secret")
 }
 
 func (s Service) DovecotUserdb(correlationID, address string) Response {
@@ -370,6 +383,29 @@ func (s Service) rateLimits() map[string]RateLimit {
 	out := map[string]RateLimit{}
 	for k, v := range s.RateLimits {
 		out[normalizeAddress(k)] = v
+	}
+	return out
+}
+
+func (s Service) auditPassdb(correlationID string, req PassdbRequest, method, result, code string) {
+	if s.Audit == nil {
+		return
+	}
+	_ = s.Audit.Write(nil, audit.Event{
+		Actor:         audit.ActorRef{Type: "dovecot", ID: req.Protocol},
+		Action:        "app_password.use",
+		Resource:      audit.ResourceRef{Type: "mailbox", ID: normalizeAddress(req.Username)},
+		CorrelationID: correlation(correlationID),
+		Result:        result,
+		ErrorCode:     code,
+		AfterRedacted: map[string]any{"method": method, "protocol": req.Protocol},
+	})
+}
+
+func (s Service) appPasswordVerifiers() map[string][]string {
+	out := map[string][]string{}
+	for k, vs := range s.AppPasswordVerifiers {
+		out[normalizeAddress(k)] = append([]string(nil), vs...)
 	}
 	return out
 }

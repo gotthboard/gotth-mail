@@ -21,9 +21,51 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-16 11:52 CDT — Add Authentik role mapping and permission simulator coverage
+### 2026-07-16 12:05 CDT — Finish v2 identity provisioning
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/identity/identity.go`
+- `internal/identity/identity_test.go`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/api/scim.go`
+- `internal/daemon/daemon.go`
+- `internal/daemon/daemon_test.go`
+- `internal/httpui/httpui.go`
+- `internal/httpui/httpui_test.go`
+- `docs/CHANGELOG.md`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/features/v2.identity-provisioning/README.md`
+- `workflow/features/v2.identity-provisioning/oidc-sessions/README.md`
+- `workflow/features/v2.identity-provisioning/scim/README.md`
+- `workflow/features/v2.identity-provisioning/scim/evidence/2026-07-16-scim.md`
+- `workflow/features/v2.identity-provisioning/app-passwords-ui/README.md`
+- `workflow/features/v2.identity-provisioning/app-passwords-ui/evidence/2026-07-16-app-passwords-ui.md`
+- `workflow/features/v2.identity-provisioning/evidence/2026-07-16-v2-root-completion.md`
+
+Explanation:
+
+Completed the v2 identity/provisioning root. This change adds the remaining SCIM provisioning API, identity service, app-password/mail-client token behavior, Dovecot verifier integration, and identity UI surfaces. SCIM now exposes service metadata and Users list/create/read/replace/patch/disable behavior, requires verifier-backed bearer-token authentication for user routes, returns explicit unsupported Groups responses, validates payload/domain/password/patch failures, writes Django PBKDF2-SHA256 verifier strings for supplied mailbox passwords, synchronizes provisioned users into the daemon mailbox/passdb view, and emits audit events for provisioning mutations and denied/failure paths.
+
+App passwords now support create/list/revoke through API routes. Create returns the plaintext generated secret once. Stored records retain verifier hashes only, app-password API routes require verifier-backed bearer-token authentication, list responses do not disclose plaintext secrets or verifier strings, revocation prevents future daemon `DovecotPassdb` verification, and mailbox/app-password verification uses the same Django-compatible verifier contract.
+
+The identity UI now exposes OIDC/Auth, Authentik role mapping, SCIM status/test, app-password list/create/revoke, and permission simulator screens; SCIM test provisioning, app-password, and simulator UI flows use service authorization/audit paths. Workflow state marks all v2 children and the v2 root done, then advances the active feature to the first v3 child.
+
+Verification:
+
+- Confirmed `go test ./internal/identity` passes.
+- Confirmed `go test ./internal/api` passes.
+- Confirmed `go test ./internal/httpui` passes.
+- Confirmed `git diff --check -- .` passes.
+- Confirmed `go test ./...` passes.
+
+### 2026-07-16 11:52 CDT — Add Authentik role mapping and permission simulator coverage
+
+Commit: 33eedc5
 
 Affected files:
 

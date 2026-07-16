@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"forgejo/linus/gophermailforge/internal/admin"
+	"forgejo/linus/gophermailforge/internal/authz"
+	"forgejo/linus/gophermailforge/internal/identity"
 )
 
 func TestMailAdminCRUDScreensRenderAndMutate(t *testing.T) {
@@ -37,9 +39,58 @@ func TestMailAdminCRUDScreensRenderAndMutate(t *testing.T) {
 	h.ServeHTTP(w, req)
 	body, _ := io.ReadAll(w.Result().Body)
 	text := string(body)
-	for _, want := range []string{"Domain CRUD", "User CRUD", "Alias CRUD", "example.test", "smoke@example.test", "alias@example.test", "Doctor screens", "DNS/DKIM screens", "Plugin status/config screens", "Lookup debugger UI"} {
+	for _, want := range []string{"Domain CRUD", "User CRUD", "Alias CRUD", "example.test", "smoke@example.test", "alias@example.test", "OIDC/Auth status", "Authentik role/group mapping", "SCIM status/test", "App-password list/create/revoke", "Permission simulator UI", "Doctor screens", "DNS/DKIM screens", "Plugin status/config screens", "Lookup debugger UI"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("admin UI missing %q in %s", want, text)
 		}
+	}
+}
+
+func TestIdentityUIScreensUseServicePaths(t *testing.T) {
+	ids := identity.NewService("example.test")
+	_, err := ids.CreateOrReplaceUser(nil, authz.Actor{Type: "local_admin", ID: "seed"}, identity.Mailbox{Email: "user@example.test", Active: true}, "mail-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids.Secret = func() (string, error) { return "ui-secret-token", nil }
+	h := HandlerWithAdminAndIdentity(admin.NewStore(), ids, authz.StaticAuthorizer{})
+	form := url.Values{"mailbox": {"user@example.test"}, "label": {"phone"}}
+	req := httptest.NewRequest(http.MethodPost, "/identity/app-passwords", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	body, _ := io.ReadAll(w.Result().Body)
+	text := string(body)
+	if w.Code != http.StatusOK || !strings.Contains(text, "secret_once=ui-secret-token") || !strings.Contains(text, "phone") {
+		t.Fatalf("status=%d body=%s", w.Code, text)
+	}
+	if len(ids.Audit.Events) == 0 || ids.Audit.Events[len(ids.Audit.Events)-1].Action != "app_password.create" {
+		t.Fatalf("missing audit %#v", ids.Audit.Events)
+	}
+	form = url.Values{"actor_type": {"local_admin"}, "actor_id": {"ui"}, "action": {"status:read"}, "resource_type": {"system"}, "resource_id": {"self"}}
+	req = httptest.NewRequest(http.MethodPost, "/identity/simulator", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	if !strings.Contains(string(body), "local admin may administer all resources") {
+		t.Fatalf("simulator body=%s", string(body))
+	}
+}
+
+func TestSCIMUITestActionProvisionsUser(t *testing.T) {
+	ids := identity.NewService("example.test")
+	h := HandlerWithAdminAndIdentity(admin.NewStore(), ids, authz.StaticAuthorizer{})
+	form := url.Values{"userName": {"ui@example.test"}, "displayName": {"UI User"}, "password": {"mail-password"}}
+	req := httptest.NewRequest(http.MethodPost, "/identity/scim-test", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	body, _ := io.ReadAll(w.Result().Body)
+	if w.Code != http.StatusOK || !strings.Contains(string(body), "SCIM test user provisioned: ui@example.test") || !strings.Contains(string(body), "UI User") {
+		t.Fatalf("status=%d body=%s", w.Code, string(body))
+	}
+	if _, ok := ids.GetUser("ui@example.test"); !ok {
+		t.Fatal("SCIM UI did not provision user")
 	}
 }

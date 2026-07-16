@@ -2,6 +2,6 @@
 
 ID: `v2.identity-provisioning.scim`
 
-State: `planned`
+State: `done`
 
 Canonical state lives in `workflow.toml`. This folder holds scoped evidence, review notes, and postmortems only.
