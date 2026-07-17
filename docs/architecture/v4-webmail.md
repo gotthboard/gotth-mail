@@ -88,6 +88,8 @@ HTML email is hostile input. Treat it as data, not UI code.
 
 ## Mandatory OpenPGP signing
 
+Architecture must conform to [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md). Any identity history, search, audit indexing, downgrade detection, key rotation continuity, or forensic export behavior must conform to [Operational Identity History and Audit Indexing for Exact Sender Binding](../reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md).
+
 Compose/send flows must OpenPGP-sign every outbound email with the sending user's configured signing identity. The UI may expose identity/signature state, but it may not offer a bypass that sends unsigned mail.
 
 Required behavior:

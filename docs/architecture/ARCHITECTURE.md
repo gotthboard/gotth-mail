@@ -15,6 +15,15 @@ GopherMailForge is a Docker/Compose-deployed Go control plane for a self-hosted 
 - [v4 Custom Webmail](v4-webmail.md) — from [PRD-v4-webmail.md](../prd/PRD-v4-webmail.md)
 - [v5 Notifications](v5-notifications.md) — from [PRD-v5-notifications.md](../prd/PRD-v5-notifications.md)
 
+## Exact sender architecture references
+
+Outbound email signing architecture is constrained by:
+
+- [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md)
+- [Operational Identity History and Audit Indexing for Exact Sender Binding](../reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md)
+
+The core profile controls signing, exact identity binding, delegation, and fail-closed behavior. The operational profile controls temporal identity state, address/name history, search/audit indexing, downgrade detection, key-rotation continuity, and forensic export where implemented.
+
 ## Core components
 
 ### Control plane container

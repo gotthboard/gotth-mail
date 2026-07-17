@@ -169,6 +169,8 @@ Required tests:
 
 ## Mandatory OpenPGP signing for email notifications
 
+Implementation must conform to [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md). Notification identity history, downgrade detection, key-rotation continuity, and forensic export behavior must conform to [Operational Identity History and Audit Indexing for Exact Sender Binding](../reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md) where implemented.
+
 Any email notification backend introduced in v5 must OpenPGP-sign every outbound email notification with the responsible user or system notification identity before delivery. Telegram/webhook transports may use their own authenticated transport semantics, but email output is never exempt from the global OpenPGP signing invariant.
 
 Required behavior:
@@ -178,7 +180,7 @@ Required behavior:
 - per-user notification emails use that user's signing identity when the message asserts that user as sender;
 - system notifications use a configured system notification signing identity;
 - key rotation/revocation must not allow fallback to unsigned mail;
-- verification tests must prove that outbound notification email contains an OpenPGP/MIME signature and that missing/revoked keys block send.
+- verification tests must prove that outbound notification email contains an OpenPGP/MIME signature, resolves to exactly one authorized sender identity, and that missing/revoked/expired/ambiguous/mismatched keys block send.
 
 ## OpenPGP email signing contract
 

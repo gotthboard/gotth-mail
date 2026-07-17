@@ -152,6 +152,20 @@ Mailbox-password and mail-client verifier storage must use Authentik-compatible 
 
 GopherMailForge must not invent a private mail-only password hash. New password hashes use the configured Authentik-compatible hasher profile. Imports accept only recognized Django encoded hashes unless an explicit migration exception is recorded. Plaintext import/export is forbidden. See [Authentik password hashing compatibility](../reference/authentik-password-hashing.md).
 
+### Exact sender OpenPGP/MIME contract
+
+Outbound email implementation must conform to [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md). Implemented operational capabilities for temporal identity state, address/name history, search/audit indexing, downgrade detection, key-rotation continuity, and forensic export must conform to [Operational Identity History and Audit Indexing for Exact Sender Binding](../reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md).
+
+Implementation requirements:
+
+- OpenPGP/MIME signing is required for newly sent outbound email.
+- DKIM is domain/server proof and does not satisfy exact sender identity binding.
+- The signing fingerprint must resolve to exactly one active configured sender identity.
+- The resolved sender identity must be authorized to assert the message `From` and `Sender` fields.
+- Explicit delegated sending must be recorded and auditable.
+- Missing, unmapped, ambiguous, revoked, expired, disabled, mismatched, or unauthorized signing state fails closed.
+- No implementation may preserve delivery convenience by falling back to unsigned mail.
+
 ### Plugin contract
 
 All plugins must:

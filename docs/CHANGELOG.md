@@ -21,6 +21,39 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-16 22:50 CDT — Add OpenPGP exact-sender drafts to PRD and specs
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `docs/reference/openpgp-exact-sender/README.md`
+- `docs/reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md`
+- `docs/reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md`
+- `docs/prd/PRD.md`
+- `docs/prd/PRD-v4-webmail.md`
+- `docs/prd/PRD-v5-notifications.md`
+- `docs/architecture/ARCHITECTURE.md`
+- `docs/architecture/v4-webmail.md`
+- `docs/architecture/v5-notifications.md`
+- `docs/implementation/IMPLEMENTATION.md`
+- `docs/implementation/v4-webmail.md`
+- `docs/implementation/v5-notifications.md`
+- `workflow.events.jsonl`
+
+Explanation:
+
+Added the split OpenPGP exact-sender drafts as repository reference material and wired them into the GopherMailForge PRD, architecture, and implementation-spec layers. The core exact-sender draft now anchors outbound OpenPGP/MIME signing, exact key-to-sender binding, delegation, and fail-closed behavior. The operational identity-history draft anchors temporal identity state, address/name history, search/audit indexing, downgrade detection, key-rotation continuity, and forensic export where those capabilities are implemented.
+
+This change is documentation/spec traceability only. It does not claim the current v4 seam cut implements the full drafts, and it does not mark any workflow state done.
+
+Verification:
+
+- Confirmed `.md` reference drafts were copied into `docs/reference/openpgp-exact-sender/`.
+- Confirmed PRD, architecture, and implementation specs link to the exact-sender drafts.
+- Confirmed `git diff --check -- .` passes.
+- Confirmed `go test ./...` passes.
+
 ### 2026-07-16 10:22 CDT — Clarify exact-user OpenPGP identity binding
 
 Commit: current commit; hash assigned by Git after commit
