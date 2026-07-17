@@ -72,6 +72,8 @@ Custom webmail must not block the control-plane product.
 
 ## Mandatory OpenPGP signing
 
+This requirement is traced to [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md) and, for search/audit/history behavior, [Operational Identity History and Audit Indexing for Exact Sender Binding](../reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md).
+
 Compose/send flows must OpenPGP-sign every outbound email with the sending user's configured signing identity. The UI may expose identity/signature state, but it may not offer a bypass that sends unsigned mail.
 
 Required behavior:

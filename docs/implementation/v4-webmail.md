@@ -116,7 +116,7 @@ Required tests:
 - compose/draft/submit/reply/forward flows
 - send failures reported clearly
 - current-folder IMAP SEARCH works with pagination/windowing and documented result limits
-- identities/signatures work in compose/send
+- identities/signatures work in compose/send, including exact sender identity binding and fail-closed mismatches
 - HTML rendering XSS tests with CSP and no unsafe bypass
 - remote image policy tests
 - MIME edge-case tests
@@ -127,6 +127,8 @@ Required tests:
 - `go test ./...`
 
 ## Mandatory OpenPGP signing
+
+Implementation must conform to [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md). Search/audit behavior related to exact sender identity must conform to [Operational Identity History and Audit Indexing for Exact Sender Binding](../reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md).
 
 Compose/send flows must OpenPGP-sign every outbound email with the sending user's configured signing identity. The UI may expose identity/signature state, but it may not offer a bypass that sends unsigned mail.
 
