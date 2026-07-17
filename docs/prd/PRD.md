@@ -18,6 +18,15 @@ GopherMailForge is not a Mailu fork and must not mechanically copy Mailu's Pytho
 - Persistence: explicit relational schema and migrations.
 - Config: typed, validated, generated, diffed, applied explicitly, and audited.
 
+## Reference drafts
+
+GopherMailForge exact-sender OpenPGP/MIME requirements are traced to these local reference drafts:
+
+- [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md)
+- [Operational Identity History and Audit Indexing for Exact Sender Binding](../reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md)
+
+These drafts are project reference material. Version PRDs, architecture documents, implementation specs, tests, and workflow evidence still decide which parts are implemented in each version.
+
 ## Hard invariants
 
 1. Do not break mail delivery because Authentik is down.
@@ -132,7 +141,7 @@ Do not jump straight into coding. That is how control planes become piles of acc
 
 ## Global outbound email signing invariant
 
-Every outbound email produced or relayed by GopherMailForge must carry a valid OpenPGP signature for the asserted sender/user identity. DKIM remains required for domain/server authenticity, but it is not enough: OpenPGP is the exact-user-origin proof.
+Every outbound email produced or relayed by GopherMailForge must follow [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md) for the asserted sender/user identity. DKIM remains required for domain/server authenticity, but it is not enough: OpenPGP is the exact-user-origin proof.
 
 The verifier must be able to answer **exactly which configured user identity signed this message**. A valid domain signature, relay signature, shared mailbox signature, or unmapped OpenPGP key is not sufficient. The signing key must be bound to the asserted `From`/`Sender` identity and current user/key state.
 
@@ -145,5 +154,7 @@ Rules:
 - key ownership, rotation, revocation, expiry, and disabled-user behavior must be explicit and auditable;
 - imported messages may remain historically unsigned, but any newly sent, resent, automated, notification, approval, or system-generated outbound message must be signed before leaving the system.
 
+
+The companion operational profile, [Operational Identity History and Audit Indexing for Exact Sender Binding](../reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md), governs project requirements for temporal identity state, address/name history, search/audit indexing, downgrade detection, key-rotation continuity, and forensic export where those capabilities are implemented.
 
 The signature requirement is not merely provenance for a domain or server. Verification must answer exactly which configured user identity signed the message. If the signer cannot be mapped to the asserted From/Sender identity and active user/key binding, the message is treated as unsigned/invalid.
