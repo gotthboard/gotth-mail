@@ -24,7 +24,7 @@ func TestOIDCAuthCodeCallbackValidatesStateTokenAndCreatesSession(t *testing.T) 
 		t.Fatal(err)
 	}
 	tok := signToken(t, key, "kid1", map[string]any{"iss": cfg.Issuer, "sub": "user-123", "aud": []string{cfg.ClientID}, "azp": cfg.ClientID, "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "nbf": now.Add(-time.Second).Unix(), "nonce": start.Nonce, "email": "alice@example.test", "name": "Alice"})
-	res, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser-hash", RedirectURI: cfg.RedirectURI, IDToken: tok, JWKS: jwks})
+	res, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser-hash", RedirectURI: cfg.RedirectURI, Code: "code-1", JWKS: jwks, Exchanger: fakeExchange{Token: tok}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestOIDCAuthCodeCallbackValidatesStateTokenAndCreatesSession(t *testing.T) 
 	if _, ok := store.Session(res.Session.ID); !ok {
 		t.Fatal("session not stored")
 	}
-	if _, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser-hash", RedirectURI: cfg.RedirectURI, IDToken: tok, JWKS: jwks}); err != ErrInvalidOIDCState {
+	if _, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser-hash", RedirectURI: cfg.RedirectURI, Code: "code-1", JWKS: jwks, Exchanger: fakeExchange{Token: tok}}); err != ErrInvalidOIDCState {
 		t.Fatalf("reused state err=%v", err)
 	}
 }
@@ -47,17 +47,17 @@ func TestOIDCRejectsInvalidStateNonceRedirectAndUnsignedClaims(t *testing.T) {
 	start, _ := StartLogin(cfg, store, "https://auth.example.test/authorize", "browser", "", time.Minute)
 	validClaims := map[string]any{"iss": cfg.Issuer, "sub": "user-123", "aud": cfg.ClientID, "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "nonce": start.Nonce}
 	valid := signToken(t, key, "kid1", validClaims)
-	if _, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "wrong", RedirectURI: cfg.RedirectURI, IDToken: valid, JWKS: jwks}); err != ErrInvalidOIDCState {
+	if _, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "wrong", RedirectURI: cfg.RedirectURI, Code: "code", JWKS: jwks, Exchanger: fakeExchange{Token: valid}}); err != ErrInvalidOIDCState {
 		t.Fatalf("wrong browser err=%v", err)
 	}
 	start, _ = StartLogin(cfg, store, "https://auth.example.test/authorize", "browser", "", time.Minute)
-	if _, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser", RedirectURI: "https://mail.example.test/wrong", IDToken: valid, JWKS: jwks}); err != ErrInvalidOIDCState {
+	if _, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser", RedirectURI: "https://mail.example.test/wrong", Code: "code", JWKS: jwks, Exchanger: fakeExchange{Token: valid}}); err != ErrInvalidOIDCState {
 		t.Fatalf("wrong redirect err=%v", err)
 	}
 	start, _ = StartLogin(cfg, store, "https://auth.example.test/authorize", "browser", "", time.Minute)
 	badNonce := mapClone(validClaims)
 	badNonce["nonce"] = "bad"
-	if _, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser", RedirectURI: cfg.RedirectURI, IDToken: signToken(t, key, "kid1", badNonce), JWKS: jwks}); err != ErrInvalidOIDCToken {
+	if _, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser", RedirectURI: cfg.RedirectURI, Code: "code", JWKS: jwks, Exchanger: fakeExchange{Token: signToken(t, key, "kid1", badNonce)}}); err != ErrInvalidOIDCToken {
 		t.Fatalf("bad nonce err=%v", err)
 	}
 	unsigned := unsignedToken(t, validClaims)
@@ -104,6 +104,19 @@ func TestOIDCSafeErrorsDoNotExposeToken(t *testing.T) {
 	if got := SafeOIDCError(assertErr("token=aaa.bbb.ccc")); got != ErrUnsafeTokenLogValue.Error() {
 		t.Fatalf("unsafe err %q", got)
 	}
+}
+
+type fakeExchange struct {
+	Token string
+	Err   error
+	Seen  TokenRequest
+}
+
+func (f fakeExchange) ExchangeCode(ctx context.Context, req TokenRequest) (TokenResponse, error) {
+	if f.Err != nil {
+		return TokenResponse{}, f.Err
+	}
+	return TokenResponse{IDToken: f.Token, TokenType: "Bearer"}, nil
 }
 
 type assertErr string

@@ -393,13 +393,24 @@ func (s Service) auditPassdb(correlationID string, req PassdbRequest, method, re
 	}
 	_ = s.Audit.Write(nil, audit.Event{
 		Actor:         audit.ActorRef{Type: "dovecot", ID: req.Protocol},
-		Action:        "app_password.use",
+		Action:        passdbAuditAction(method),
 		Resource:      audit.ResourceRef{Type: "mailbox", ID: normalizeAddress(req.Username)},
 		CorrelationID: correlation(correlationID),
 		Result:        result,
 		ErrorCode:     code,
 		AfterRedacted: map[string]any{"method": method, "protocol": req.Protocol},
 	})
+}
+
+func passdbAuditAction(method string) string {
+	switch method {
+	case "mailbox_password":
+		return "mailbox_password.use"
+	case "app_password":
+		return "app_password.use"
+	default:
+		return "mail_secret.use"
+	}
 }
 
 func (s Service) appPasswordVerifiers() map[string][]string {

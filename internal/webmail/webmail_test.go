@@ -19,13 +19,13 @@ type fakeIMAP struct {
 func (f *fakeIMAP) ListFolders(context.Context, string) ([]string, error) {
 	return append([]string(nil), f.folders...), nil
 }
-func (f *fakeIMAP) ListMessages(ctx context.Context, folder, cursor string, limit int) ([]Message, error) {
+func (f *fakeIMAP) ListMessages(ctx context.Context, user, folder, cursor string, limit int) ([]Message, error) {
 	if limit > len(f.messages) {
 		limit = len(f.messages)
 	}
 	return f.messages[:limit], nil
 }
-func (f *fakeIMAP) ReadMessage(ctx context.Context, folder, id string) (Message, error) {
+func (f *fakeIMAP) ReadMessage(ctx context.Context, user, folder, id string) (Message, error) {
 	for _, m := range f.messages {
 		if m.ID == id {
 			return m, nil
@@ -33,13 +33,28 @@ func (f *fakeIMAP) ReadMessage(ctx context.Context, folder, id string) (Message,
 	}
 	return Message{}, errors.New("missing")
 }
-func (f *fakeIMAP) Search(ctx context.Context, folder, query string, limit int) ([]Message, error) {
+func (f *fakeIMAP) Search(ctx context.Context, user, folder, query, cursor string, limit int) ([]Message, error) {
 	f.searched = true
 	var out []Message
+	start := cursor == ""
+	foundCursor := cursor == ""
 	for _, m := range f.messages {
+		if !start {
+			if m.ID == cursor {
+				start = true
+				foundCursor = true
+			}
+			continue
+		}
 		if strings.Contains(strings.ToLower(m.Subject+m.BodyText), strings.ToLower(query)) {
 			out = append(out, m)
 		}
+	}
+	if !foundCursor {
+		return nil, errors.New("search cursor not found")
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }
@@ -57,6 +72,15 @@ func (f *fakeSMTP) Submit(ctx context.Context, e Envelope, b []byte) error {
 }
 
 type fakeSigner struct{ fail bool }
+
+type fakeResolver struct{}
+
+func (fakeResolver) ResolveSender(ctx context.Context, fp, from, sender string) (Identity, error) {
+	if fp == "bad" {
+		return Identity{}, errors.New("mismatched_from")
+	}
+	return Identity{Address: from, Fingerprint: fp}, nil
+}
 
 func (f fakeSigner) SignMIME(ctx context.Context, id Identity, b []byte) ([]byte, SignatureStatus, error) {
 	if f.fail {
@@ -82,18 +106,18 @@ func TestIMAPFolderListReadPaginationQuotaSearch(t *testing.T) {
 	if err != nil || used != 1 || limit != 10 {
 		t.Fatalf("quota %d/%d %v", used, limit, err)
 	}
-	l, err := c.List(context.Background(), "INBOX", "", 1)
+	l, err := c.List(context.Background(), "u@example.test", "INBOX", "", 1)
 	if err != nil || len(l.Messages) != 1 || l.NextCursor == "" {
 		t.Fatalf("list=%#v err=%v", l, err)
 	}
-	m, err := c.Read(context.Background(), "INBOX", "1")
+	m, err := c.Read(context.Background(), "u@example.test", "INBOX", "1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(m.BodyHTML, "script") || strings.Contains(m.BodyHTML, "https://evil") || m.Attachments[0].Filename == "../x.txt" {
 		t.Fatalf("unsafe read %#v", m)
 	}
-	s, err := c.Search(context.Background(), "INBOX", "term", "", 10)
+	s, err := c.Search(context.Background(), "u@example.test", "INBOX", "term", "", 10)
 	if err != nil || len(s.Messages) != 1 || s.Messages[0].ID != "2" || !im.searched {
 		t.Fatalf("search=%#v err=%v", s, err)
 	}
@@ -101,7 +125,7 @@ func TestIMAPFolderListReadPaginationQuotaSearch(t *testing.T) {
 func TestComposeDraftSubmitRequiresOpenPGPMIMEAndSMTP(t *testing.T) {
 	w := &audit.MemoryWriter{}
 	smtp := &fakeSMTP{}
-	s := &Sender{Audit: w, SMTP: smtp, Signer: fakeSigner{}, Drafts: map[string]Draft{}}
+	s := &Sender{Audit: w, SMTP: smtp, Signer: fakeSigner{}, Resolver: fakeResolver{}, Drafts: map[string]Draft{}}
 	d := s.SaveDraft(Draft{From: "u@example.test", To: "r@example.test", Subject: "s", Body: "body"})
 	if _, err := s.Submit(context.Background(), d.ID); err == nil {
 		t.Fatal("unsigned send accepted")
@@ -122,7 +146,7 @@ func TestComposeDraftSubmitRequiresOpenPGPMIMEAndSMTP(t *testing.T) {
 }
 func TestReplyForwardAndSendFailure(t *testing.T) {
 	smtp := &fakeSMTP{}
-	s := &Sender{SMTP: smtp, Signer: fakeSigner{fail: true}, Drafts: map[string]Draft{}}
+	s := &Sender{SMTP: smtp, Signer: fakeSigner{fail: true}, Resolver: fakeResolver{}, Drafts: map[string]Draft{}}
 	r := s.Reply(Message{ID: "m1", From: "a@example.test", Subject: "Hi"}, "u@example.test", "reply")
 	if r.ReplyTo != "m1" || !strings.HasPrefix(r.Subject, "Re:") {
 		t.Fatalf("reply=%#v", r)
@@ -168,22 +192,31 @@ func TestOpenPGPMIMEStructureRequired(t *testing.T) {
 	}
 }
 
+func TestDraftIDsDoNotCollide(t *testing.T) {
+	s := &Sender{Drafts: map[string]Draft{}}
+	a := s.SaveDraft(Draft{To: "same@example.test"})
+	b := s.SaveDraft(Draft{To: "same@example.test"})
+	if a.ID == b.ID || len(s.Drafts) != 2 {
+		t.Fatalf("draft collision a=%q b=%q len=%d", a.ID, b.ID, len(s.Drafts))
+	}
+}
+
 func TestSearchCursorBeyondFirstWindow(t *testing.T) {
 	im := &fakeIMAP{messages: []Message{{ID: "1", Subject: "term"}, {ID: "2", Subject: "term"}, {ID: "3", Subject: "term"}}}
 	c := Client{IMAP: im}
-	first, err := c.Search(context.Background(), "INBOX", "term", "", 1)
+	first, err := c.Search(context.Background(), "u@example.test", "INBOX", "term", "", 1)
 	if err != nil || first.NextCursor != "1" {
 		t.Fatalf("first=%#v err=%v", first, err)
 	}
-	second, err := c.Search(context.Background(), "INBOX", "term", first.NextCursor, 1)
+	second, err := c.Search(context.Background(), "u@example.test", "INBOX", "term", first.NextCursor, 1)
 	if err != nil || len(second.Messages) != 1 || second.Messages[0].ID != "2" || second.NextCursor != "2" {
 		t.Fatalf("second=%#v err=%v", second, err)
 	}
-	third, err := c.Search(context.Background(), "INBOX", "term", second.NextCursor, 1)
+	third, err := c.Search(context.Background(), "u@example.test", "INBOX", "term", second.NextCursor, 1)
 	if err != nil || len(third.Messages) != 1 || third.Messages[0].ID != "3" || third.NextCursor != "" {
 		t.Fatalf("third=%#v err=%v", third, err)
 	}
-	if _, err := c.Search(context.Background(), "INBOX", "term", "missing", 1); err == nil {
+	if _, err := c.Search(context.Background(), "u@example.test", "INBOX", "term", "missing", 1); err == nil {
 		t.Fatal("missing cursor accepted")
 	}
 }

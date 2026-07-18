@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"forgejo/linus/gophermailforge/internal/admin"
+	"forgejo/linus/gophermailforge/internal/audit"
 	"forgejo/linus/gophermailforge/internal/authz"
 	"forgejo/linus/gophermailforge/internal/identity"
 )
@@ -64,8 +65,8 @@ func TestIdentityUIScreensUseServicePaths(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(text, "secret_once=ui-secret-token") || !strings.Contains(text, "phone") {
 		t.Fatalf("status=%d body=%s", w.Code, text)
 	}
-	if len(ids.Audit.Events) == 0 || ids.Audit.Events[len(ids.Audit.Events)-1].Action != "app_password.create" {
-		t.Fatalf("missing audit %#v", ids.Audit.Events)
+	if len(ids.Audit.(*audit.MemoryWriter).Events) == 0 || ids.Audit.(*audit.MemoryWriter).Events[len(ids.Audit.(*audit.MemoryWriter).Events)-1].Action != "app_password.create" {
+		t.Fatalf("missing audit %#v", ids.Audit.(*audit.MemoryWriter).Events)
 	}
 	form = url.Values{"actor_type": {"local_admin"}, "actor_id": {"ui"}, "action": {"status:read"}, "resource_type": {"system"}, "resource_id": {"self"}}
 	req = httptest.NewRequest(http.MethodPost, "/identity/simulator", strings.NewReader(form.Encode()))

@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/daemon"
+	"forgejo/linus/gophermailforge/internal/authz"
+	"forgejo/linus/gophermailforge/internal/identity"
 	"forgejo/linus/gophermailforge/internal/ops"
 )
 
@@ -22,10 +23,26 @@ func (s Server) v3Runtime() *ops.V3Runtime {
 	return rt
 }
 
-func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
+func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids *identity.Service) {
 	rt := s.v3Runtime()
+	requireAdmin := func(w http.ResponseWriter, r *http.Request) (audit.ActorRef, bool) {
+		a, err := ids.AuthenticateBearer(r.Header.Get("Authorization"), "api_token")
+		if err != nil {
+			http.Error(w, "admin bearer token required", http.StatusUnauthorized)
+			return audit.ActorRef{}, false
+		}
+		d, err := s.authorizer().Decide(r.Context(), a, "ops:admin", authz.Resource{Type: "ops", ID: "v3"})
+		if err != nil || !d.Allow {
+			http.Error(w, "admin authorization required", http.StatusForbidden)
+			return audit.ActorRef{}, false
+		}
+		return audit.ActorRef{Type: a.Type, ID: a.ID}, true
+	}
 	mux.HandleFunc("/api/v1/audit/export", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, http.MethodGet) {
+			return
+		}
+		if _, ok := requireAdmin(w, r); !ok {
 			return
 		}
 		ev := ops.FilterAudit(auditLog.Events, auditFilter(r))
@@ -39,10 +56,13 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 		if !method(w, r, http.MethodGet) {
 			return
 		}
+		if _, ok := requireAdmin(w, r); !ok {
+			return
+		}
 		id := strings.TrimPrefix(r.URL.Path, "/api/v1/audit/events/")
 		for _, e := range auditLog.Events {
 			if e.ID == id {
-				writeJSON(w, e)
+				writeJSON(w, audit.Redact(e))
 				return
 			}
 		}
@@ -50,6 +70,9 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 	})
 	mux.HandleFunc("/api/v1/audit/retention/preview", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, http.MethodPost) {
+			return
+		}
+		if _, ok := requireAdmin(w, r); !ok {
 			return
 		}
 		p, err := rt.RetentionStore.Preview(auditLog.Events, r.URL.Query().Get("policy"), time.Now())
@@ -63,6 +86,10 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 		if !method(w, r, http.MethodPost) {
 			return
 		}
+		reqActor, ok := requireAdmin(w, r)
+		if !ok {
+			return
+		}
 		var in struct {
 			ID string `json:"id"`
 		}
@@ -70,7 +97,7 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 			http.Error(w, "bad retention preview", 400)
 			return
 		}
-		if err := rt.RetentionStore.Apply(r.Context(), auditLog, actor(r), in.ID, r.URL.Query().Get("confirm")); err != nil {
+		if err := rt.RetentionStore.Apply(r.Context(), auditLog, reqActor, in.ID, r.URL.Query().Get("confirm")); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
@@ -78,6 +105,9 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 	})
 	mux.HandleFunc("/api/v1/backups/verify", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, http.MethodPost) {
+			return
+		}
+		if _, ok := requireAdmin(w, r); !ok {
 			return
 		}
 		ref := r.URL.Query().Get("artifact_ref")
@@ -94,6 +124,9 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 		if !method(w, r, http.MethodGet) {
 			return
 		}
+		if _, ok := requireAdmin(w, r); !ok {
+			return
+		}
 		out := []ops.SnapshotView{}
 		for _, v := range rt.Snapshots {
 			out = append(out, v)
@@ -104,17 +137,29 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 		if !method(w, r, http.MethodGet) {
 			return
 		}
+		if _, ok := requireAdmin(w, r); !ok {
+			return
+		}
 		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/snapshots/")
 		if strings.HasSuffix(rest, "/diff") {
 			id := strings.TrimSuffix(rest, "/diff")
-			a := rt.Snapshots[id]
-			b := rt.Snapshots[r.URL.Query().Get("against")]
+			a, ok := rt.Snapshots[id]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			b, ok := rt.Snapshots[r.URL.Query().Get("against")]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
 			writeJSON(w, map[string]any{"changed": ops.SnapshotDiff(a, b)})
 			return
 		}
 		snap, ok := rt.Snapshots[rest]
 		if !ok {
-			snap = ops.SnapshotView{ID: rest, VerifiedRestoreStatus: r.URL.Query().Get("verified_restore_status")}
+			http.NotFound(w, r)
+			return
 		}
 		writeJSON(w, map[string]any{"snapshot": snap, "rollback_guidance": ops.RollbackGuidance(snap)})
 	})
@@ -122,21 +167,29 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 		if !method(w, r, http.MethodPost) {
 			return
 		}
+		reqActor, ok := requireAdmin(w, r)
+		if !ok {
+			return
+		}
 		var in struct {
 			Source string `json:"source"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
-		writeJSON(w, safeImportPreview(rt.ImportStore.Preview(in.Source, actor(r), time.Now())))
+		writeJSON(w, safeImportPreview(rt.ImportStore.Preview(in.Source, reqActor, time.Now())))
 	})
 	mux.HandleFunc("/api/v1/imports/mailu/apply", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, http.MethodPost) {
+			return
+		}
+		reqActor, ok := requireAdmin(w, r)
+		if !ok {
 			return
 		}
 		var in struct {
 			ID string `json:"id"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
-		if err := rt.ImportStore.Apply(r.Context(), auditLog, actor(r), in.ID, r.URL.Query().Get("hash"), r.URL.Query().Get("source_fingerprint"), time.Now(), s.Daemon); err != nil {
+		if err := rt.ImportStore.Apply(r.Context(), auditLog, reqActor, in.ID, r.URL.Query().Get("hash"), r.URL.Query().Get("source_fingerprint"), time.Now(), s.Daemon); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
@@ -144,6 +197,9 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 	})
 	mux.HandleFunc("/api/v1/imports/", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, http.MethodGet) {
+			return
+		}
+		if _, ok := requireAdmin(w, r); !ok {
 			return
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/api/v1/imports/")
@@ -158,6 +214,9 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 		if !method(w, r, http.MethodGet) {
 			return
 		}
+		if _, ok := requireAdmin(w, r); !ok {
+			return
+		}
 		q := s.Queue
 		if q == nil {
 			q = &ops.Queue{}
@@ -168,10 +227,16 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 		if !method(w, r, http.MethodGet) {
 			return
 		}
+		if _, ok := requireAdmin(w, r); !ok {
+			return
+		}
 		writeJSON(w, ops.RateLimitViews(s.Daemon.RateLimits))
 	})
 	mux.HandleFunc("/api/v1/ops/deferred-correlation", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, http.MethodGet) {
+			return
+		}
+		if _, ok := requireAdmin(w, r); !ok {
 			return
 		}
 		q := s.Queue
@@ -184,6 +249,9 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 		if !method(w, r, http.MethodGet) {
 			return
 		}
+		if _, ok := requireAdmin(w, r); !ok {
+			return
+		}
 		id := strings.TrimPrefix(r.URL.Path, "/api/v1/bulk/jobs/")
 		j, ok := rt.BulkStore.Job(id)
 		if !ok {
@@ -193,6 +261,10 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 		writeJSON(w, j)
 	})
 	mux.HandleFunc("/api/v1/bulk/", func(w http.ResponseWriter, r *http.Request) {
+		reqActor, ok := requireAdmin(w, r)
+		if !ok {
+			return
+		}
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/bulk/"), "/")
 		if len(parts) != 2 {
 			http.NotFound(w, r)
@@ -208,7 +280,7 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 				Items []string `json:"items"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&in)
-			p, err := rt.BulkStore.Preview(op, in.Items, actor(r), time.Now())
+			p, err := rt.BulkStore.Preview(op, in.Items, reqActor, time.Now())
 			if err != nil {
 				http.Error(w, err.Error(), 400)
 				return
@@ -222,7 +294,7 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 				ID string `json:"id"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&in)
-			res, err := rt.BulkStore.Apply(r.Context(), auditLog, actor(r), op, in.ID, r.URL.Query().Get("confirm"), r.URL.Query().Get("hash"), time.Now())
+			res, err := rt.BulkStore.Apply(r.Context(), auditLog, reqActor, op, in.ID, r.URL.Query().Get("confirm"), r.URL.Query().Get("hash"), time.Now())
 			if err != nil {
 				http.Error(w, err.Error(), 400)
 				return
@@ -232,7 +304,6 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter) {
 			http.NotFound(w, r)
 		}
 	})
-	_ = daemon.OK
 }
 func auditFilter(r *http.Request) ops.AuditFilter {
 	q := r.URL.Query()

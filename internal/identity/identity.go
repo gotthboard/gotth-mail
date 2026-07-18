@@ -57,7 +57,7 @@ type Service struct {
 	AppPasswords map[string]AppPassword
 	Tokens       map[string]Token
 	KnownDomains map[string]bool
-	Audit        *audit.MemoryWriter
+	Audit        audit.Writer
 	Authorizer   authz.Authorizer
 	Daemon       *daemon.Service
 	Now          func() time.Time
@@ -73,6 +73,10 @@ func NewService(domains ...string) *Service {
 }
 
 func (s *Service) AddToken(id, kind, secret string) error {
+	return s.AddTokenWithScopes(id, kind, secret, nil...)
+}
+
+func (s *Service) AddTokenWithScopes(id, kind, secret string, scopes ...string) error {
 	if kind == "api_token" {
 		kind = "api"
 	}
@@ -85,7 +89,7 @@ func (s *Service) AddToken(id, kind, secret string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Tokens[id] = Token{ID: id, Kind: kind, Verifier: verifier, Scopes: []string{"*"}}
+	s.Tokens[id] = Token{ID: id, Kind: kind, Verifier: verifier, Scopes: append([]string(nil), scopes...)}
 	return nil
 }
 
@@ -130,17 +134,17 @@ func (s *Service) GetUser(id string) (Mailbox, bool) {
 
 func (s *Service) CreateOrReplaceUser(ctx context.Context, actor authz.Actor, m Mailbox, password string) (Mailbox, error) {
 	if err := s.authorize(ctx, actor, "mailbox:provision", authz.Resource{Type: "mailbox", ID: m.Email}); err != nil {
-		s.audit(ctx, actor, "scim.user.write", m.Email, "denied", err)
+		_ = s.audit(ctx, actor, "scim.user.write", m.Email, "denied", err)
 		return Mailbox{}, err
 	}
 	if err := s.validateMailbox(m.Email); err != nil {
-		s.audit(ctx, actor, "scim.user.write", m.Email, "failure", err)
+		_ = s.audit(ctx, actor, "scim.user.write", m.Email, "failure", err)
 		return Mailbox{}, err
 	}
 	if password != "" {
 		v, err := HashSecret(password)
 		if err != nil {
-			s.audit(ctx, actor, "scim.user.write", m.Email, "failure", err)
+			_ = s.audit(ctx, actor, "scim.user.write", m.Email, "failure", err)
 			return Mailbox{}, err
 		}
 		m.Verifier = v
@@ -161,10 +165,13 @@ func (s *Service) CreateOrReplaceUser(ctx context.Context, actor authz.Actor, m 
 	} else {
 		m.CreatedAt = old.CreatedAt
 	}
+	if err := s.audit(ctx, actor, "scim.user.write", m.ID, "success", nil); err != nil {
+		s.mu.Unlock()
+		return Mailbox{}, err
+	}
 	s.Mailboxes[m.ID] = m
 	s.syncDaemonMailboxLocked(m)
 	s.mu.Unlock()
-	s.audit(ctx, actor, "scim.user.write", m.ID, "success", nil)
 	return m, nil
 }
 
@@ -174,12 +181,12 @@ func (s *Service) PatchUser(ctx context.Context, actor authz.Actor, id string, o
 	s.mu.Unlock()
 	if !ok {
 		err := errors.New("user not found")
-		s.audit(ctx, actor, "scim.user.patch", id, "failure", err)
+		_ = s.audit(ctx, actor, "scim.user.patch", id, "failure", err)
 		return Mailbox{}, err
 	}
 	for _, op := range ops {
 		if err := applyPatch(&m, op); err != nil {
-			s.audit(ctx, actor, "scim.user.patch", id, "failure", err)
+			_ = s.audit(ctx, actor, "scim.user.patch", id, "failure", err)
 			return Mailbox{}, err
 		}
 	}
@@ -192,14 +199,11 @@ func (s *Service) DisableUser(ctx context.Context, actor authz.Actor, id string)
 	s.mu.Unlock()
 	if !ok {
 		err := errors.New("user not found")
-		s.audit(ctx, actor, "scim.user.disable", id, "failure", err)
+		_ = s.audit(ctx, actor, "scim.user.disable", id, "failure", err)
 		return Mailbox{}, err
 	}
 	m.Active = false
 	out, err := s.CreateOrReplaceUser(ctx, actor, m, "")
-	if err == nil {
-		s.audit(ctx, actor, "scim.user.disable", id, "success", nil)
-	}
 	return out, err
 }
 
@@ -217,11 +221,11 @@ func (s *Service) ListAppPasswords(mailboxID string) []AppPassword {
 func (s *Service) CreateAppPassword(ctx context.Context, actor authz.Actor, mailboxID, label string) (AppPasswordCreated, error) {
 	if label = strings.TrimSpace(label); label == "" {
 		err := errors.New("label required")
-		s.audit(ctx, actor, "app_password.create", mailboxID, "failure", err)
+		_ = s.audit(ctx, actor, "app_password.create", mailboxID, "failure", err)
 		return AppPasswordCreated{}, err
 	}
 	if err := s.authorize(ctx, actor, "mailbox:app_password.create", authz.Resource{Type: "mailbox", ID: mailboxID}); err != nil {
-		s.audit(ctx, actor, "app_password.create", mailboxID, "denied", err)
+		_ = s.audit(ctx, actor, "app_password.create", mailboxID, "denied", err)
 		return AppPasswordCreated{}, err
 	}
 	s.mu.Lock()
@@ -229,7 +233,7 @@ func (s *Service) CreateAppPassword(ctx context.Context, actor authz.Actor, mail
 	s.mu.Unlock()
 	if !ok {
 		err := errors.New("mailbox not found")
-		s.audit(ctx, actor, "app_password.create", mailboxID, "failure", err)
+		_ = s.audit(ctx, actor, "app_password.create", mailboxID, "failure", err)
 		return AppPasswordCreated{}, err
 	}
 	secret, err := s.secret()
@@ -243,15 +247,18 @@ func (s *Service) CreateAppPassword(ctx context.Context, actor authz.Actor, mail
 	now := s.now()
 	id := "app_" + safeToken(12)
 	s.mu.Lock()
+	if err := s.audit(ctx, actor, "app_password.create", mailboxID, "success", nil); err != nil {
+		s.mu.Unlock()
+		return AppPasswordCreated{}, err
+	}
 	s.AppPasswords[id] = AppPassword{ID: id, MailboxID: strings.ToLower(mailboxID), Label: label, Verifier: verifier, CreatedAt: now}
 	s.syncDaemonAppPasswordsLocked(strings.ToLower(mailboxID))
 	s.mu.Unlock()
-	s.audit(ctx, actor, "app_password.create", mailboxID, "success", nil)
 	return AppPasswordCreated{ID: id, Label: label, SecretOnce: secret, CreatedAt: now}, nil
 }
 func (s *Service) RevokeAppPassword(ctx context.Context, actor authz.Actor, mailboxID, tokenID string) error {
 	if err := s.authorize(ctx, actor, "mailbox:app_password.revoke", authz.Resource{Type: "mailbox", ID: mailboxID}); err != nil {
-		s.audit(ctx, actor, "app_password.revoke", mailboxID, "denied", err)
+		_ = s.audit(ctx, actor, "app_password.revoke", mailboxID, "denied", err)
 		return err
 	}
 	now := s.now()
@@ -260,14 +267,17 @@ func (s *Service) RevokeAppPassword(ctx context.Context, actor authz.Actor, mail
 	if !ok || p.MailboxID != strings.ToLower(mailboxID) {
 		s.mu.Unlock()
 		err := errors.New("app password not found")
-		s.audit(ctx, actor, "app_password.revoke", mailboxID, "failure", err)
+		_ = s.audit(ctx, actor, "app_password.revoke", mailboxID, "failure", err)
 		return err
 	}
 	p.RevokedAt = &now
+	if err := s.audit(ctx, actor, "app_password.revoke", mailboxID, "success", nil); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	s.AppPasswords[tokenID] = p
 	s.syncDaemonAppPasswordsLocked(strings.ToLower(mailboxID))
 	s.mu.Unlock()
-	s.audit(ctx, actor, "app_password.revoke", mailboxID, "success", nil)
 	return nil
 }
 
@@ -357,15 +367,18 @@ func (s *Service) authorize(ctx context.Context, actor authz.Actor, action authz
 	}
 	return nil
 }
-func (s *Service) audit(ctx context.Context, actor authz.Actor, action, resource, result string, err error) {
+func (s *Service) audit(ctx context.Context, actor authz.Actor, action, resource, result string, cause error) error {
 	if s.Audit == nil {
-		return
+		return cause
 	}
 	code := ""
-	if err != nil {
-		code = err.Error()
+	if cause != nil {
+		code = cause.Error()
 	}
-	_ = s.Audit.Write(ctx, audit.Event{Actor: audit.ActorRef{Type: actor.Type, ID: actor.ID}, Action: action, Resource: audit.ResourceRef{Type: "identity", ID: resource}, Result: result, ErrorCode: code, Time: s.now(), CorrelationID: "identity"})
+	if err := s.Audit.Write(ctx, audit.Event{Actor: audit.ActorRef{Type: actor.Type, ID: actor.ID}, Action: action, Resource: audit.ResourceRef{Type: "identity", ID: resource}, Result: result, ErrorCode: code, Time: s.now(), CorrelationID: "identity"}); err != nil {
+		return err
+	}
+	return cause
 }
 func (s *Service) now() time.Time {
 	if s.Now != nil {

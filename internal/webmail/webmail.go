@@ -2,11 +2,14 @@ package webmail
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
-	"fmt"
 	"html"
+	"mime"
 	"mime/multipart"
 	"net/mail"
+	"net/textproto"
 	"regexp"
 	"sort"
 	"strings"
@@ -37,9 +40,9 @@ type ListResult struct {
 
 type IMAPClient interface {
 	ListFolders(context.Context, string) ([]string, error)
-	ListMessages(context.Context, string, string, int) ([]Message, error)
-	ReadMessage(context.Context, string, string) (Message, error)
-	Search(context.Context, string, string, int) ([]Message, error)
+	ListMessages(context.Context, string, string, string, int) ([]Message, error)
+	ReadMessage(context.Context, string, string, string) (Message, error)
+	Search(context.Context, string, string, string, string, int) ([]Message, error)
 	Quota(context.Context) (int64, int64, error)
 }
 type SMTPSubmitter interface {
@@ -47,6 +50,9 @@ type SMTPSubmitter interface {
 }
 type OpenPGPSigner interface {
 	SignMIME(context.Context, Identity, []byte) ([]byte, SignatureStatus, error)
+}
+type SenderIdentityResolver interface {
+	ResolveSender(context.Context, string, string, string) (Identity, error)
 }
 type Identity struct{ Address, Fingerprint string }
 type SignatureStatus struct {
@@ -77,14 +83,14 @@ func (c Client) Quota(ctx context.Context) (int64, int64, error) {
 	}
 	return c.IMAP.Quota(ctx)
 }
-func (c Client) List(ctx context.Context, folder, cursor string, limit int) (ListResult, error) {
+func (c Client) List(ctx context.Context, user, folder, cursor string, limit int) (ListResult, error) {
 	if c.IMAP == nil {
 		return ListResult{}, errors.New("imap client required")
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	msgs, err := c.IMAP.ListMessages(ctx, folder, cursor, limit)
+	msgs, err := c.IMAP.ListMessages(ctx, user, folder, cursor, limit)
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -97,11 +103,11 @@ func (c Client) List(ctx context.Context, folder, cursor string, limit int) (Lis
 	}
 	return out, nil
 }
-func (c Client) Read(ctx context.Context, folder, id string) (Message, error) {
+func (c Client) Read(ctx context.Context, user, folder, id string) (Message, error) {
 	if c.IMAP == nil {
 		return Message{}, errors.New("imap client required")
 	}
-	m, err := c.IMAP.ReadMessage(ctx, folder, id)
+	m, err := c.IMAP.ReadMessage(ctx, user, folder, id)
 	if err != nil {
 		return Message{}, err
 	}
@@ -113,41 +119,27 @@ func (c Client) Read(ctx context.Context, folder, id string) (Message, error) {
 	}
 	return m, nil
 }
-func (c Client) Search(ctx context.Context, folder, query, cursor string, limit int) (ListResult, error) {
+func (c Client) Search(ctx context.Context, user, folder, query, cursor string, limit int) (ListResult, error) {
 	if c.IMAP == nil {
 		return ListResult{}, errors.New("imap client required")
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	msgs, err := c.IMAP.Search(ctx, folder, query, 0)
+	msgs, err := c.IMAP.Search(ctx, user, folder, query, cursor, limit+1)
 	if err != nil {
 		return ListResult{}, err
 	}
-	start := 0
-	if cursor != "" {
-		found := false
-		for i, m := range msgs {
-			if m.ID == cursor {
-				start = i + 1
-				found = true
-				break
-			}
-		}
-		if !found {
-			return ListResult{}, errors.New("search cursor not found")
-		}
-	}
-	end := start + limit
-	if end > len(msgs) {
-		end = len(msgs)
+	hadMore := len(msgs) > limit
+	if hadMore {
+		msgs = msgs[:limit]
 	}
 	out := ListResult{Folder: folder, Cursor: cursor}
-	for _, m := range msgs[start:end] {
+	for _, m := range msgs {
 		out.Messages = append(out.Messages, MessageSummary{ID: m.ID, From: html.EscapeString(m.From), Subject: html.EscapeString(m.Subject), Date: m.Date.Format(time.RFC3339), Flags: append([]string(nil), m.Flags...)})
 	}
-	if end < len(msgs) {
-		out.NextCursor = msgs[end-1].ID
+	if hadMore && len(msgs) > 0 {
+		out.NextCursor = msgs[len(msgs)-1].ID
 	}
 	return out, nil
 }
@@ -160,10 +152,11 @@ type Draft struct {
 	SigningFingerprint          string
 }
 type Sender struct {
-	Drafts map[string]Draft
-	SMTP   SMTPSubmitter
-	Signer OpenPGPSigner
-	Audit  audit.Writer
+	Drafts   map[string]Draft
+	SMTP     SMTPSubmitter
+	Signer   OpenPGPSigner
+	Resolver SenderIdentityResolver
+	Audit    audit.Writer
 }
 
 func (s *Sender) SaveDraft(d Draft) Draft {
@@ -171,7 +164,12 @@ func (s *Sender) SaveDraft(d Draft) Draft {
 		s.Drafts = map[string]Draft{}
 	}
 	if d.ID == "" {
-		d.ID = "draft-" + strings.ReplaceAll(d.To, "@", "-")
+		for {
+			d.ID = "draft-" + strings.ReplaceAll(safeToken(12), "=", "")
+			if _, exists := s.Drafts[d.ID]; !exists {
+				break
+			}
+		}
 	}
 	d.State = "draft"
 	s.Drafts[d.ID] = d
@@ -194,6 +192,9 @@ func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 	if s.Signer == nil {
 		return Draft{}, errors.New("openpgp signer required")
 	}
+	if s.Resolver == nil {
+		return Draft{}, errors.New("exact sender resolver required")
+	}
 	if _, err := mail.ParseAddress(d.To); err != nil {
 		return Draft{}, errors.New("invalid recipient")
 	}
@@ -205,13 +206,23 @@ func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 	}
 	d.State = "queued_for_submission"
 	s.Drafts[id] = d
+	identity, err := s.Resolver.ResolveSender(ctx, d.SigningFingerprint, d.From, "")
+	if err != nil || identity.Address != d.From || identity.Fingerprint != d.SigningFingerprint {
+		s.audit(ctx, d, "failure", "exact sender identity binding failed", SignatureStatus{})
+		d.State = "failed"
+		s.Drafts[id] = d
+		if err != nil {
+			return d, err
+		}
+		return d, errors.New("exact sender identity binding failed")
+	}
 	mime, err := BuildMIME(d)
 	if err != nil {
 		d.State = "failed"
 		s.Drafts[id] = d
 		return d, err
 	}
-	signed, status, err := s.Signer.SignMIME(ctx, Identity{Address: d.From, Fingerprint: d.SigningFingerprint}, mime)
+	signed, status, err := s.Signer.SignMIME(ctx, identity, mime)
 	if err != nil || !status.Signed || status.Identity != d.From || status.Fingerprint != d.SigningFingerprint {
 		s.audit(ctx, d, "failure", "openpgp signing identity invalid", status)
 		d.State = "failed"
@@ -246,48 +257,104 @@ func (s *Sender) audit(ctx context.Context, d Draft, result, code string, status
 	}
 }
 func BuildMIME(d Draft) ([]byte, error) {
-	var b strings.Builder
-	mw := multipart.NewWriter(&b)
-	b.WriteString("Content-Type: multipart/mixed; boundary=" + mw.Boundary() + "\r\nSubject: " + d.Subject + "\r\n\r\n")
-	part, err := mw.CreatePart(map[string][]string{"Content-Type": {"text/plain; charset=utf-8"}})
+	if err := validHeaderValue(d.Subject); err != nil {
+		return nil, err
+	}
+	from, err := mail.ParseAddress(d.From)
+	if err != nil {
+		return nil, errors.New("invalid from")
+	}
+	to, err := mail.ParseAddress(d.To)
+	if err != nil {
+		return nil, errors.New("invalid recipient")
+	}
+	var body strings.Builder
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreatePart(textproto.MIMEHeader{"Content-Type": {"text/plain; charset=utf-8"}})
 	if err != nil {
 		return nil, err
 	}
 	_, _ = part.Write([]byte(d.Body))
 	for _, a := range d.Attachments {
 		a = SafeAttachment(a)
-		part, err = mw.CreatePart(map[string][]string{"Content-Disposition": {fmt.Sprintf(`attachment; filename="%s"`, a.Filename)}, "Content-Type": {a.ContentType}})
+		ct := safeContentType(a.ContentType)
+		part, err = mw.CreatePart(textproto.MIMEHeader{"Content-Disposition": {mime.FormatMediaType("attachment", map[string]string{"filename": a.Filename})}, "Content-Type": {ct}})
 		if err != nil {
 			return nil, err
 		}
 		_, _ = part.Write(a.Content)
 	}
-	_ = mw.Close()
+	if err := mw.Close(); err != nil {
+		return nil, err
+	}
+	var b strings.Builder
+	b.WriteString("From: " + from.String() + "\r\n")
+	b.WriteString("To: " + to.String() + "\r\n")
+	b.WriteString("Date: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n")
+	b.WriteString("Subject: " + d.Subject + "\r\n")
+	b.WriteString("MIME-Version: 1.0\r\n")
+	b.WriteString("Content-Type: multipart/mixed; boundary=\"" + mw.Boundary() + "\"\r\n\r\n")
+	b.WriteString(body.String())
 	return []byte(b.String()), nil
 }
 
 func SanitizeHTML(in string) string {
-	out := in
-	for _, tag := range []string{"script", "style", "iframe", "object", "embed", "base", "form"} {
-		re := regexp.MustCompile(`(?is)<` + tag + `.*?>.*?</` + tag + `>`)
-		out = re.ReplaceAllString(out, "")
+	// Until a parser allowlist is carried, hostile email HTML is rendered as text.
+	// This is intentionally boring and safe; regex sanitizers are not a security boundary.
+	clean := stripDangerousControls(in)
+	for _, tag := range []string{"script", "style", "iframe", "object", "embed", "svg", "math"} {
+		re := regexp.MustCompile(`(?is)<` + tag + `[^>]*>.*?</` + tag + `>`)
+		clean = re.ReplaceAllString(clean, "")
 	}
-	re := regexp.MustCompile(`(?i)\s+on[a-z]+\s*=`)
-	out = re.ReplaceAllString(out, " data-blocked=")
-	re = regexp.MustCompile(`(?i)href=["']\s*javascript:[^"']*["']`)
-	out = re.ReplaceAllString(out, `href="#blocked"`)
-	re = regexp.MustCompile(`(?i)<img[^>]+src=["']https?://[^"']+["'][^>]*>`)
-	out = re.ReplaceAllString(out, `<span data-remote-image-blocked="true"></span>`)
-	return out
+	re := regexp.MustCompile(`(?i)\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
+	clean = re.ReplaceAllString(clean, "")
+	re = regexp.MustCompile(`(?i)javascript\s*:`)
+	clean = re.ReplaceAllString(clean, "blocked:")
+	re = regexp.MustCompile(`(?i)https?://[^\s"'<>]+`)
+	clean = re.ReplaceAllString(clean, "remote-image-blocked")
+	return html.EscapeString(clean)
 }
 func CSP() string {
 	return "default-src 'none'; img-src 'self' data:; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 }
+func safeToken(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func validHeaderValue(v string) error {
+	if strings.ContainsAny(v, "\r\n") {
+		return errors.New("header injection rejected")
+	}
+	return nil
+}
+
+func safeContentType(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || strings.ContainsAny(v, "\r\n;") {
+		return "application/octet-stream"
+	}
+	mt, _, err := mime.ParseMediaType(v)
+	if err != nil || mt == "" {
+		return "application/octet-stream"
+	}
+	return mt
+}
+
+func stripDangerousControls(v string) string {
+	re := regexp.MustCompile(`[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]`)
+	return re.ReplaceAllString(v, "")
+}
+
 func SafeAttachment(a Attachment) Attachment {
 	re := regexp.MustCompile(`[\x00-\x1f\x7f"\r\n]`)
 	a.Filename = re.ReplaceAllString(a.Filename, "_")
 	a.Filename = strings.ReplaceAll(a.Filename, "/", "_")
 	a.Filename = strings.ReplaceAll(a.Filename, "..", "_")
+	a.ContentType = safeContentType(a.ContentType)
 	if strings.TrimSpace(a.Filename) == "" {
 		a.Filename = "attachment"
 	}

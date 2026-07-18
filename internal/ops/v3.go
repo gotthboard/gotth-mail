@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/mail"
 	"sort"
 	"strings"
 	"sync"
@@ -270,6 +271,16 @@ func (s *ImportStore) Preview(source string, actor audit.ActorRef, now time.Time
 			st, reason = "failed_validation", "type/id required"
 		case c.Type != "domain" && c.Type != "user" && c.Type != "alias" && c.Type != "relay" && c.Type != "dkim" && c.Type != "token":
 			st, reason = "failed_validation", "unsupported candidate type"
+		case c.Type == "domain" && !store.ValidateDomainName(c.ID):
+			st, reason = "failed_validation", "invalid domain"
+		case (c.Type == "user" || c.Type == "alias") && !validAddress(c.ID):
+			st, reason = "failed_validation", "invalid address"
+		case c.Type == "alias" && !validAddress(c.Value):
+			st, reason = "failed_validation", "invalid alias target"
+		case c.Type == "user" && c.VerifierAlgorithm == "pbkdf2_sha256" && daemon.VerifyDjangoPBKDF2SHA256(c.Value, "probe") == nil:
+			st, reason = "failed_validation", "verifier unexpectedly matches probe secret"
+		case c.Type == "user" && c.VerifierAlgorithm == "pbkdf2_sha256" && !looksLikePBKDF2(c.Value):
+			st, reason = "failed_validation", "invalid pbkdf2 verifier format"
 		case c.PlaintextSecret:
 			st, reason = "incompatible", "plaintext secret import rejected"
 		case c.WeakDKIMPermission:
@@ -461,6 +472,14 @@ func (s *BulkStore) Preview(operation string, items []string, actor audit.ActorR
 	if !s.Allowed[operation] {
 		return BulkPreview{}, errors.New("unsupported bulk operation")
 	}
+	if len(items) == 0 {
+		return BulkPreview{}, errors.New("bulk item scope required")
+	}
+	for _, item := range items {
+		if strings.TrimSpace(item) == "" {
+			return BulkPreview{}, errors.New("bulk item scope required")
+		}
+	}
 	h := sha256.Sum256([]byte(operation + strings.Join(items, "\x00") + actor.ID))
 	p := BulkPreview{ID: "bulk_" + hex.EncodeToString(h[:4]), Operation: operation, ActorID: actor.ID, Hash: hex.EncodeToString(h[:]), ExpiresAt: now.Add(15 * time.Minute), Items: append([]string(nil), items...)}
 	s.mu.Lock()
@@ -493,6 +512,11 @@ func (s *BulkStore) Apply(ctx context.Context, w audit.Writer, actor audit.Actor
 		return nil, errors.New("bulk confirmation mismatch")
 	}
 	out := make([]BulkResult, 0, len(p.Items))
+	for _, item := range p.Items {
+		if err := w.Write(ctx, audit.Event{Actor: actor, Action: "bulk." + p.Operation, Resource: audit.ResourceRef{Type: "bulk_item", ID: item}, Result: "success"}); err != nil {
+			return nil, err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, item := range p.Items {
@@ -507,10 +531,23 @@ func (s *BulkStore) Apply(ctx context.Context, w audit.Writer, actor audit.Actor
 			return nil, errors.New("unsupported bulk operation")
 		}
 		out = append(out, BulkResult{Item: item, Status: "success"})
-		_ = w.Write(ctx, audit.Event{Actor: actor, Action: "bulk." + p.Operation, Resource: audit.ResourceRef{Type: "bulk_item", ID: item}, Result: "success"})
 	}
 	s.Jobs[p.ID] = BulkJob{ID: p.ID, Results: out}
 	return out, nil
+}
+
+func validAddress(v string) bool {
+	a, err := mail.ParseAddress(v)
+	if err != nil || a.Address != v || strings.Count(v, "@") != 1 {
+		return false
+	}
+	parts := strings.Split(strings.ToLower(v), "@")
+	return parts[0] != "" && store.ValidateDomainName(parts[1])
+}
+
+func looksLikePBKDF2(v string) bool {
+	parts := strings.Split(v, "$")
+	return len(parts) == 4 && parts[0] == "pbkdf2_sha256" && parts[1] != "" && parts[2] != "" && parts[3] != ""
 }
 
 func (s *BulkStore) Job(id string) (BulkJob, bool) {

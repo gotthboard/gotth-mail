@@ -17,11 +17,11 @@ v0 foundation implementation now exists. New features still start with missing e
 | Daemon contracts | Postfix/Dovecot/Rspamd contract and negative tests | initial v1 HTTP/JSON decision contract tests in `internal/daemon`, API route wiring tests in `internal/api`, and real reference Compose Postfix policy-socket, Dovecot generated auth/userdb, and Rspamd milter DKIM smoke in `scripts/reference-runtime-smoke.sh` | production daemon adapter hardening and broader edge-case matrix still pending; v1 root now includes CLI doctor and mail admin CRUD/UI smoke-level coverage |
 | DNS/TLS/ACME | unit, doctor, reference integration | v0 TLS config validation plus v1 exact DNS readiness, certificate SAN/expiry, MTA-STS/TLS-RPT, and loud ACME failure tests in `internal/diag` | live ACME issuance and full doctor/reference integration still pending |
 | Diagnostics/smoke | CLI/API, machine-readable output, reference Compose smoke | v0 CLI/API smoke, v1 doctor/debug/trace/queue/smoke-result/snapshot tests in `internal/ops`, API route tests in `internal/api`, and real reference Compose SMTP policy reject/accept, IMAP, DKIM-signed delivery, and Roundcube IMAP-backed webmail smoke in `scripts/reference-runtime-smoke.sh` | broader hostile-content/webmail security smoke remains future v4 scope; deterministic SMTP client smoke and live doctor ACME/manual-cert loud-failure proof are covered |
-| OIDC/Auth/SCIM | token validation, replay, SCIM success/failure, Authentik-compatible integration | v2 OIDC discovery/state/nonce/redirect/JWKS signature/claim/session tests in `internal/authn`; API login missing-browser-binding gate in `internal/api` | SCIM, role mapping, app-passwords, and live Authentik integration still pending |
-| App passwords | verifier-only storage, Dovecot auth, secret-once behavior | missing | plaintext/replay/exposure |
-| Backup/import/rollback | isolated restore, import preview/apply binding, no silent weakening | missing | fake rollback, credential weakening |
-| Admin UI | HTMX/API service path integration, no bypass | missing | UI-only mutation path |
-| Webmail | IMAP/SMTP integration, MIME/XSS/CSP, attachment safety | missing | hostile HTML execution, direct mailbox access |
+| OIDC/Auth/SCIM | token validation, replay, SCIM success/failure, Authentik-compatible integration | v2 OIDC discovery/state/nonce/redirect/JWKS signature/claim/session tests in `internal/authn`; authorization-code exchange seam and hardened session-cookie callback tests in `internal/authn`/`internal/api`; SCIM bearer-auth provisioning and fail-closed audit mutation tests in `internal/api`/`internal/identity` | live Authentik browser integration still pending |
+| App passwords | verifier-only storage, Dovecot auth, secret-once behavior | v2 app-password create/list/revoke, secret-once/no-verifier disclosure, Dovecot verifier path, scoped API-token authorization, and audit-fail-closed mutation tests in `internal/identity`, `internal/api`, and `internal/daemon` | live client compatibility matrix still pending |
+| Backup/import/rollback | isolated restore, import preview/apply binding, no silent weakening | v3 authenticated operator API tests, no forged snapshot lookup/diff tests, Mailu preview/apply hash/fingerprint/actor validation, stricter candidate/verifier validation, and audit-durable bulk apply tests in `internal/api`/`internal/ops` | backup verification remains modeled; live isolated restore and live Mailu import compatibility still pending |
+| Admin UI | HTMX/API service path integration, no bypass | v3 UI route tests plus API-backed operator workflow tests cover the repaired authenticated service paths | broader browser-level HTMX integration remains pending |
+| Webmail | IMAP/SMTP integration, MIME/XSS/CSP, attachment safety | v4 webmail client/sender unit tests and authenticated mailbox-scoped API wiring tests cover folder/list/search/read, draft submit, request-body From rejection/binding, resolver-before-signer exact-sender seam, MIME header injection rejection, non-colliding draft IDs, bounded search, escaped hostile HTML, CSP, and attachment safety | production IMAP/SMTP adapters, cryptographic OpenPGP integration, and rich HTML parser/allowlist sanitizer remain pending |
 | Notifications | plugin gRPC, Telegram redaction, actor mapping, approval binding | missing | chat as authority, replayed approval |
 
 ## Accepted exceptions
@@ -32,6 +32,16 @@ None.
 
 For v1 admission, run a fresh cold root review over the reference runtime smoke commit, then move to v2 only after v1 is admitted or explicitly split with an approved exception.
 
+
+## v2-v4 admission repair coverage note — 2026-07-18
+
+A cold admission review rejected the prior v2/v3/v4 evidence as overclaimed. The repair pass added layered vertical slices rather than broad cosmetic cleanup:
+
+- v2: OIDC authorization-code exchange seam, secure session-cookie API callback, audit-fail-closed identity mutations, and scoped app-password token authority. Evidence: `workflow/features/v2.identity-provisioning/evidence/2026-07-18-admission-repair.md`.
+- v3: authenticated/authorized operator API routes, no forged snapshot status, redacted audit read boundary, stricter Mailu candidate validation, non-empty bulk scope, and audit-durable bulk apply. Evidence: `workflow/features/v3.ops-import-admin/evidence/2026-07-18-admission-repair.md`.
+- v4: authenticated mailbox-scoped webmail API wiring, exact-sender resolver-before-signer seam, safer MIME construction, bounded search, random draft IDs, and conservative hostile HTML text rendering. Evidence: `workflow/features/v4.webmail/evidence/2026-07-18-admission-repair.md`.
+
+These repairs do not claim live Authentik/Mailu/IMAP/SMTP/OpenPGP production integration. Those remain explicit gaps above.
 
 ## v1 root completion coverage note — 2026-07-16
 

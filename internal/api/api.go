@@ -17,6 +17,7 @@ import (
 	"forgejo/linus/gophermailforge/internal/ops"
 	"forgejo/linus/gophermailforge/internal/plugin"
 	"forgejo/linus/gophermailforge/internal/render"
+	"forgejo/linus/gophermailforge/internal/webmail"
 )
 
 type Server struct {
@@ -36,6 +37,8 @@ type Server struct {
 	OIDCJWKS              authn.JWKS
 	Identity              *identity.Service
 	V3                    *ops.V3Runtime
+	WebmailClient         *webmail.Client
+	WebmailSender         *webmail.Sender
 }
 
 func (s Server) Handler() http.Handler {
@@ -93,24 +96,26 @@ func (s Server) Handler() http.Handler {
 		}
 		var in struct {
 			State       string `json:"state"`
-			IDToken     string `json:"id_token"`
+			Code        string `json:"code"`
 			RedirectURI string `json:"redirect_uri"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
 			http.Error(w, "bad oidc callback", http.StatusBadRequest)
 			return
 		}
-		res, err := authn.CompleteCallback(r.Context(), s.OIDCConfig, store, authn.CallbackInput{StateID: in.State, BrowserBindingHash: r.Header.Get("X-GMF-Browser-Binding"), RedirectURI: in.RedirectURI, IDToken: in.IDToken, JWKS: s.OIDCJWKS})
+		res, err := authn.CompleteCallback(r.Context(), s.OIDCConfig, store, authn.CallbackInput{StateID: in.State, BrowserBindingHash: r.Header.Get("X-GMF-Browser-Binding"), RedirectURI: in.RedirectURI, Code: in.Code, JWKS: s.OIDCJWKS})
 		if err != nil {
 			http.Error(w, authn.SafeOIDCError(err), http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, map[string]any{"identity": res.Identity, "session": map[string]any{"id": res.Session.ID, "expires_at": res.Session.ExpiresAt, "auth_method": res.Session.AuthMethod}})
+		http.SetCookie(w, &http.Cookie{Name: "gmf_session", Value: res.Session.ID, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, Expires: res.Session.ExpiresAt})
+		writeJSON(w, map[string]any{"identity": res.Identity, "session": map[string]any{"expires_at": res.Session.ExpiresAt, "auth_method": res.Session.AuthMethod}})
 	})
 	identitySvc := s.identityService(auditLog)
 	s.registerSCIM(mux, auditLog, identitySvc)
 	s.registerIdentityAPI(mux, auditLog, identitySvc)
-	s.registerV3(mux, auditLog)
+	s.registerV3(mux, auditLog, identitySvc)
+	s.registerWebmail(mux, identitySvc)
 	mux.HandleFunc("/api/v1/authz/explain", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "POST") {
 			return

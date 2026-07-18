@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"forgejo/linus/gophermailforge/internal/identity"
 	"forgejo/linus/gophermailforge/internal/ops"
 	"forgejo/linus/gophermailforge/internal/plugin"
+	"forgejo/linus/gophermailforge/internal/webmail"
 )
 
 func TestV0APIShellRoutes(t *testing.T) {
@@ -207,7 +210,7 @@ func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
 func TestAppPasswordAPICreateListRevokeSecretOnce(t *testing.T) {
 	ids := identity.NewService("example.test")
 	ids.Secret = func() (string, error) { return "one-time-client-secret", nil }
-	if err := ids.AddToken("api-test", "api_token", "api-secret-token"); err != nil {
+	if err := ids.AddTokenWithScopes("api-test", "api_token", "api-secret-token", "mailbox:user@example.test:mailbox:app_password.create", "mailbox:user@example.test:mailbox:app_password.revoke"); err != nil {
 		t.Fatal(err)
 	}
 	d := daemon.Service{}
@@ -301,17 +304,32 @@ func TestDefaultIdentityServiceIsSharedAcrossSCIMAndAppPasswordRoutes(t *testing
 	}
 }
 
+func v3AdminServer(t *testing.T, w *audit.MemoryWriter) http.Handler {
+	t.Helper()
+	ids := identity.NewService("example.test")
+	if err := ids.AddTokenWithScopes("ops-admin", "api_token", "ops-secret-token", "ops:admin"); err != nil {
+		t.Fatal(err)
+	}
+	return Server{Audit: w, Identity: ids, Daemon: daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}}}.Handler()
+}
+
+func v3Req(method, path, body string) *http.Request {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer ops-secret-token")
+	return req
+}
+
 func TestV3OpsAPIRoutes(t *testing.T) {
 	w := &audit.MemoryWriter{}
 	_ = w.Write(nil, audit.Event{ID: "e1", Actor: audit.ActorRef{Type: "admin", ID: "a"}, Action: "auth.failure", Resource: audit.ResourceRef{Type: "session", ID: "s"}, Result: "failure", BeforeRedacted: map[string]any{"password": "secret"}})
-	h := Server{Audit: w, Daemon: daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}}}.Handler()
+	h := v3AdminServer(t, w)
 	cases := []struct{ method, path, body, want string }{
 		{http.MethodGet, "/api/v1/audit/export?format=jsonl&actor_type=admin", "", "[REDACTED]"},
 		{http.MethodGet, "/api/v1/audit/events/e1", "", "auth.failure"},
 		{http.MethodPost, "/api/v1/audit/retention/preview?policy=older-than-90d", "", "ret_"},
 		{http.MethodPost, "/api/v1/backups/verify?artifact_ref=current", "", "verified"},
 		{http.MethodGet, "/api/v1/snapshots", "", "current"},
-		{http.MethodGet, "/api/v1/snapshots/current?verified_restore_status=failed", "", "rollback blocked"},
+		{http.MethodGet, "/api/v1/snapshots/current", "", "rollback blocked"},
 		{http.MethodGet, "/api/v1/ops/abuse-summary", "", "AuthFailures"},
 		{http.MethodGet, "/api/v1/ops/rate-limits", "", "[]"},
 		{http.MethodGet, "/api/v1/ops/deferred-correlation", "", "[]"},
@@ -320,7 +338,7 @@ func TestV3OpsAPIRoutes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			h.ServeHTTP(rr, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+			h.ServeHTTP(rr, v3Req(tc.method, tc.path, tc.body))
 			if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), tc.want) {
 				t.Fatalf("status=%d body=%s want=%s", rr.Code, rr.Body.String(), tc.want)
 			}
@@ -328,11 +346,28 @@ func TestV3OpsAPIRoutes(t *testing.T) {
 	}
 }
 
+func TestV3RoutesRejectAnonymous(t *testing.T) {
+	h := v3AdminServer(t, &audit.MemoryWriter{})
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/audit/export"},
+		{http.MethodPost, "/api/v1/audit/retention/preview?policy=older-than-90d"},
+		{http.MethodPost, "/api/v1/backups/verify?artifact_ref=current"},
+		{http.MethodPost, "/api/v1/imports/mailu/preview"},
+		{http.MethodPost, "/api/v1/bulk/disable-users/preview"},
+	} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`)))
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s status=%d", tc.method, tc.path, rr.Code)
+		}
+	}
+}
+
 func TestV3ImportAndBulkAPIBindPreviewConfirmation(t *testing.T) {
 	w := &audit.MemoryWriter{}
-	h := Server{Audit: w, Daemon: daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}}}.Handler()
+	h := v3AdminServer(t, w)
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/imports/mailu/preview", strings.NewReader(`{"source":"[{\"Type\":\"domain\",\"ID\":\"example.test\"}]"}`)))
+	h.ServeHTTP(rr, v3Req(http.MethodPost, "/api/v1/imports/mailu/preview", `{"source":"[{\"Type\":\"domain\",\"ID\":\"example.test\"}]"}`))
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "SourceFingerprint") {
 		t.Fatalf("preview status=%d body=%s", rr.Code, rr.Body.String())
 	}
@@ -341,29 +376,29 @@ func TestV3ImportAndBulkAPIBindPreviewConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/imports/"+p.ID, nil))
+	h.ServeHTTP(rr, v3Req(http.MethodGet, "/api/v1/imports/"+p.ID, ""))
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), p.ID) {
 		t.Fatalf("get status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/imports/mailu/apply?hash="+p.Hash+"&source_fingerprint="+p.SourceFingerprint, strings.NewReader(`{"id":"`+p.ID+`"}`)))
+	h.ServeHTTP(rr, v3Req(http.MethodPost, "/api/v1/imports/mailu/apply?hash="+p.Hash+"&source_fingerprint="+p.SourceFingerprint, `{"id":"`+p.ID+`"}`))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("apply status=%d body=%s", rr.Code, rr.Body.String())
 	}
 
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/bulk/disable-users/preview", strings.NewReader(`{"items":["a","b"]}`)))
+	h.ServeHTTP(rr, v3Req(http.MethodPost, "/api/v1/bulk/disable-users/preview", `{"items":["a","b"]}`))
 	var bp ops.BulkPreview
 	if err := json.Unmarshal(rr.Body.Bytes(), &bp); err != nil {
 		t.Fatal(err)
 	}
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/bulk/disable-users/apply?confirm="+bp.ID+"&hash="+bp.Hash, strings.NewReader(`{"id":"`+bp.ID+`"}`)))
+	h.ServeHTTP(rr, v3Req(http.MethodPost, "/api/v1/bulk/disable-users/apply?confirm="+bp.ID+"&hash="+bp.Hash, `{"id":"`+bp.ID+`"}`))
 	if rr.Code != http.StatusOK || len(w.Events) < 3 {
 		t.Fatalf("bulk status=%d body=%s events=%#v", rr.Code, rr.Body.String(), w.Events)
 	}
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/bulk/jobs/"+bp.ID, nil))
+	h.ServeHTTP(rr, v3Req(http.MethodGet, "/api/v1/bulk/jobs/"+bp.ID, ""))
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "success") {
 		t.Fatalf("job status=%d body=%s", rr.Code, rr.Body.String())
 	}
@@ -379,19 +414,112 @@ func mustJSON(t *testing.T, v any) []byte {
 }
 
 func TestV3ImportLookupDoesNotExposeRawCandidateValues(t *testing.T) {
-	h := Server{Daemon: daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}}}.Handler()
+	h := v3AdminServer(t, &audit.MemoryWriter{})
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/imports/mailu/preview", strings.NewReader(`{"source":"[{\"Type\":\"token\",\"ID\":\"t\",\"Value\":\"secret-value\",\"PlaintextSecret\":true}]"}`)))
+	h.ServeHTTP(rr, v3Req(http.MethodPost, "/api/v1/imports/mailu/preview", `{"source":"[{\"Type\":\"token\",\"ID\":\"t\",\"Value\":\"secret-value\",\"PlaintextSecret\":true}]"}`))
 	var p ops.ImportPreview
 	if err := json.Unmarshal(rr.Body.Bytes(), &p); err != nil {
 		t.Fatal(err)
 	}
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/imports/"+p.ID, nil))
+	h.ServeHTTP(rr, v3Req(http.MethodGet, "/api/v1/imports/"+p.ID, ""))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	if strings.Contains(rr.Body.String(), "secret-value") || strings.Contains(rr.Body.String(), "Candidates") {
 		t.Fatalf("leaked raw candidates: %s", rr.Body.String())
+	}
+}
+
+type apiFakeIMAP struct{ messages []webmail.Message }
+
+func (f apiFakeIMAP) ListFolders(context.Context, string) ([]string, error) {
+	return []string{"INBOX"}, nil
+}
+func (f apiFakeIMAP) ListMessages(context.Context, string, string, string, int) ([]webmail.Message, error) {
+	return f.messages, nil
+}
+func (f apiFakeIMAP) ReadMessage(ctx context.Context, user, folder, id string) (webmail.Message, error) {
+	for _, m := range f.messages {
+		if m.ID == id {
+			return m, nil
+		}
+	}
+	return webmail.Message{}, errors.New("missing")
+}
+func (f apiFakeIMAP) Search(ctx context.Context, user, folder, query, cursor string, limit int) ([]webmail.Message, error) {
+	return f.messages, nil
+}
+func (f apiFakeIMAP) Quota(context.Context) (int64, int64, error) { return 0, 0, nil }
+
+type apiFakeSMTP struct{ sent bool }
+
+func (f *apiFakeSMTP) Submit(context.Context, webmail.Envelope, []byte) error {
+	f.sent = true
+	return nil
+}
+
+type apiFakeSigner struct{}
+
+func (apiFakeSigner) SignMIME(ctx context.Context, id webmail.Identity, b []byte) ([]byte, webmail.SignatureStatus, error) {
+	return append([]byte("Content-Type: multipart/signed; protocol=application/pgp-signature; micalg=pgp-sha256\r\nContent-Type: application/pgp-signature\r\n\r\n"), b...), webmail.SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
+}
+
+type apiFakeResolver struct{}
+
+func (apiFakeResolver) ResolveSender(ctx context.Context, fp, from, sender string) (webmail.Identity, error) {
+	return webmail.Identity{Address: from, Fingerprint: fp}, nil
+}
+
+func webmailServer(t *testing.T, smtp *apiFakeSMTP) http.Handler {
+	t.Helper()
+	ids := identity.NewService("example.test")
+	if err := ids.AddTokenWithScopes("web-user-token", "api_token", "web-secret-token", "mailbox:web-user@example.test:webmail:use"); err != nil {
+		t.Fatal(err)
+	}
+	client := &webmail.Client{IMAP: apiFakeIMAP{messages: []webmail.Message{{ID: "m1", Folder: "INBOX", From: "a@example.test", Subject: "Hi", BodyHTML: "<script>x</script><b>safe</b>"}}}}
+	sender := &webmail.Sender{Drafts: map[string]webmail.Draft{}, SMTP: smtp, Signer: apiFakeSigner{}, Resolver: apiFakeResolver{}, Audit: &audit.MemoryWriter{}}
+	return Server{Identity: ids, WebmailClient: client, WebmailSender: sender}.Handler()
+}
+
+func TestWebmailAPIRoutesRequireAuthAndReachClientSender(t *testing.T) {
+	smtp := &apiFakeSMTP{}
+	h := webmailServer(t, smtp)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/webmail/folders", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth status=%d", rr.Code)
+	}
+	req := v3Req(http.MethodGet, "/api/v1/webmail/folders", "")
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "INBOX") {
+		t.Fatalf("folders status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = v3Req(http.MethodGet, "/api/v1/webmail/messages/INBOX/m1", "")
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "<script>") {
+		t.Fatalf("read status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = v3Req(http.MethodPost, "/api/v1/webmail/drafts", `{"from":"web-user@example.test","to":"r@example.test","subject":"s","body":"b","signingfingerprint":"fp"}`)
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("draft status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var d webmail.Draft
+	if err := json.Unmarshal(rr.Body.Bytes(), &d); err != nil {
+		t.Fatal(err)
+	}
+	req = v3Req(http.MethodPost, "/api/v1/webmail/drafts/"+d.ID+"/submit", "")
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !smtp.sent {
+		t.Fatalf("submit status=%d body=%s sent=%v", rr.Code, rr.Body.String(), smtp.sent)
 	}
 }

@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -24,11 +26,13 @@ var (
 )
 
 type OIDCConfig struct {
-	Issuer      string
-	ClientID    string
-	RedirectURI string
-	ClockSkew   time.Duration
-	Now         func() time.Time
+	Issuer        string
+	ClientID      string
+	ClientSecret  string
+	RedirectURI   string
+	TokenEndpoint string
+	ClockSkew     time.Duration
+	Now           func() time.Time
 }
 
 type JWK struct {
@@ -134,9 +138,24 @@ type CallbackInput struct {
 	StateID            string
 	BrowserBindingHash string
 	RedirectURI        string
-	IDToken            string
+	Code               string
 	JWKS               JWKS
+	Exchanger          CodeExchanger
 }
+
+type TokenRequest struct {
+	Code          string
+	RedirectURI   string
+	ClientID      string
+	ClientSecret  string
+	TokenEndpoint string
+}
+
+type CodeExchanger interface {
+	ExchangeCode(context.Context, TokenRequest) (TokenResponse, error)
+}
+
+type HTTPCodeExchanger struct{ Client *http.Client }
 
 type CallbackResult struct {
 	Identity Identity
@@ -154,8 +173,14 @@ func StartLogin(cfg OIDCConfig, store *Store, authorizeEndpoint, browserBindingH
 		return LoginStart{}, fmt.Errorf("authorize endpoint and browser binding required")
 	}
 	now := cfg.now()
-	state := randomToken(32)
-	nonce := randomToken(32)
+	state, err := randomToken(32)
+	if err != nil {
+		return LoginStart{}, err
+	}
+	nonce, err := randomToken(32)
+	if err != nil {
+		return LoginStart{}, err
+	}
 	store.PutState(LoginState{StateID: state, Nonce: nonce, BrowserBindingHash: browserBindingHash, RedirectAfterLogin: redirectAfter, CreatedAt: now, ExpiresAt: now.Add(ttl)})
 	u, err := url.Parse(authorizeEndpoint)
 	if err != nil {
@@ -187,14 +212,73 @@ func CompleteCallback(ctx context.Context, cfg OIDCConfig, store *Store, in Call
 	if err != nil {
 		return CallbackResult{}, err
 	}
-	claims, err := ValidateIDToken(cfg, in.IDToken, in.JWKS, st.Nonce)
+	if strings.TrimSpace(in.Code) == "" {
+		return CallbackResult{}, ErrInvalidOIDCState
+	}
+	ex := in.Exchanger
+	if ex == nil {
+		ex = HTTPCodeExchanger{}
+	}
+	tok, err := ex.ExchangeCode(ctx, TokenRequest{Code: in.Code, RedirectURI: in.RedirectURI, ClientID: cfg.ClientID, ClientSecret: cfg.ClientSecret, TokenEndpoint: cfg.TokenEndpoint})
+	if err != nil {
+		return CallbackResult{}, ErrInvalidOIDCToken
+	}
+	if err := tok.ValidateNoUnsignedFallback(); err != nil {
+		return CallbackResult{}, err
+	}
+	claims, err := ValidateIDToken(cfg, tok.IDToken, in.JWKS, st.Nonce)
 	if err != nil {
 		return CallbackResult{}, err
 	}
 	identity := Identity{Subject: claims.Subject, Issuer: claims.Issuer, Email: claims.Email, Name: claims.Name}
-	sess := Session{ID: randomToken(32), IdentityRefID: identity.Issuer + "|" + identity.Subject, CreatedAt: now, ExpiresAt: now.Add(12 * time.Hour), LastSeenAt: now, CSRFSecretHash: hashText(randomToken(32)), AuthMethod: "oidc"}
+	sid, err := randomToken(32)
+	if err != nil {
+		return CallbackResult{}, err
+	}
+	csrf, err := randomToken(32)
+	if err != nil {
+		return CallbackResult{}, err
+	}
+	sess := Session{ID: sid, IdentityRefID: identity.Issuer + "|" + identity.Subject, CreatedAt: now, ExpiresAt: now.Add(12 * time.Hour), LastSeenAt: now, CSRFSecretHash: hashText(csrf), AuthMethod: "oidc"}
 	store.putSession(sess)
 	return CallbackResult{Identity: identity, Session: sess}, nil
+}
+
+func (h HTTPCodeExchanger) ExchangeCode(ctx context.Context, req TokenRequest) (TokenResponse, error) {
+	if req.TokenEndpoint == "" || req.Code == "" || req.RedirectURI == "" || req.ClientID == "" {
+		return TokenResponse{}, ErrInvalidOIDCState
+	}
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", req.Code)
+	form.Set("redirect_uri", req.RedirectURI)
+	form.Set("client_id", req.ClientID)
+	if req.ClientSecret != "" {
+		form.Set("client_secret", req.ClientSecret)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, req.TokenEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return TokenResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	c := h.Client
+	if c == nil {
+		c = http.DefaultClient
+	}
+	resp, err := c.Do(httpReq)
+	if err != nil {
+		return TokenResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return TokenResponse{}, ErrInvalidOIDCToken
+	}
+	var tr TokenResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tr); err != nil {
+		return TokenResponse{}, ErrInvalidOIDCToken
+	}
+	return tr, nil
 }
 
 type IDTokenClaims struct {
@@ -332,10 +416,12 @@ func (c OIDCConfig) now() time.Time {
 	}
 	return time.Now().UTC()
 }
-func randomToken(n int) string {
+func randomToken(n int) (string, error) {
 	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 func hashText(s string) string {
 	h := sha256.Sum256([]byte(s))

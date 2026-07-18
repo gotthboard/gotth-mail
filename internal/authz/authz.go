@@ -72,7 +72,7 @@ func (s StaticAuthorizer) Explain(ctx context.Context, a Actor, act Action, r Re
 		return deny("break-glass denied outside bootstrap/recovery", "bootstrap_or_recovery_action")
 	case "api_token":
 		for _, scope := range a.Scopes {
-			if scope == string(act) || scope == "*" {
+			if scope == string(act) || scope == string(act)+":"+strings.ToLower(r.ID) || scope == "mailbox:"+strings.ToLower(r.ID)+":"+string(act) {
 				return allow("api token scope matched", "api_token:scope:"+scope)
 			}
 		}

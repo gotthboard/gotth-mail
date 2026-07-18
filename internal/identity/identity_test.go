@@ -46,8 +46,9 @@ func TestSCIMCreatePatchDisableAndAudit(t *testing.T) {
 	if m.Active {
 		t.Fatal("delete did not disable")
 	}
-	if len(s.Audit.Events) < 3 {
-		t.Fatalf("missing audit events %#v", s.Audit.Events)
+	w := s.Audit.(*audit.MemoryWriter)
+	if len(w.Events) < 3 {
+		t.Fatalf("missing audit events %#v", w.Events)
 	}
 }
 
@@ -117,15 +118,61 @@ func TestBearerTokensAndFailureAuditing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if actor.Type != "scim_client" || actor.ID != "scim" || len(actor.Scopes) == 0 {
+	if actor.Type != "scim_client" || actor.ID != "scim" {
 		t.Fatalf("actor=%#v", actor)
 	}
 	_, _ = s.CreateOrReplaceUser(context.Background(), authz.Actor{Type: "oidc_subject", ID: "bad"}, Mailbox{Email: "user@example.test", Active: true}, "longenough")
-	if len(s.Audit.Events) == 0 || s.Audit.Events[len(s.Audit.Events)-1].Result != "denied" {
-		t.Fatalf("missing denied audit %#v", s.Audit.Events)
+	w := s.Audit.(*audit.MemoryWriter)
+	if len(w.Events) == 0 || w.Events[len(w.Events)-1].Result != "denied" {
+		t.Fatalf("missing denied audit %#v", w.Events)
 	}
 	_, _ = s.CreateAppPassword(context.Background(), authz.Actor{Type: "local_admin", ID: "admin"}, "missing@example.test", "phone")
-	if s.Audit.Events[len(s.Audit.Events)-1].Result != "failure" {
-		t.Fatalf("missing failure audit %#v", s.Audit.Events)
+	if w.Events[len(w.Events)-1].Result != "failure" {
+		t.Fatalf("missing failure audit %#v", w.Events)
+	}
+}
+
+type failingAudit struct{}
+
+func (f failingAudit) Write(context.Context, audit.Event) error { return assertErr("audit down") }
+
+type assertErr string
+
+func (e assertErr) Error() string { return string(e) }
+
+func TestIdentityMutationsFailClosedWhenAuditWriteFails(t *testing.T) {
+	s := NewService("example.test")
+	s.Audit = failingAudit{}
+	s.Authorizer = authz.StaticAuthorizer{}
+	actor := authz.Actor{Type: "local_admin", ID: "admin"}
+	if _, err := s.CreateOrReplaceUser(context.Background(), actor, Mailbox{Email: "user@example.test", Active: true}, "long-password"); err == nil || !strings.Contains(err.Error(), "audit down") {
+		t.Fatalf("expected audit failure, got %v", err)
+	}
+	if _, ok := s.GetUser("user@example.test"); ok {
+		t.Fatal("mailbox mutated despite audit failure")
+	}
+}
+
+func TestAPITokenScopeCannotCrossMailbox(t *testing.T) {
+	s := testService()
+	actor := authz.Actor{Type: "local_admin", ID: "admin"}
+	if _, err := s.CreateOrReplaceUser(context.Background(), actor, Mailbox{Email: "user@example.test", Active: true}, "long-password"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateOrReplaceUser(context.Background(), actor, Mailbox{Email: "other@example.test", Active: true}, "long-password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTokenWithScopes("user-token", "api_token", "api-secret-token", "mailbox:user@example.test:mailbox:app_password.create"); err != nil {
+		t.Fatal(err)
+	}
+	apiActor, err := s.AuthenticateBearer("Bearer api-secret-token", "api_token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateAppPassword(context.Background(), apiActor, "user@example.test", "phone"); err != nil {
+		t.Fatalf("same mailbox denied: %v", err)
+	}
+	if _, err := s.CreateAppPassword(context.Background(), apiActor, "other@example.test", "phone"); err == nil {
+		t.Fatal("cross-mailbox app-password create allowed")
 	}
 }

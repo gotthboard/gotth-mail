@@ -21,9 +21,48 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-16 22:50 CDT — Add OpenPGP exact-sender drafts to PRD and specs
+### 2026-07-18 CDT — Repair v2-v4 admission blockers in vertical slices
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/authn/oidc.go`
+- `internal/authn/oidc_test.go`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/api/v3.go`
+- `internal/api/webmail.go`
+- `internal/authz/authz.go`
+- `internal/daemon/daemon.go`
+- `internal/httpui/httpui_test.go`
+- `internal/identity/identity.go`
+- `internal/identity/identity_test.go`
+- `internal/ops/v3.go`
+- `internal/webmail/webmail.go`
+- `internal/webmail/webmail_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v2.identity-provisioning/evidence/2026-07-18-admission-repair.md`
+- `workflow/features/v3.ops-import-admin/evidence/2026-07-18-admission-repair.md`
+- `workflow/features/v4.webmail/evidence/2026-07-18-admission-repair.md`
+
+Explanation:
+
+Repaired the rejected v2/v3/v4 admission gates in layered vertical slices instead of broad horizontal cleanup. The v2 slice replaces direct caller-supplied `id_token` login with an authorization-code exchange seam, hardens session-cookie callback behavior, makes identity/provisioning mutations fail closed on audit write failure, and removes wildcard cross-mailbox API-token authority for app-password routes. The v3 slice authenticates and authorizes operator API routes, removes forged snapshot status, redacts audit event reads, rejects empty bulk-operation scope, writes per-item bulk audit records before mutation, and tightens Mailu candidate/verifier validation. The v4 slice wires webmail into authenticated mailbox-scoped API routes, binds mailbox reads and draft From values to `mailbox:<address>:webmail:use` token scope, enforces resolver-before-signer exact-sender binding, builds safer MIME with required sender/recipient/date headers and CRLF injection rejection, bounds search at the IMAP seam, prevents draft ID collisions, and downgrades hostile HTML to conservative escaped text rendering rather than pretending regex sanitization is a security boundary.
+
+This entry does not claim live Authentik, Mailu, IMAP, SMTP, or OpenPGP cryptographic integration. Those gaps remain recorded in workflow evidence and the coverage map.
+
+Verification:
+
+- Confirmed `go test ./internal/api` passes after v3 and v4 API wiring repairs.
+- Confirmed `go test ./internal/ops` passes after v3 import/bulk validation repairs.
+- Confirmed `go test ./internal/webmail` passes after v4 MIME/search/draft/exact-sender seam repairs.
+- Confirmed `git diff --check -- .` passes.
+- Confirmed `go test ./...` passes.
+
+### 2026-07-16 22:50 CDT — Add OpenPGP exact-sender drafts to PRD and specs
+
+Commit: e39a402
 
 Affected files:
 
