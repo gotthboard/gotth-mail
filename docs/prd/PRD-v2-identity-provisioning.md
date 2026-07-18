@@ -60,7 +60,7 @@ Requirements:
   - `userName` to mailbox email
   - `displayName`/`name.formatted` to displayed name
   - `active` to enabled/disabled
-  - `password` to mailbox password when supplied, hashed into the Authentik-compatible Django encoded password-hash format
+  - `password` to mailbox password when supplied, hashed into the v2-supported Authentik/Django `pbkdf2_sha256` encoded password-hash format
 - Reject malformed JSON, non-object payloads, invalid scalar identity fields, unsupported patch operations, unknown paths, and bad passwords.
 - SCIM DELETE disables mailbox by default; it does not delete mail data.
 - Authentik-compatible provisioning path.
@@ -70,7 +70,7 @@ Requirements:
 - Create/revoke/list app passwords.
 - Scoped use where practical.
 - Dovecot integration.
-- Store mailbox-password and app-password/mail-client token secrets as Authentik-compatible Django encoded password-hash/verifier strings where password sync or Dovecot verification is intended; never plaintext.
+- Store mailbox-password and app-password/mail-client token secrets as v2-supported Authentik/Django `pbkdf2_sha256` encoded password-hash/verifier strings where password sync or Dovecot verification is intended; never plaintext.
 - Audit events for create/revoke/use metadata.
 - Never expose token values after creation.
 - OIDC is not IMAP/SMTP auth; mail clients need app passwords or compatible credentials.
@@ -105,5 +105,5 @@ Requirements:
 - Permission simulator explains allow/deny results for identity-backed actors.
 - SCIM provisioning can create, update, list, disable, and patch users through Authentik-compatible flows.
 - SCIM failure paths are tested.
-- App passwords/mail-client tokens work for Dovecot auth and are stored as Authentik-compatible Django encoded password-hash/verifier strings or explicitly documented verifier-only records; never plaintext.
+- App passwords/mail-client tokens work for Dovecot auth and are stored as v2-supported Authentik/Django `pbkdf2_sha256` encoded password-hash/verifier strings or explicitly documented verifier-only records; never plaintext.
 - Every identity/provisioning mutation is audited.

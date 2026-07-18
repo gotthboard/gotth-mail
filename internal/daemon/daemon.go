@@ -435,7 +435,7 @@ func MakeDjangoPBKDF2SHA256(secret, salt string, iterations int) string {
 	return fmt.Sprintf("pbkdf2_sha256$%d$%s$%s", iterations, salt, base64.StdEncoding.EncodeToString(dk))
 }
 
-func VerifyDjangoPBKDF2SHA256(encoded, secret string) error {
+func ValidateDjangoPBKDF2SHA256(encoded string) error {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 4 || parts[0] != "pbkdf2_sha256" {
 		return errors.New("unsupported verifier")
@@ -444,10 +444,23 @@ func VerifyDjangoPBKDF2SHA256(encoded, secret string) error {
 	if err != nil || iterations < 1 {
 		return errors.New("invalid verifier iterations")
 	}
+	if parts[2] == "" {
+		return errors.New("invalid verifier salt")
+	}
 	want, err := base64.StdEncoding.DecodeString(parts[3])
-	if err != nil {
+	if err != nil || len(want) != 32 {
 		return errors.New("invalid verifier digest")
 	}
+	return nil
+}
+
+func VerifyDjangoPBKDF2SHA256(encoded, secret string) error {
+	if err := ValidateDjangoPBKDF2SHA256(encoded); err != nil {
+		return err
+	}
+	parts := strings.Split(encoded, "$")
+	iterations, _ := strconv.Atoi(parts[1])
+	want, _ := base64.StdEncoding.DecodeString(parts[3])
 	got := pbkdf2.Key([]byte(secret), []byte(parts[2]), iterations, len(want), sha256.New)
 	if !hmac.Equal(got, want) {
 		return errors.New("secret mismatch")

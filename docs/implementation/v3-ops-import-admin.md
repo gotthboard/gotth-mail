@@ -114,7 +114,7 @@ Import candidate types:
 - DKIM keys
 - compatible tokens where safe
 
-Token/app-password import is allowed only for Authentik/Django-compatible verifier, non-plaintext records whose hash/verifier algorithm, parameters, scope, and revocation state can be preserved. Anything else is `incompatible` or `manual_action_required`.
+Token/app-password import is allowed only for v2-supported Authentik/Django `pbkdf2_sha256` verifier, non-plaintext records whose hash/verifier algorithm, parameters, scope, and revocation state can be preserved. Anything else is `incompatible` or `manual_action_required`.
 
 Import report item status:
 

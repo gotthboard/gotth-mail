@@ -19,16 +19,16 @@ Relevant source facts:
 
 GopherMailForge mailbox-password and mail-client verifier storage must be compatible with Authentik's Django encoded password-hash format, not a private mail-only hash scheme.
 
-The stored verifier string must carry the algorithm identifier and parameters in the Django encoded form, for example `pbkdf2_sha256$...` for the current default or another Django-recognized algorithm selected by the configured Authentik deployment.
+The current v2 implementation supports exactly Django `pbkdf2_sha256` verifier strings, matching Authentik's default Django 5.2 password hasher in the checked deployment. It does **not** claim generic Django hasher compatibility. `argon2`, `bcrypt_sha256`, `scrypt`, `pbkdf2_sha1`, and any other Django-recognized algorithms are rejected until GopherMailForge ships local verification support for them and records that expansion explicitly.
 
-Implementation must not assume a hard-coded algorithm forever. It must:
+Implementation must:
 
-1. Record the configured Authentik-compatible hasher profile.
-2. Generate new mailbox/app-password verifier strings using that profile.
-3. Accept only Django-recognized encoded hashes when importing or synchronizing password hashes.
-4. Verify Dovecot passdb secrets against the same stored verifier string used for Authentik-compatible password sync.
-5. Reject plaintext password import/export.
-6. Reject unknown, deprecated, or policy-disabled hash algorithms unless an explicit migration exception is recorded.
+1. Generate new mailbox/app-password verifier strings as Django `pbkdf2_sha256$iterations$salt$digest` values.
+2. Accept imported/synchronized password hashes only when they are valid `pbkdf2_sha256` verifier strings.
+3. Verify Dovecot passdb secrets against the same stored verifier string used for Authentik-compatible password sync.
+4. Reject plaintext password import/export.
+5. Reject unknown, non-PBKDF2, deprecated, or policy-disabled hash algorithms unless an explicit migration exception is recorded.
+6. Treat broader Django hasher support as future work, not as existing compatibility.
 
 ## Non-goals
 

@@ -21,9 +21,40 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Record live runtime Authentik redirect smoke
+### 2026-07-18 CDT — Make password verifier compatibility contract honest
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/daemon/daemon.go`
+- `internal/daemon/daemon_test.go`
+- `internal/ops/v3.go`
+- `internal/ops/ops_test.go`
+- `docs/reference/authentik-password-hashing.md`
+- `docs/implementation/v2-identity-provisioning.md`
+- `docs/prd/PRD-v2-identity-provisioning.md`
+- `docs/architecture/v2-identity-provisioning.md`
+- `docs/implementation/IMPLEMENTATION.md`
+- `docs/implementation/v3-ops-import-admin.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/evidence/2026-07-18-full-finish-blockers.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Removed the fake broad claim that GopherMailForge supports arbitrary Authentik/Django password hashers. The current v2 compatibility target is explicitly Django `pbkdf2_sha256`, matching the checked Authentik/Django default deployment. Added a central PBKDF2 verifier validator, tightened malformed verifier rejection, and made Mailu import use the same validator instead of a loose shape check.
+
+Unsupported Django hashers such as `argon2`, `bcrypt_sha256`, `scrypt`, and `pbkdf2_sha1` are now documented and tested as unsupported until real local verification support exists.
+
+Verification:
+
+- Confirmed `go test -count=1 ./internal/daemon ./internal/ops` covers valid PBKDF2 use, unsupported hasher rejection, malformed verifier rejection, and import rejection.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Record live runtime Authentik redirect smoke
+
+Commit: 74354d0
 
 Affected files:
 

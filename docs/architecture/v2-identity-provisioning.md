@@ -80,7 +80,7 @@ Mapping:
 - `userName` -> mailbox email
 - `displayName` / `name.formatted` -> displayed name
 - `active` -> enabled flag
-- `password` -> mailbox password when supplied, stored using the Authentik-compatible Django encoded password-hash format
+- `password` -> mailbox password when supplied, stored using the v2-supported Authentik/Django `pbkdf2_sha256` encoded password-hash format
 
 Validation rejects:
 
@@ -101,7 +101,7 @@ App passwords/mail-client tokens:
 
 - are created/revoked/listed through core services
 - integrate with Dovecot auth
-- are stored as Authentik-compatible Django encoded password-hash/verifier strings where password sync or Dovecot verification is intended; never plaintext
+- are stored as v2-supported Authentik/Django `pbkdf2_sha256` encoded password-hash/verifier strings where password sync or Dovecot verification is intended; never plaintext
 - expose the secret value only at creation
 - emit audit events for create/revoke/use metadata
 

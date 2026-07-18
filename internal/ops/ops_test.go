@@ -96,3 +96,21 @@ func TestSnapshotIsNotRollback(t *testing.T) {
 		t.Fatalf("snapshot=%#v", s)
 	}
 }
+
+func TestMailuImportRejectsNonPBKDF2DjangoVerifier(t *testing.T) {
+	s := NewImportStore()
+	source := `[{"Type":"user","ID":"user@example.test","Value":"argon2$argon2id$v=19$m=102400,t=2,p=8$c2FsdA$ZGlnZXN0","VerifierAlgorithm":"argon2"}]`
+	preview := s.Preview(source, audit.ActorRef{Type: "ops", ID: "tester"}, time.Unix(1, 0))
+	if len(preview.Items) != 1 || preview.Items[0].Status != "incompatible" || !strings.Contains(preview.Items[0].Reason, "unsupported verifier algorithm") {
+		t.Fatalf("preview=%#v", preview.Items)
+	}
+}
+
+func TestMailuImportRejectsMalformedPBKDF2Verifier(t *testing.T) {
+	s := NewImportStore()
+	source := `[{"Type":"user","ID":"user@example.test","Value":"pbkdf2_sha256$1200$salt$ZmFrZQ==","VerifierAlgorithm":"pbkdf2_sha256"}]`
+	preview := s.Preview(source, audit.ActorRef{Type: "ops", ID: "tester"}, time.Unix(1, 0))
+	if len(preview.Items) != 1 || preview.Items[0].Status != "failed_validation" || !strings.Contains(preview.Items[0].Reason, "invalid pbkdf2") {
+		t.Fatalf("preview=%#v", preview.Items)
+	}
+}

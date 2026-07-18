@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"strings"
 	"testing"
 
 	"forgejo/linus/gophermailforge/internal/audit"
@@ -111,5 +112,24 @@ func TestDovecotPassdbAuditsAppPasswordUse(t *testing.T) {
 	}
 	if len(w.Events) != 2 || w.Events[1].Result != "failure" || w.Events[1].ErrorCode != "invalid_secret" {
 		t.Fatalf("events %#v", w.Events)
+	}
+}
+
+func TestDjangoVerifierContractIsPBKDF2SHA256Only(t *testing.T) {
+	valid := MakeDjangoPBKDF2SHA256("secret", "salt", 1200)
+	if err := ValidateDjangoPBKDF2SHA256(valid); err != nil {
+		t.Fatalf("valid pbkdf2 verifier rejected: %v", err)
+	}
+	cases := []string{
+		"argon2$argon2id$v=19$m=102400,t=2,p=8$c2FsdA$ZGlnZXN0",
+		"bcrypt_sha256$$2b$12$abcdefghijklmnopqrstuu5sNrZfPq",
+		"pbkdf2_sha1$1200$salt$ZmFrZQ==",
+		"pbkdf2_sha256$1200$$" + valid[strings.LastIndex(valid, "$")+1:],
+		"pbkdf2_sha256$1200$salt$ZmFrZQ==",
+	}
+	for _, tc := range cases {
+		if err := ValidateDjangoPBKDF2SHA256(tc); err == nil {
+			t.Fatalf("accepted unsupported/invalid verifier %q", tc)
+		}
 	}
 }

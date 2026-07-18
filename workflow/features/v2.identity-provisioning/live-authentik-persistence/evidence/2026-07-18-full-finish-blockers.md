@@ -150,3 +150,23 @@ Probed `http://127.0.0.1:18080/api/v1/oidc/login?mode=redirect&redirect=/done`. 
 - `gmf_oidc_binding` cookie was set, redacted in evidence
 
 This proves real runtime startup/discovery/authorize redirect against the installed Authentik provider. It still does not prove final browser/passkey code redemption; that remains scheduled for interactive testing.
+
+## 2026-07-18 password compatibility contract repair
+
+Closed the overclaim that GopherMailForge had generic Authentik/Django password-hasher compatibility. Current v2 support is now explicitly scoped to Django `pbkdf2_sha256`, matching the checked Authentik/Django default deployment.
+
+Code changes:
+
+- Added `daemon.ValidateDjangoPBKDF2SHA256` as the central validator for stored verifier strings.
+- Tightened PBKDF2 validation: supported algorithm only, positive iterations, non-empty salt, and 32-byte SHA-256 digest.
+- Kept Dovecot verification local and Authentik-outage independent.
+- Mailu import now uses the central PBKDF2 validator instead of a looser shape check.
+
+Contract changes:
+
+- Docs no longer claim generic Django hasher support.
+- `argon2`, `bcrypt_sha256`, `scrypt`, `pbkdf2_sha1`, and other Django-recognized algorithms are documented and tested as unsupported until real local verifier support is implemented.
+
+Verification:
+
+- `go test -count=1 ./internal/daemon ./internal/ops` covers valid PBKDF2 verification, unsupported Django hasher rejection, malformed PBKDF2 rejection, and import rejection.

@@ -60,3 +60,5 @@ Danny rejected the prior "enough for gate" posture. v2, v3, and v4 roots have be
 - durable schema contracts now include OIDC login states, sessions, backup verification records, snapshots, and mailbox-owned webmail drafts.
 
 Remaining production integrations are not done and must not be represented as done: live Authentik, live Mailu, isolated backup restore, production IMAP/SMTP, OpenPGP crypto/canonicalization, raw MIME parsing, rich HTML sanitizer/browser proof, and durable runtime wiring.
+
+- Password compatibility: v2 support is explicitly limited to Django `pbkdf2_sha256`; `internal/daemon` and `internal/ops` tests cover valid verifier use plus unsupported/malformed Django verifier rejection. Broader Django hasher support is not claimed.

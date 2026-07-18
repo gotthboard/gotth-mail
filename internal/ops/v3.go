@@ -279,7 +279,7 @@ func (s *ImportStore) Preview(source string, actor audit.ActorRef, now time.Time
 			st, reason = "failed_validation", "invalid alias target"
 		case c.Type == "user" && c.VerifierAlgorithm == "pbkdf2_sha256" && daemon.VerifyDjangoPBKDF2SHA256(c.Value, "probe") == nil:
 			st, reason = "failed_validation", "verifier unexpectedly matches probe secret"
-		case c.Type == "user" && c.VerifierAlgorithm == "pbkdf2_sha256" && !looksLikePBKDF2(c.Value):
+		case c.Type == "user" && c.VerifierAlgorithm == "pbkdf2_sha256" && daemon.ValidateDjangoPBKDF2SHA256(c.Value) != nil:
 			st, reason = "failed_validation", "invalid pbkdf2 verifier format"
 		case c.PlaintextSecret:
 			st, reason = "incompatible", "plaintext secret import rejected"
