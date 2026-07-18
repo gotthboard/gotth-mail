@@ -32,7 +32,7 @@ type Server struct {
 	CertCheck             diag.CertCheck
 	WebmailOK             bool
 	OIDCConfig            authn.OIDCConfig
-	OIDCStore             *authn.Store
+	OIDCStore             authn.StateStore
 	OIDCAuthorizeEndpoint string
 	OIDCJWKS              authn.JWKS
 	Identity              *identity.Service

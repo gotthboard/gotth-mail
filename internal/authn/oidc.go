@@ -75,6 +75,13 @@ type Session struct {
 	AuthMethod     string
 }
 
+type StateStore interface {
+	PutState(LoginState) error
+	Session(string) (Session, bool)
+	consumeState(string, string, time.Time) (LoginState, error)
+	putSession(Session) error
+}
+
 type Store struct {
 	mu       sync.Mutex
 	states   map[string]LoginState
@@ -85,11 +92,12 @@ func NewStore() *Store {
 	return &Store{states: map[string]LoginState{}, sessions: map[string]Session{}}
 }
 
-func (s *Store) PutState(st LoginState) {
+func (s *Store) PutState(st LoginState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensure()
 	s.states[st.StateID] = st
+	return nil
 }
 func (s *Store) Session(id string) (Session, bool) {
 	s.mu.Lock()
@@ -120,11 +128,12 @@ func (s *Store) consumeState(stateID, browserHash string, now time.Time) (LoginS
 	s.states[stateID] = st
 	return st, nil
 }
-func (s *Store) putSession(sess Session) {
+func (s *Store) putSession(sess Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensure()
 	s.sessions[sess.ID] = sess
+	return nil
 }
 func (st LoginState) UsedAtIsNil() bool { return st.UsedAt == nil }
 
@@ -162,7 +171,7 @@ type CallbackResult struct {
 	Session  Session
 }
 
-func StartLogin(cfg OIDCConfig, store *Store, authorizeEndpoint, browserBindingHash, redirectAfter string, ttl time.Duration) (LoginStart, error) {
+func StartLogin(cfg OIDCConfig, store StateStore, authorizeEndpoint, browserBindingHash, redirectAfter string, ttl time.Duration) (LoginStart, error) {
 	if store == nil {
 		return LoginStart{}, fmt.Errorf("oidc store required")
 	}
@@ -181,7 +190,9 @@ func StartLogin(cfg OIDCConfig, store *Store, authorizeEndpoint, browserBindingH
 	if err != nil {
 		return LoginStart{}, err
 	}
-	store.PutState(LoginState{StateID: state, Nonce: nonce, BrowserBindingHash: browserBindingHash, RedirectAfterLogin: redirectAfter, CreatedAt: now, ExpiresAt: now.Add(ttl)})
+	if err := store.PutState(LoginState{StateID: state, Nonce: nonce, BrowserBindingHash: browserBindingHash, RedirectAfterLogin: redirectAfter, CreatedAt: now, ExpiresAt: now.Add(ttl)}); err != nil {
+		return LoginStart{}, err
+	}
 	u, err := url.Parse(authorizeEndpoint)
 	if err != nil {
 		return LoginStart{}, err
@@ -197,7 +208,7 @@ func StartLogin(cfg OIDCConfig, store *Store, authorizeEndpoint, browserBindingH
 	return LoginStart{StateID: state, Nonce: nonce, URL: u.String()}, nil
 }
 
-func CompleteCallback(ctx context.Context, cfg OIDCConfig, store *Store, in CallbackInput) (CallbackResult, error) {
+func CompleteCallback(ctx context.Context, cfg OIDCConfig, store StateStore, in CallbackInput) (CallbackResult, error) {
 	if store == nil {
 		return CallbackResult{}, fmt.Errorf("oidc store required")
 	}
@@ -240,7 +251,9 @@ func CompleteCallback(ctx context.Context, cfg OIDCConfig, store *Store, in Call
 		return CallbackResult{}, err
 	}
 	sess := Session{ID: sid, IdentityRefID: identity.Issuer + "|" + identity.Subject, CreatedAt: now, ExpiresAt: now.Add(12 * time.Hour), LastSeenAt: now, CSRFSecretHash: hashText(csrf), AuthMethod: "oidc"}
-	store.putSession(sess)
+	if err := store.putSession(sess); err != nil {
+		return CallbackResult{}, err
+	}
 	return CallbackResult{Identity: identity, Session: sess}, nil
 }
 

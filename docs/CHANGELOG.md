@@ -21,13 +21,42 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Reopen v2-v4 full-finish work and close trust-boundary holes
+### 2026-07-18 CDT — Add SQL-backed OIDC state and session store
 
 Commit: current commit; hash assigned by Git after commit
 
 Affected files:
 
+- `internal/authn/oidc.go`
+- `internal/authn/sql_store.go`
+- `internal/authn/sql_store_test.go`
 - `internal/api/api.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/evidence/2026-07-18-full-finish-blockers.md`
+
+Explanation:
+
+Added a real `authn.StateStore` contract for OIDC login state and sessions, with the existing memory store and a new SQL-backed implementation. `authn.SQLStore` persists OIDC login states and sessions using the durable tables added in the full-finish correction, atomically consumes login state with browser-binding and expiry checks, and reloads sessions through a fresh store wrapper. `api.Server.OIDCStore` now accepts the store interface instead of being type-locked to the in-memory implementation.
+
+This is a durable v2 slice, not a live Authentik completion claim. Live Authentik provider/bootstrap/browser smoke and durable SCIM/token/app-password runtime wiring remain open.
+
+Verification:
+
+- Confirmed `go test ./internal/authn` passes with embedded Postgres SQL-store tests.
+- Confirmed `go test ./internal/api ./internal/authn` passes after API store-interface wiring.
+- Confirmed `git diff --check -- .` passes.
+- Confirmed `go test -count=1 ./...` passes.
+
+### 2026-07-18 CDT — Reopen v2-v4 full-finish work and close trust-boundary holes
+
+Commit: f170729
+
+Affected files:
+
+- `internal/api/api.go`
+- `internal/authn/oidc.go`
+- `internal/authn/sql_store.go`
+- `internal/authn/sql_store_test.go`
 - `internal/api/api_test.go`
 - `internal/api/scim.go`
 - `internal/api/webmail.go`
@@ -54,11 +83,12 @@ Danny rejected "enough" as the quality bar. This change stops representing v2/v3
 
 The patch also closes concrete trust-boundary holes found during full-finish audits. App-password listing now requires scoped mailbox read authorization. The legacy audit event list route now requires ops-admin bearer authorization and redacts events before returning them. Webmail draft submit now checks draft ownership against the authenticated mailbox scope before submission, so a leaked draft ID cannot cross mailbox boundaries. UI mutation routes now require bearer authorization instead of fabricating `local_admin ui`, and the backup verification UI no longer manufactures a fake verified artifact when no backup storage is configured.
 
-Durable schema contracts were added for OIDC login state, sessions, backup artifacts/verifications, snapshots, and mailbox-owned webmail drafts, with embedded Postgres tests proving the tables and key constraints exist. This does not claim that all runtime services are fully wired to durable SQL yet; the blocker evidence states that remaining work explicitly.
+Durable schema contracts were added for OIDC login state, sessions, backup artifacts/verifications, snapshots, and mailbox-owned webmail drafts, with embedded Postgres tests proving the tables and key constraints exist. OIDC state/session storage now has a real `authn.StateStore` interface and SQL-backed implementation; embedded Postgres tests prove state single-use, expiry rejection, browser binding, and session reload through a fresh store wrapper. This does not claim that all runtime services are fully wired to durable SQL yet; the blocker evidence states that remaining work explicitly.
 
 Verification:
 
 - Confirmed `go test -count=1 ./internal/api ./internal/httpui ./internal/store ./internal/identity ./internal/webmail ./internal/ops` passes.
+- Confirmed `go test ./internal/authn` passes with SQL-backed OIDC store tests.
 - Full repository verification is run before commit.
 
 ### 2026-07-18 CDT — Repair v2-v4 admission blockers in vertical slices
