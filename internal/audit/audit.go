@@ -38,7 +38,7 @@ type MemoryWriter struct {
 	Events []Event
 }
 
-func normalize(e Event) Event {
+func Normalize(e Event) Event {
 	if e.ID == "" {
 		e.ID = newUUID()
 	}
@@ -51,7 +51,7 @@ func normalize(e Event) Event {
 }
 
 func (w *MemoryWriter) Write(ctx context.Context, e Event) error {
-	e = normalize(e)
+	e = Normalize(e)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.Events = append(w.Events, e)
@@ -61,7 +61,7 @@ func (w *MemoryWriter) Write(ctx context.Context, e Event) error {
 type SQLWriter struct{ DB *sql.DB }
 
 func (w SQLWriter) Write(ctx context.Context, e Event) error {
-	e = normalize(e)
+	e = Normalize(e)
 	before, err := json.Marshal(e.BeforeRedacted)
 	if err != nil {
 		return err

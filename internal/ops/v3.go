@@ -3,12 +3,14 @@ package ops
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/mail"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -104,6 +106,19 @@ func (s *RetentionStore) Preview(events []audit.Event, policy string, now time.T
 	s.mu.Unlock()
 	return p, nil
 }
+func (s *RetentionStore) Remember(p RetentionPreview) {
+	s.mu.Lock()
+	s.Previews[p.ID] = p
+	s.mu.Unlock()
+}
+
+func (s *RetentionStore) Get(id string) (RetentionPreview, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.Previews[id]
+	return p, ok
+}
+
 func (s *RetentionStore) Apply(ctx context.Context, w audit.Writer, actor audit.ActorRef, id, confirm string) error {
 	s.mu.Lock()
 	p, ok := s.Previews[id]
@@ -577,3 +592,158 @@ type V3Runtime struct {
 func NewV3Runtime() *V3Runtime {
 	return &V3Runtime{RetentionStore: NewRetentionStore(), ImportStore: NewImportStore(), BulkStore: NewBulkStore(), BackupStore: MemoryBackupStorage{Artifacts: map[string]BackupArtifact{}}, Snapshots: map[string]SnapshotView{"current": {ID: "current", GeneratedConfigSetID: "current", MigrationVersion: "schema_migrations", VerifiedRestoreStatus: "unknown", ImageVersions: []string{"gophermailforge:current"}}}}
 }
+
+type SQLAuditStore struct{ DB *sql.DB }
+
+func (s SQLAuditStore) Query(ctx context.Context, f AuditFilter, limit int) ([]audit.Event, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	where, args := auditWhere(f)
+	args = append(args, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, timestamp, actor_type, actor_id, source_ip, source_user_agent, action, resource_type, resource_id, before_redacted_json, after_redacted_json, correlation_id, result, coalesce(error_code,'') FROM audit_events `+where+` ORDER BY timestamp DESC, id DESC LIMIT $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []audit.Event
+	for rows.Next() {
+		e, err := scanAuditEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		e.BeforeRedacted = audit.Redact(e.BeforeRedacted)
+		e.AfterRedacted = audit.Redact(e.AfterRedacted)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s SQLAuditStore) Get(ctx context.Context, id string) (audit.Event, bool, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, timestamp, actor_type, actor_id, source_ip, source_user_agent, action, resource_type, resource_id, before_redacted_json, after_redacted_json, correlation_id, result, coalesce(error_code,'') FROM audit_events WHERE id=$1`, id)
+	if err != nil {
+		return audit.Event{}, false, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return audit.Event{}, false, nil
+	}
+	e, err := scanAuditEvent(rows)
+	if err != nil {
+		return audit.Event{}, false, err
+	}
+	e.BeforeRedacted = audit.Redact(e.BeforeRedacted)
+	e.AfterRedacted = audit.Redact(e.AfterRedacted)
+	return e, true, rows.Err()
+}
+
+func (s SQLAuditStore) PreviewRetention(ctx context.Context, policy string, now time.Time) (RetentionPreview, error) {
+	cutoff, err := retentionCutoff(policy, now)
+	if err != nil {
+		return RetentionPreview{}, err
+	}
+	var count int
+	if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE timestamp < $1`, cutoff).Scan(&count); err != nil {
+		return RetentionPreview{}, err
+	}
+	h := sha256.Sum256([]byte(policy + cutoff.Format(time.RFC3339) + strconv.Itoa(count)))
+	return RetentionPreview{ID: "ret_" + hex.EncodeToString(h[:4]), Policy: policy, DeleteCount: count, Hash: hex.EncodeToString(h[:])}, nil
+}
+
+func (s SQLAuditStore) ApplyRetention(ctx context.Context, actor audit.ActorRef, preview RetentionPreview, confirm string, now time.Time) error {
+	if confirm != preview.ID {
+		return errors.New("retention confirmation mismatch")
+	}
+	cutoff, err := retentionCutoff(preview.Policy, now)
+	if err != nil {
+		return err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	e := audit.Normalize(audit.Event{Actor: actor, Action: "audit.retention.apply", Resource: audit.ResourceRef{Type: "audit_retention", ID: preview.ID}, Result: "success"})
+	before, _ := json.Marshal(e.BeforeRedacted)
+	after, _ := json.Marshal(e.AfterRedacted)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(id, timestamp, actor_type, actor_id, action, resource_type, resource_id, before_redacted_json, after_redacted_json, correlation_id, result, error_code) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, e.ID, e.Time, e.Actor.Type, e.Actor.ID, e.Action, e.Resource.Type, e.Resource.ID, string(before), string(after), e.CorrelationID, e.Result, nullAuditString(e.ErrorCode)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM audit_events WHERE timestamp < $1`, cutoff); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func retentionCutoff(policy string, now time.Time) (time.Time, error) {
+	v := strings.TrimPrefix(policy, "older-than-")
+	if v == policy || !strings.HasSuffix(v, "d") {
+		return time.Time{}, errors.New("unsupported retention policy")
+	}
+	days, err := strconv.Atoi(strings.TrimSuffix(v, "d"))
+	if err != nil || days < 1 {
+		return time.Time{}, errors.New("unsupported retention policy")
+	}
+	return now.AddDate(0, 0, -days), nil
+}
+
+func auditWhere(f AuditFilter) (string, []any) {
+	var clauses []string
+	var args []any
+	add := func(expr string, v any) {
+		args = append(args, v)
+		clauses = append(clauses, expr+" $"+strconv.Itoa(len(args)))
+	}
+	if !f.From.IsZero() {
+		add("timestamp >=", f.From)
+	}
+	if !f.To.IsZero() {
+		add("timestamp <=", f.To)
+	}
+	if f.ActorType != "" {
+		add("actor_type =", f.ActorType)
+	}
+	if f.ActorID != "" {
+		add("actor_id =", f.ActorID)
+	}
+	if f.Action != "" {
+		add("action =", f.Action)
+	}
+	if f.ResourceType != "" {
+		add("resource_type =", f.ResourceType)
+	}
+	if f.ResourceID != "" {
+		add("resource_id =", f.ResourceID)
+	}
+	if f.Result != "" {
+		add("result =", f.Result)
+	}
+	if f.CorrelationID != "" {
+		add("correlation_id =", f.CorrelationID)
+	}
+	if f.ErrorCode != "" {
+		add("error_code =", f.ErrorCode)
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(clauses, " AND "), args
+}
+
+type auditScanner interface{ Scan(dest ...any) error }
+
+func scanAuditEvent(row auditScanner) (audit.Event, error) {
+	var e audit.Event
+	var ip, ua sql.NullString
+	var before, after string
+	if err := row.Scan(&e.ID, &e.Time, &e.Actor.Type, &e.Actor.ID, &ip, &ua, &e.Action, &e.Resource.Type, &e.Resource.ID, &before, &after, &e.CorrelationID, &e.Result, &e.ErrorCode); err != nil {
+		return e, err
+	}
+	if ip.Valid || ua.Valid {
+		e.Source = &audit.RequestSource{IP: ip.String, UserAgent: ua.String}
+	}
+	_ = json.Unmarshal([]byte(before), &e.BeforeRedacted)
+	_ = json.Unmarshal([]byte(after), &e.AfterRedacted)
+	return e, nil
+}
+func nullAuditString(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }

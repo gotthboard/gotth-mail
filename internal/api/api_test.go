@@ -25,6 +25,8 @@ import (
 	"forgejo/linus/gophermailforge/internal/identity"
 	"forgejo/linus/gophermailforge/internal/ops"
 	"forgejo/linus/gophermailforge/internal/plugin"
+	"forgejo/linus/gophermailforge/internal/store"
+	"forgejo/linus/gophermailforge/internal/testpg"
 	"forgejo/linus/gophermailforge/internal/webmail"
 )
 
@@ -682,5 +684,67 @@ func TestWebmailDraftSubmitRequiresMailboxOwnership(t *testing.T) {
 	}
 	if smtp.sent {
 		t.Fatal("cross-mailbox submit sent message")
+	}
+}
+
+func TestV3AuditRoutesUseSQLAuditStoreWhenConfigured(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	ids := identity.NewService("example.test")
+	if err := ids.AddTokenWithScopes("ops-admin", "api_token", "ops-secret-token", "ops:admin"); err != nil {
+		t.Fatal(err)
+	}
+	aw := audit.SQLWriter{DB: db}
+	now := time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC)
+	if err := aw.Write(context.Background(), audit.Event{ID: "00000000-0000-4000-8000-000000000301", Time: now.AddDate(0, 0, -120), Actor: audit.ActorRef{Type: "admin", ID: "a"}, Action: "auth.failure", Resource: audit.ResourceRef{Type: "session", ID: "s"}, BeforeRedacted: map[string]any{"password": "secret-password"}, Result: "failure"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := aw.Write(context.Background(), audit.Event{ID: "00000000-0000-4000-8000-000000000302", Time: now, Actor: audit.ActorRef{Type: "admin", ID: "a"}, Action: "config.apply", Resource: audit.ResourceRef{Type: "generated_config_set", ID: "cfg"}, AfterRedacted: map[string]any{"token": "secret-token"}, Result: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	h := Server{AuditDB: db, Identity: ids}.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodGet, "/api/v1/audit/export?format=jsonl&actor_type=admin", ""))
+	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "secret-password") || !strings.Contains(rr.Body.String(), "[REDACTED]") {
+		t.Fatalf("export status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodGet, "/api/v1/audit/events/00000000-0000-4000-8000-000000000302", ""))
+	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "secret-token") || !strings.Contains(rr.Body.String(), "config.apply") {
+		t.Fatalf("detail status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodPost, "/api/v1/audit/retention/preview?policy=older-than-90d", ""))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("preview status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var p ops.RetentionPreview
+	if err := json.Unmarshal(rr.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.DeleteCount != 1 {
+		t.Fatalf("preview=%#v", p)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodPost, "/api/v1/audit/retention/apply?confirm="+p.ID, `{"id":"`+p.ID+`"}`))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("apply status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	events, err := (ops.SQLAuditStore{DB: db}).Query(context.Background(), ops.AuditFilter{}, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenOld, seenNew, seenApply := false, false, false
+	for _, e := range events {
+		switch e.Action {
+		case "auth.failure":
+			seenOld = true
+		case "config.apply":
+			seenNew = true
+		case "audit.retention.apply":
+			seenApply = true
+		}
+	}
+	if seenOld || !seenNew || !seenApply {
+		t.Fatalf("events=%#v", events)
 	}
 }

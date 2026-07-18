@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -25,6 +26,7 @@ type Server struct {
 	Authz                 authz.Authorizer
 	Config                config.Config
 	Audit                 *audit.MemoryWriter
+	AuditDB               *sql.DB
 	Plugins               plugin.Registry
 	Applied               *render.Set
 	Daemon                daemon.Service

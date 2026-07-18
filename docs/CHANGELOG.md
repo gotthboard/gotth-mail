@@ -21,9 +21,37 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Record v2 interactive blocker and advance active work to v3
+### 2026-07-18 CDT — Add SQL-backed v3 audit query and retention
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/audit/audit.go`
+- `internal/ops/v3.go`
+- `internal/ops/v3_sql_test.go`
+- `internal/api/api.go`
+- `internal/api/v3.go`
+- `internal/api/api_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v3.ops-import-admin/production-ops/evidence/2026-07-18-full-finish-blockers.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added SQL-backed v3 audit read and retention paths. `ops.SQLAuditStore` now supports filtered audit queries, detail lookup, exact retention preview for `older-than-Nd`, and retention apply that writes the retention audit event and deletes expired rows in one transaction. The v3 audit export/detail/retention API routes use SQL audit storage when `api.Server.AuditDB` is configured and retain memory fallback for existing non-SQL tests.
+
+This closes the previous memory-only audit read/retention seam for SQL deployments. Backup restore, Mailu import compatibility, durable bulk mutations, and persisted snapshot linkage remain open v3 work.
+
+Verification:
+
+- Confirmed `go test -count=1 ./internal/ops` passes with SQL audit query/get/retention coverage.
+- Confirmed `go test -count=1 ./internal/api` passes with authenticated SQL audit route coverage.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Record v2 interactive blocker and advance active work to v3
+
+Commit: df4a8e3
 
 Affected files:
 

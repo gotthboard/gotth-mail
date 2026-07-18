@@ -46,6 +46,14 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 			return
 		}
 		ev := ops.FilterAudit(auditLog.Events, auditFilter(r))
+		if s.AuditDB != nil {
+			var err error
+			ev, err = (ops.SQLAuditStore{DB: s.AuditDB}).Query(r.Context(), auditFilter(r), 1000)
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+		}
 		if r.URL.Query().Get("format") == "csv" {
 			writeText(w, ops.ExportAuditCSV(ev))
 			return
@@ -60,6 +68,19 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 			return
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/api/v1/audit/events/")
+		if s.AuditDB != nil {
+			e, ok, err := (ops.SQLAuditStore{DB: s.AuditDB}).Get(r.Context(), id)
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			if ok {
+				writeJSON(w, e)
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
 		for _, e := range auditLog.Events {
 			if e.ID == id {
 				writeJSON(w, audit.Redact(e))
@@ -75,7 +96,16 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 		if _, ok := requireAdmin(w, r); !ok {
 			return
 		}
-		p, err := rt.RetentionStore.Preview(auditLog.Events, r.URL.Query().Get("policy"), time.Now())
+		var p ops.RetentionPreview
+		var err error
+		if s.AuditDB != nil {
+			p, err = (ops.SQLAuditStore{DB: s.AuditDB}).PreviewRetention(r.Context(), r.URL.Query().Get("policy"), time.Now())
+			if err == nil {
+				rt.RetentionStore.Remember(p)
+			}
+		} else {
+			p, err = rt.RetentionStore.Preview(auditLog.Events, r.URL.Query().Get("policy"), time.Now())
+		}
 		if err != nil {
 			http.Error(w, err.Error(), 400)
 			return
@@ -97,7 +127,17 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 			http.Error(w, "bad retention preview", 400)
 			return
 		}
-		if err := rt.RetentionStore.Apply(r.Context(), auditLog, reqActor, in.ID, r.URL.Query().Get("confirm")); err != nil {
+		if s.AuditDB != nil {
+			p, ok := rt.RetentionStore.Get(in.ID)
+			if !ok {
+				http.Error(w, "retention preview not found", 400)
+				return
+			}
+			if err := (ops.SQLAuditStore{DB: s.AuditDB}).ApplyRetention(r.Context(), reqActor, p, r.URL.Query().Get("confirm"), time.Now()); err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+		} else if err := rt.RetentionStore.Apply(r.Context(), auditLog, reqActor, in.ID, r.URL.Query().Get("confirm")); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
