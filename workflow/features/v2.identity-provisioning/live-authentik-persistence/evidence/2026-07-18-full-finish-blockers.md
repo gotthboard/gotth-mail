@@ -54,3 +54,25 @@ Remaining v2 Authentik work after this slice:
 - Browser/passkey authorization-code redemption through GopherMailForge callback with the live client secret supplied out-of-band.
 - Live ID token group-claim assertion for `gophermailforge-admins` mapped to the GopherMailForge authorizer.
 - Durable SCIM/token/app-password runtime wiring and restart proof.
+
+## 2026-07-18 durable identity/token progress
+
+Implemented SQL-backed persistence for the v2 identity service:
+
+- `Service.DB` can persist and reload mailboxes, API/SCIM tokens, and app-password token verifiers.
+- `mailboxes.verifier` was added to the canonical schema so mailbox password verifiers are not memory-only.
+- App passwords are stored in the canonical `tokens` table with `kind='app_password'`, mailbox subject, verifier, label, scope JSON, creation time, and revocation timestamp.
+- API/SCIM token verifier and scope data are persisted in `tokens` and reloaded after service reconstruction.
+- Daemon mailbox and app-password verifier views are rebuilt from loaded SQL state.
+
+Verification:
+
+- `go test ./internal/identity` includes an embedded Postgres restart test proving: provisioned mailbox reload, mailbox password still verifies, app password still verifies after fresh service load, API token scopes reload, and revoked app password remains revoked across another reload.
+
+Remaining v2 work after this slice:
+
+- Wire runtime construction to a configured production database instead of injected tests.
+- Live browser/passkey authorization-code redemption through GopherMailForge callback with the installed Authentik provider.
+- Live Authentik group claim mapping assertion.
+- SCIM client compatibility against installed Authentik SCIM, not only service/API fixtures.
+- Password verifier compatibility decision beyond PBKDF2-only local support.

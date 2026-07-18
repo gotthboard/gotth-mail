@@ -3,7 +3,11 @@ package identity
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha1"
+	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/mail"
@@ -62,6 +66,7 @@ type Service struct {
 	Daemon       *daemon.Service
 	Now          func() time.Time
 	Secret       func() (string, error)
+	DB           *sql.DB
 }
 
 func NewService(domains ...string) *Service {
@@ -70,6 +75,15 @@ func NewService(domains ...string) *Service {
 		s.KnownDomains[strings.ToLower(d)] = true
 	}
 	return s
+}
+
+func NewSQLService(ctx context.Context, db *sql.DB, domains ...string) (*Service, error) {
+	s := NewService(domains...)
+	s.DB = db
+	if err := s.loadSQL(ctx); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 func (s *Service) AddToken(id, kind, secret string) error {
@@ -89,7 +103,11 @@ func (s *Service) AddTokenWithScopes(id, kind, secret string, scopes ...string) 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Tokens[id] = Token{ID: id, Kind: kind, Verifier: verifier, Scopes: append([]string(nil), scopes...)}
+	tok := Token{ID: id, Kind: kind, Verifier: verifier, Scopes: append([]string(nil), scopes...)}
+	if err := s.persistTokenLocked(context.Background(), tok); err != nil {
+		return err
+	}
+	s.Tokens[id] = tok
 	return nil
 }
 
@@ -166,6 +184,10 @@ func (s *Service) CreateOrReplaceUser(ctx context.Context, actor authz.Actor, m 
 		m.CreatedAt = old.CreatedAt
 	}
 	if err := s.audit(ctx, actor, "scim.user.write", m.ID, "success", nil); err != nil {
+		s.mu.Unlock()
+		return Mailbox{}, err
+	}
+	if err := s.persistMailboxLocked(ctx, m); err != nil {
 		s.mu.Unlock()
 		return Mailbox{}, err
 	}
@@ -260,7 +282,12 @@ func (s *Service) CreateAppPassword(ctx context.Context, actor authz.Actor, mail
 		s.mu.Unlock()
 		return AppPasswordCreated{}, err
 	}
-	s.AppPasswords[id] = AppPassword{ID: id, MailboxID: strings.ToLower(mailboxID), Label: label, Verifier: verifier, CreatedAt: now}
+	p := AppPassword{ID: id, MailboxID: strings.ToLower(mailboxID), Label: label, Verifier: verifier, CreatedAt: now}
+	if err := s.persistAppPasswordLocked(ctx, p); err != nil {
+		s.mu.Unlock()
+		return AppPasswordCreated{}, err
+	}
+	s.AppPasswords[id] = p
 	s.syncDaemonAppPasswordsLocked(strings.ToLower(mailboxID))
 	s.mu.Unlock()
 	return AppPasswordCreated{ID: id, Label: label, SecretOnce: secret, CreatedAt: now}, nil
@@ -281,6 +308,10 @@ func (s *Service) RevokeAppPassword(ctx context.Context, actor authz.Actor, mail
 	}
 	p.RevokedAt = &now
 	if err := s.audit(ctx, actor, "app_password.revoke", mailboxID, "success", nil); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	if err := s.persistAppPasswordLocked(ctx, p); err != nil {
 		s.mu.Unlock()
 		return err
 	}
@@ -401,6 +432,140 @@ func (s *Service) secret() (string, error) {
 	}
 	return randomSecret()
 }
+func (s *Service) loadSQL(ctx context.Context) error {
+	if s.DB == nil {
+		return nil
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT d.name, m.local_part, COALESCE(m.display_name,''), m.enabled, COALESCE(m.verifier,''), m.created_at, m.updated_at FROM mailboxes m JOIN domains d ON d.id=m.domain_id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var domain, local, display, verifier string
+		var active bool
+		var created, updated time.Time
+		if err := rows.Scan(&domain, &local, &display, &active, &verifier, &created, &updated); err != nil {
+			return err
+		}
+		email := strings.ToLower(local + "@" + domain)
+		s.Mailboxes[email] = Mailbox{ID: email, Email: email, DisplayName: display, Active: active, Verifier: verifier, CreatedAt: created, UpdatedAt: updated}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows, err = s.DB.QueryContext(ctx, `SELECT label, kind, verifier, scope_json, revoked_at FROM tokens`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, kind, verifier, scopeJSON string
+		var revoked sql.NullTime
+		if err := rows.Scan(&id, &kind, &verifier, &scopeJSON, &revoked); err != nil {
+			return err
+		}
+		var scopes []string
+		_ = json.Unmarshal([]byte(scopeJSON), &scopes)
+		if kind == "app_password" {
+			// App passwords are loaded below with mailbox subject metadata.
+			continue
+		}
+		s.Tokens[id] = Token{ID: id, Kind: kind, Verifier: verifier, Scopes: scopes, Revoked: revoked.Valid}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows, err = s.DB.QueryContext(ctx, `SELECT label, subject_id, verifier, created_at, revoked_at FROM tokens WHERE kind='app_password'`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, mailbox, verifier string
+		var created time.Time
+		var revoked sql.NullTime
+		if err := rows.Scan(&id, &mailbox, &verifier, &created, &revoked); err != nil {
+			return err
+		}
+		var rp *time.Time
+		if revoked.Valid {
+			t := revoked.Time
+			rp = &t
+		}
+		s.AppPasswords[id] = AppPassword{ID: id, MailboxID: strings.ToLower(mailbox), Label: id, Verifier: verifier, CreatedAt: created, RevokedAt: rp}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, m := range s.Mailboxes {
+		s.syncDaemonMailboxLocked(m)
+	}
+	for mailbox := range s.Mailboxes {
+		s.syncDaemonAppPasswordsLocked(mailbox)
+	}
+	return nil
+}
+
+func (s *Service) persistMailboxLocked(ctx context.Context, m Mailbox) error {
+	if s.DB == nil {
+		return nil
+	}
+	local, domain, ok := strings.Cut(strings.ToLower(m.Email), "@")
+	if !ok {
+		return errors.New("invalid mailbox address")
+	}
+	domainID := stableUUID("domain:" + domain)
+	mailboxID := stableUUID("mailbox:" + strings.ToLower(m.Email))
+	if _, err := s.DB.ExecContext(ctx, `INSERT INTO domains(id, name, enabled, created_at, updated_at) VALUES ($1,$2,true,$3,$4) ON CONFLICT (name) DO UPDATE SET updated_at=EXCLUDED.updated_at`, domainID, domain, m.CreatedAt, m.UpdatedAt); err != nil {
+		return err
+	}
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO mailboxes(id, domain_id, local_part, display_name, enabled, verifier, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (domain_id, local_part) DO UPDATE SET display_name=EXCLUDED.display_name, enabled=EXCLUDED.enabled, verifier=EXCLUDED.verifier, updated_at=EXCLUDED.updated_at`, mailboxID, domainID, local, nullString(m.DisplayName), m.Active, nullString(m.Verifier), m.CreatedAt, m.UpdatedAt)
+	return err
+}
+
+func (s *Service) persistTokenLocked(ctx context.Context, tok Token) error {
+	if s.DB == nil {
+		return nil
+	}
+	scopes, err := json.Marshal(tok.Scopes)
+	if err != nil {
+		return err
+	}
+	var revoked sql.NullTime
+	if tok.Revoked {
+		revoked = sql.NullTime{Time: s.now(), Valid: true}
+	}
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO tokens(id, subject_type, subject_id, kind, verifier, label, scope_json, created_at, revoked_at) VALUES ($1,'token',$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO UPDATE SET verifier=EXCLUDED.verifier, scope_json=EXCLUDED.scope_json, revoked_at=EXCLUDED.revoked_at`, stableUUID("token:"+tok.ID), tok.ID, tok.Kind, tok.Verifier, tok.ID, string(scopes), s.now(), revoked)
+	return err
+}
+
+func (s *Service) persistAppPasswordLocked(ctx context.Context, p AppPassword) error {
+	if s.DB == nil {
+		return nil
+	}
+	scopeJSON, _ := json.Marshal([]string{"mailbox:" + strings.ToLower(p.MailboxID) + ":app_password"})
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO tokens(id, subject_type, subject_id, kind, verifier, label, scope_json, created_at, revoked_at) VALUES ($1,'mailbox',$2,'app_password',$3,$4,$5,$6,$7) ON CONFLICT (id) DO UPDATE SET verifier=EXCLUDED.verifier, revoked_at=EXCLUDED.revoked_at`, stableUUID("app_password:"+p.ID), strings.ToLower(p.MailboxID), p.Verifier, p.ID, string(scopeJSON), p.CreatedAt, nullTimePtr(p.RevokedAt))
+	return err
+}
+
+func stableUUID(seed string) string {
+	h := sha1.Sum([]byte(seed))
+	b := h[:16]
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	s := hex.EncodeToString(b)
+	return s[0:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:32]
+}
+
+func nullString(v string) sql.NullString { return sql.NullString{String: v, Valid: v != ""} }
+func nullTimePtr(v *time.Time) sql.NullTime {
+	if v == nil {
+		return sql.NullTime{}
+	}
+	return sql.NullTime{Time: *v, Valid: true}
+}
+
 func randomSecret() (string, error) {
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {

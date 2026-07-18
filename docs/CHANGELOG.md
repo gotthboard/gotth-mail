@@ -21,9 +21,38 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Add live installed Authentik OIDC smoke
+### 2026-07-18 CDT — Add SQL-backed identity and app-password persistence
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/identity/identity.go`
+- `internal/identity/sql_persistence_test.go`
+- `internal/store/store.go`
+- `internal/store/store_test.go`
+- `internal/store/sql_test.go`
+- `migrations/0001_initial.sql`
+- `workflow.toml`
+- `workflow/COVERAGE.md`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/evidence/2026-07-18-full-finish-blockers.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Continued the v2 full-finish repair by making identity state durable instead of memory-only. The identity service can now persist and reload mailboxes, mailbox password verifiers, API/SCIM token verifiers/scopes, and app-password token verifiers/revocation state through the canonical SQL schema. The schema now includes `mailboxes.verifier`, and app passwords are persisted in `tokens` with `kind='app_password'` and mailbox subject metadata. Daemon mailbox/passdb views are rebuilt from SQL-loaded state.
+
+Added an embedded Postgres restart test proving a provisioned mailbox, mailbox password, app password, API token scopes, and app-password revocation survive fresh service construction. This closes the previous "memory-only identity/app-password state" gap for the tested service path. Runtime production DB construction and live Authentik browser/code redemption remain separate open work.
+
+Verification:
+
+- Confirmed `go test ./internal/identity` passes with embedded Postgres restart persistence coverage.
+- Confirmed focused package gates pass before full repository verification.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Add live installed Authentik OIDC smoke
+
+Commit: 966e5ec
 
 Affected files:
 
