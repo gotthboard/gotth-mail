@@ -2,15 +2,18 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"forgejo/linus/gophermailforge/internal/admin"
 	"forgejo/linus/gophermailforge/internal/api"
+	"forgejo/linus/gophermailforge/internal/authn"
 	"forgejo/linus/gophermailforge/internal/authz"
 	"forgejo/linus/gophermailforge/internal/daemon"
 	"forgejo/linus/gophermailforge/internal/diag"
@@ -25,6 +28,9 @@ func main() {
 		server = referenceServer()
 		go servePostfixPolicy(os.Getenv("GMF_POSTFIX_POLICY_LISTEN"), server.Daemon)
 	}
+	if err := configureOIDCFromEnv(context.Background(), &server, http.DefaultClient); err != nil {
+		log.Fatalf("configure oidc: %v", err)
+	}
 	mux.Handle("/api/", server.Handler())
 	mux.Handle("/internal/", server.Handler())
 	mux.Handle("/healthz", server.Handler())
@@ -35,6 +41,35 @@ func main() {
 		addr = ":8080"
 	}
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+func configureOIDCFromEnv(ctx context.Context, server *api.Server, client *http.Client) error {
+	issuer := strings.TrimSpace(os.Getenv("GMF_AUTHENTIK_ISSUER"))
+	clientID := strings.TrimSpace(os.Getenv("GMF_AUTHENTIK_CLIENT_ID"))
+	redirectURI := strings.TrimSpace(os.Getenv("GMF_AUTHENTIK_REDIRECT_URI"))
+	if issuer == "" && clientID == "" && redirectURI == "" {
+		return nil
+	}
+	if issuer == "" || clientID == "" || redirectURI == "" {
+		return fmt.Errorf("GMF_AUTHENTIK_ISSUER, GMF_AUTHENTIK_CLIENT_ID, and GMF_AUTHENTIK_REDIRECT_URI are required together")
+	}
+	issuer = strings.TrimRight(issuer, "/") + "/"
+	cfg := authn.OIDCConfig{Issuer: issuer, ClientID: clientID, ClientSecret: os.Getenv("GMF_AUTHENTIK_CLIENT_SECRET"), RedirectURI: redirectURI, ClockSkew: time.Minute}
+	d, jwks, err := authn.DiscoverProvider(ctx, client, cfg)
+	if err != nil {
+		return err
+	}
+	cfg.TokenEndpoint = d.TokenEndpoint
+	server.OIDCConfig = cfg
+	server.OIDCAuthorizeEndpoint = d.AuthorizationEndpoint
+	server.OIDCJWKS = jwks
+	if server.OIDCStore == nil {
+		server.OIDCStore = authn.NewStore()
+	}
+	if server.OIDCExchanger == nil {
+		server.OIDCExchanger = authn.HTTPCodeExchanger{Client: client}
+	}
+	return nil
 }
 
 func servePostfixPolicy(addr string, svc daemon.Service) {

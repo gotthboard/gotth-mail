@@ -21,9 +21,32 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Add OIDC discovery and JWKS loader
+### 2026-07-18 CDT — Wire runtime Authentik OIDC discovery from environment
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `cmd/gophermailforge/main.go`
+- `cmd/gophermailforge/oidc_env_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/evidence/2026-07-18-full-finish-blockers.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Wired the `gophermailforge` runtime to configure OIDC from installed Authentik environment variables. When `GMF_AUTHENTIK_ISSUER`, `GMF_AUTHENTIK_CLIENT_ID`, and `GMF_AUTHENTIK_REDIRECT_URI` are supplied together, startup discovers provider metadata, validates issuer/code/RS256 support, loads JWKS, fills the API server OIDC config/authorization endpoint/JWKS, and installs an HTTP code exchanger using the supplied client secret. Partial OIDC env configuration fails closed instead of starting a half-configured login path.
+
+This makes the installed Authentik provider usable by the runtime; the remaining proof is the interactive browser/passkey login with the real client secret supplied out-of-band.
+
+Verification:
+
+- Confirmed `go test ./cmd/gophermailforge` passes with an `httptest` provider proving env-driven discovery and server wiring.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Add OIDC discovery and JWKS loader
+
+Commit: 1cc7f6c
 
 Affected files:
 

@@ -111,3 +111,23 @@ Remaining live wiring:
 
 - Runtime command/config still needs to call `DiscoverProvider` when starting GMF with the installed Authentik issuer.
 - Interactive browser code redemption remains scheduled for manual/passkey verification.
+
+## 2026-07-18 runtime Authentik env wiring progress
+
+Wired `cmd/gophermailforge` startup to the installed Authentik provider configuration via environment variables:
+
+- `GMF_AUTHENTIK_ISSUER`
+- `GMF_AUTHENTIK_CLIENT_ID`
+- `GMF_AUTHENTIK_CLIENT_SECRET`
+- `GMF_AUTHENTIK_REDIRECT_URI`
+
+When configured, startup calls `authn.DiscoverProvider`, validates discovery metadata, loads JWKS, fills `api.Server` OIDC config/authorize endpoint/JWKS, and installs the HTTP code exchanger. Partial env configuration fails closed.
+
+Verification:
+
+- `go test ./cmd/gophermailforge` uses an `httptest` provider to prove environment-driven discovery and server wiring.
+
+Remaining live proof:
+
+- Run `cmd/gophermailforge` with the real installed Authentik env and perform interactive browser/passkey login.
+- Assert live group claims from `gophermailforge-admins` map to expected GopherMailForge authorization.
