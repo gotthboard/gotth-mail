@@ -21,9 +21,31 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Add SQL-backed OIDC state and session store
+### 2026-07-18 CDT — Add live installed Authentik OIDC smoke
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `scripts/live-authentik-oidc-smoke.sh`
+- `workflow/COVERAGE.md`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/evidence/2026-07-18-full-finish-blockers.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Configured the installed Authentik instance with a dedicated GopherMailForge OIDC application/provider (`gophermailforge`) using strict redirect URI `http://127.0.0.1:18080/api/v1/oidc/callback`, and created/used the `gophermailforge-admins` group with `Dan` as a member for live group-claim testing. Added a live smoke script that validates the installed provider discovery document, JWKS, and authorization endpoint redirect/state preservation. The live client ID is supplied at runtime and the client secret is not written into the repository.
+
+This is real installed-provider evidence, not a local fabricated JWKS fixture. It still does not claim full browser/passkey authorization-code redemption through GopherMailForge; that requires running GMF with the live client secret and an interactive browser login.
+
+Verification:
+
+- Confirmed `GMF_AUTHENTIK_CLIENT_ID=<redacted> ./scripts/live-authentik-oidc-smoke.sh` passes against `https://auth.dannyhunn.com/application/o/gophermailforge/`.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Add SQL-backed OIDC state and session store
+
+Commit: 6106556
 
 Affected files:
 
