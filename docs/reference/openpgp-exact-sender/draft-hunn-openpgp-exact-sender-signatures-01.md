@@ -28,7 +28,7 @@ informative:
   RFC8551:
 --- abstract
 
-This document defines a profile for binding OpenPGP/MIME signed email to an exact configured sender identity.  DKIM authenticates a domain-level mail-handling path, but it does not identify the human, service, role mailbox, automation, or configured sender identity that authored or approved a message.  This profile requires outbound mail to be OpenPGP/MIME signed and requires the signing key fingerprint to resolve to exactly one active sender identity authorized to assert the message's RFC 5322 From and Sender fields.  Ambiguous, unmapped, revoked, expired, disabled, or mismatched signing identities fail closed.
+Existing email authentication proves either domain responsibility or cryptographic possession of a key; this profile defines the missing operational rule: an outbound OpenPGP/MIME signature is valid as sender proof only when the signing fingerprint maps to exactly one active sender identity authorized for the message's RFC 5322 From and Sender fields.  Ambiguous, unmapped, revoked, expired, disabled, delegated-without-authorization, or mismatched signing identities fail closed.
 
 --- middle
 
