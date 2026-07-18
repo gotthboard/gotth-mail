@@ -131,3 +131,22 @@ Remaining live proof:
 
 - Run `cmd/gophermailforge` with the real installed Authentik env and perform interactive browser/passkey login.
 - Assert live group claims from `gophermailforge-admins` map to expected GopherMailForge authorization.
+
+## 2026-07-18 live runtime Authentik redirect smoke
+
+Started the actual `cmd/gophermailforge` runtime locally with installed Authentik environment wiring:
+
+- `GMF_LISTEN=127.0.0.1:18080`
+- `GMF_AUTHENTIK_ISSUER=https://auth.dannyhunn.com/application/o/gophermailforge/`
+- `GMF_AUTHENTIK_CLIENT_ID=<redacted-live-client-id>`
+- `GMF_AUTHENTIK_REDIRECT_URI=http://127.0.0.1:18080/api/v1/oidc/callback`
+
+Probed `http://127.0.0.1:18080/api/v1/oidc/login?mode=redirect&redirect=/done`. Verification:
+
+- runtime returned `302` to installed Authentik authorize endpoint
+- redirect host was `auth.dannyhunn.com`
+- redirect URI was exactly `http://127.0.0.1:18080/api/v1/oidc/callback`
+- `state` and `nonce` were present
+- `gmf_oidc_binding` cookie was set, redacted in evidence
+
+This proves real runtime startup/discovery/authorize redirect against the installed Authentik provider. It still does not prove final browser/passkey code redemption; that remains scheduled for interactive testing.

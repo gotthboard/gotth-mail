@@ -21,9 +21,30 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Wire runtime Authentik OIDC discovery from environment
+### 2026-07-18 CDT — Record live runtime Authentik redirect smoke
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `workflow/COVERAGE.md`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/evidence/2026-07-18-full-finish-blockers.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Recorded live runtime evidence for the installed Authentik integration. The actual `cmd/gophermailforge` runtime was started on `127.0.0.1:18080` with the installed Authentik issuer/client ID/redirect URI supplied through environment variables. Probing `/api/v1/oidc/login?mode=redirect&redirect=/done` returned a `302` to `auth.dannyhunn.com` with the exact configured callback URI, generated state/nonce, and a browser-binding cookie.
+
+This proves runtime startup, discovery/JWKS loading, and browser authorization redirect against the installed Authentik provider. It still does not claim final passkey browser code redemption through the callback; that remains the interactive proof.
+
+Verification:
+
+- Confirmed live runtime login redirect against installed Authentik.
+- Confirmed `git diff --check -- .` passes.
+
+### 2026-07-18 CDT — Wire runtime Authentik OIDC discovery from environment
+
+Commit: 8a1c37b
 
 Affected files:
 
