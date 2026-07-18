@@ -21,9 +21,59 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Make password verifier compatibility contract honest
+### 2026-07-18 CDT — Replace flaky embedded Postgres test dependency
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/testpg/testpg.go`
+- `internal/store/sql_test.go`
+- `internal/authn/sql_store_test.go`
+- `internal/identity/sql_persistence_test.go`
+- `go.mod`
+- `go.sum`
+- `workflow/COVERAGE.md`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/evidence/2026-07-18-full-finish-blockers.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Full repository verification exposed a test harness failure: `github.com/fergusstrange/embedded-postgres` tried to resolve unavailable packaged Postgres versions. Replaced that hidden external binary dependency with `internal/testpg`, a small local harness that starts installed `initdb`/`postgres`/`createdb`, creates a real temporary database, and applies the normal migrations. Store, authn, and identity SQL persistence tests still run against real Postgres constraints, but no longer depend on the embedded-postgres package's remote version table.
+
+Verification:
+
+- Confirmed `go test -count=1 ./internal/authn ./internal/identity ./internal/store` passes with the local harness.
+- Confirmed `git diff --check -- .` passes.
+- Confirmed `go test -count=1 ./...` passes.
+
+### 2026-07-18 CDT — Preserve OIDC group claims for Authentik role mapping
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/authn/oidc.go`
+- `internal/authn/oidc_test.go`
+- `internal/authz/authz_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/evidence/2026-07-18-full-finish-blockers.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Preserved Authentik/OIDC ID-token `groups` on the validated GopherMailForge identity instead of dropping them at callback completion. Added authorization coverage for the installed Authentik group name `gophermailforge-admins`, proving a verified mapping grants `global_admin` authority.
+
+This closes the local parser/mapping seam. The remaining proof is the interactive browser/passkey callback confirming the live Authentik token for `Dan` contains the expected group claim.
+
+Verification:
+
+- Confirmed `go test ./internal/authn ./internal/authz` passes with group-preservation and mapping coverage.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Make password verifier compatibility contract honest
+
+Commit: 6955079
 
 Affected files:
 

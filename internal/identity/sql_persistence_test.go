@@ -3,8 +3,6 @@ package identity
 import (
 	"context"
 	"database/sql"
-	"net"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,8 +10,7 @@ import (
 	"forgejo/linus/gophermailforge/internal/authz"
 	"forgejo/linus/gophermailforge/internal/daemon"
 	"forgejo/linus/gophermailforge/internal/store"
-	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
-	_ "github.com/lib/pq"
+	"forgejo/linus/gophermailforge/internal/testpg"
 )
 
 func TestSQLServicePersistsMailboxAppPasswordAndTokensAcrossRestart(t *testing.T) {
@@ -85,34 +82,5 @@ func TestSQLServicePersistsMailboxAppPasswordAndTokensAcrossRestart(t *testing.T
 
 func identityTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	port := identityFreePort(t)
-	root := t.TempDir()
-	cfg := embeddedpostgres.DefaultConfig().Username("gmf").Password("gmf-dev-only").Database("gophermailforge").Port(uint32(port)).DataPath(filepath.Join(root, "data")).RuntimePath(filepath.Join(root, "runtime")).CachePath(filepath.Join(root, "cache")).StartTimeout(30 * time.Second)
-	pg := embeddedpostgres.NewDatabase(cfg)
-	if err := pg.Start(); err != nil {
-		t.Fatalf("start embedded postgres: %v", err)
-	}
-	t.Cleanup(func() { _ = pg.Stop() })
-	db, err := sql.Open("postgres", cfg.GetConnectionURL()+"?sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := db.Ping(); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.MigrateSQL(context.Background(), db); err != nil {
-		t.Fatal(err)
-	}
-	return db
-}
-
-func identityFreePort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
+	return testpg.DB(t, store.MigrateSQL)
 }

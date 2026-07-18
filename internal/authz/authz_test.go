@@ -68,3 +68,14 @@ func TestValidateRoleMappingsDoctorProblems(t *testing.T) {
 		t.Fatalf("missing problems %#v from %#v", want, problems)
 	}
 }
+
+func TestAuthentikAdminsGroupMapsToGlobalAdmin(t *testing.T) {
+	az := StaticAuthorizer{Mappings: []RoleMapping{{AuthentikGroup: "gophermailforge-admins", Role: RoleGlobalAdmin, Verified: true}}}
+	dec, err := az.Decide(context.Background(), Actor{Type: "oidc_subject", ID: "Dan", Groups: []string{"gophermailforge-admins"}}, "mailbox:create", Resource{Type: "mailbox", ID: "user@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Allow || dec.Reason != "global admin role matched" {
+		t.Fatalf("decision=%#v", dec)
+	}
+}

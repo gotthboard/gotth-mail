@@ -3,7 +3,6 @@ module forgejo/linus/gophermailforge
 go 1.25.0
 
 require (
-	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/lib/pq v1.12.3
 	golang.org/x/crypto v0.54.0
 	google.golang.org/grpc v1.82.1
@@ -12,7 +11,6 @@ require (
 )
 
 require (
-	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect

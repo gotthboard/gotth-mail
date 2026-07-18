@@ -62,3 +62,7 @@ Danny rejected the prior "enough for gate" posture. v2, v3, and v4 roots have be
 Remaining production integrations are not done and must not be represented as done: live Authentik, live Mailu, isolated backup restore, production IMAP/SMTP, OpenPGP crypto/canonicalization, raw MIME parsing, rich HTML sanitizer/browser proof, and durable runtime wiring.
 
 - Password compatibility: v2 support is explicitly limited to Django `pbkdf2_sha256`; `internal/daemon` and `internal/ops` tests cover valid verifier use plus unsupported/malformed Django verifier rejection. Broader Django hasher support is not claimed.
+
+- OIDC group claims: `internal/authn` preserves ID-token `groups`; `internal/authz` maps verified `gophermailforge-admins` to global admin. Live callback group assertion remains interactive/passkey-bound.
+
+- SQL harness: store/authn/identity persistence tests use `internal/testpg` with local Postgres binaries, avoiding external embedded binary version resolution while preserving real Postgres migration/constraint coverage.

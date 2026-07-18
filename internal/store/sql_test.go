@@ -2,46 +2,14 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"net"
-	"path/filepath"
 	"testing"
-	"time"
 
 	"forgejo/linus/gophermailforge/internal/audit"
-	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
-	_ "github.com/lib/pq"
+	"forgejo/linus/gophermailforge/internal/testpg"
 )
 
-func TestMigrateSQLOnEmbeddedPostgres(t *testing.T) {
-	port := freePort(t)
-	root := t.TempDir()
-	cfg := embeddedpostgres.DefaultConfig().
-		Username("gmf").
-		Password("gmf-dev-only").
-		Database("gophermailforge").
-		Port(uint32(port)).
-		DataPath(filepath.Join(root, "data")).
-		RuntimePath(filepath.Join(root, "runtime")).
-		CachePath(filepath.Join(root, "cache")).
-		StartTimeout(30 * time.Second)
-	pg := embeddedpostgres.NewDatabase(cfg)
-	if err := pg.Start(); err != nil {
-		t.Fatalf("start embedded postgres: %v", err)
-	}
-	t.Cleanup(func() { _ = pg.Stop() })
-
-	db, err := sql.Open("postgres", cfg.GetConnectionURL()+"?sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if err := db.Ping(); err != nil {
-		t.Fatal(err)
-	}
-	if err := MigrateSQL(context.Background(), db); err != nil {
-		t.Fatal(err)
-	}
+func TestMigrateSQLOnPostgres(t *testing.T) {
+	db := testpg.DB(t, MigrateSQL)
 	var count int
 	if err := db.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatal(err)
@@ -87,14 +55,4 @@ func TestMigrateSQLOnEmbeddedPostgres(t *testing.T) {
 	if ip != "127.0.0.1" || ua != "test-agent" || before == "" {
 		t.Fatalf("bad audit persistence ip=%q ua=%q before=%q", ip, ua, before)
 	}
-}
-
-func freePort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
 }

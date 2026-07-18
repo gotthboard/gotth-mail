@@ -25,13 +25,16 @@ func TestOIDCAuthCodeCallbackValidatesStateTokenAndCreatesSession(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok := signToken(t, key, "kid1", map[string]any{"iss": cfg.Issuer, "sub": "user-123", "aud": []string{cfg.ClientID}, "azp": cfg.ClientID, "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "nbf": now.Add(-time.Second).Unix(), "nonce": start.Nonce, "email": "alice@example.test", "name": "Alice"})
+	tok := signToken(t, key, "kid1", map[string]any{"iss": cfg.Issuer, "sub": "user-123", "aud": []string{cfg.ClientID}, "azp": cfg.ClientID, "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "nbf": now.Add(-time.Second).Unix(), "nonce": start.Nonce, "email": "alice@example.test", "name": "Alice", "groups": []string{"gophermailforge-admins"}})
 	res, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser-hash", RedirectURI: cfg.RedirectURI, Code: "code-1", JWKS: jwks, Exchanger: fakeExchange{Token: tok}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Identity.Subject != "user-123" || res.Identity.Email != "alice@example.test" || res.Session.AuthMethod != "oidc" {
 		t.Fatalf("bad result %#v", res)
+	}
+	if len(res.Identity.Groups) != 1 || res.Identity.Groups[0] != "gophermailforge-admins" {
+		t.Fatalf("groups not preserved %#v", res.Identity.Groups)
 	}
 	if _, ok := store.Session(res.Session.ID); !ok {
 		t.Fatal("session not stored")

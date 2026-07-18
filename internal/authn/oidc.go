@@ -63,6 +63,7 @@ type Identity struct {
 	Issuer  string
 	Email   string
 	Name    string
+	Groups  []string
 }
 
 type Session struct {
@@ -242,7 +243,7 @@ func CompleteCallback(ctx context.Context, cfg OIDCConfig, store StateStore, in 
 	if err != nil {
 		return CallbackResult{}, err
 	}
-	identity := Identity{Subject: claims.Subject, Issuer: claims.Issuer, Email: claims.Email, Name: claims.Name}
+	identity := Identity{Subject: claims.Subject, Issuer: claims.Issuer, Email: claims.Email, Name: claims.Name, Groups: claims.Groups}
 	sid, err := randomToken(32)
 	if err != nil {
 		return CallbackResult{}, err
@@ -306,6 +307,7 @@ type IDTokenClaims struct {
 	Nonce     string          `json:"nonce"`
 	Email     string          `json:"email,omitempty"`
 	Name      string          `json:"name,omitempty"`
+	Groups    []string        `json:"groups,omitempty"`
 }
 
 func ValidateIDToken(cfg OIDCConfig, token string, jwks JWKS, expectedNonce string) (IDTokenClaims, error) {

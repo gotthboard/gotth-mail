@@ -170,3 +170,35 @@ Contract changes:
 Verification:
 
 - `go test -count=1 ./internal/daemon ./internal/ops` covers valid PBKDF2 verification, unsupported Django hasher rejection, malformed PBKDF2 rejection, and import rejection.
+
+## 2026-07-18 OIDC group-claim mapping progress
+
+Closed the parser seam between Authentik ID-token group claims and GopherMailForge authorization mapping:
+
+- OIDC ID token validation now preserves the `groups` claim on `authn.Identity`.
+- Callback completion returns identity groups instead of dropping them.
+- Authz regression proves the installed Authentik group name `gophermailforge-admins` maps to `global_admin` when the mapping is verified.
+
+Verification:
+
+- `go test ./internal/authn ./internal/authz` proves group preservation and mapped global-admin authorization.
+
+Remaining live proof:
+
+- Interactive browser/passkey callback must still redeem a real Authentik authorization code and confirm the live ID token includes the expected `gophermailforge-admins` group claim for user `Dan`.
+
+## 2026-07-18 SQL test harness repair
+
+Full gate exposed a test harness failure unrelated to the OIDC group patch: `github.com/fergusstrange/embedded-postgres` defaulted to nonexistent Postgres package versions (`18.3.0`, then pinned `17.5.0` was also unavailable in this environment).
+
+Repair:
+
+- Replaced embedded-postgres test startup with `internal/testpg`, a local Postgres harness using installed `initdb`, `postgres`, and `createdb` binaries.
+- Removed the dead embedded-postgres module dependency and transitive xz dependency from `go.mod`/`go.sum`.
+- Store/authn/identity SQL tests now use the same local harness and still apply real Postgres migrations.
+
+Verification:
+
+- `go test -count=1 ./internal/authn ./internal/identity ./internal/store` passed.
+- `git diff --check -- .` passed.
+- `go test -count=1 ./...` passed after the harness repair.
