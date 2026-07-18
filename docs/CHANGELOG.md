@@ -21,9 +21,30 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Add browser-shaped OIDC callback flow
+### 2026-07-18 CDT — Add OIDC discovery and JWKS loader
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/authn/oidc.go`
+- `internal/authn/oidc_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/evidence/2026-07-18-full-finish-blockers.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added real OIDC provider metadata loading to the authn package. `FetchDiscovery` retrieves the issuer discovery document with bounded response size, `FetchJWKS` retrieves and validates a non-empty JWKS with bounded response size, and `DiscoverProvider` validates the discovered issuer/code/RS256 support before returning the JWKS. This removes another hand-fed fixture seam from the v2 OIDC path and gives runtime startup a real mechanism for loading installed Authentik metadata.
+
+Verification:
+
+- Confirmed `go test ./internal/authn` passes with an `httptest` discovery/JWKS provider.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Add browser-shaped OIDC callback flow
+
+Commit: c72dccd
 
 Affected files:
 

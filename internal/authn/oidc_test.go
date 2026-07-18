@@ -9,6 +9,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -195,5 +197,31 @@ func TestOIDCDiscoveryAndTokenResponseValidation(t *testing.T) {
 	key, _ := testJWKS(t, "kid1")
 	if err := (TokenResponse{IDToken: signToken(t, key, "kid1", map[string]any{"sub": "x"})}).ValidateNoUnsignedFallback(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDiscoverProviderFetchesDiscoveryAndJWKS(t *testing.T) {
+	key, jwks := testJWKS(t, "kid-live")
+	_ = key
+	var base string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/application/o/gmf/.well-known/openid-configuration":
+			_ = json.NewEncoder(w).Encode(DiscoveryDocument{Issuer: base + "/application/o/gmf/", AuthorizationEndpoint: base + "/application/o/authorize/", TokenEndpoint: base + "/application/o/token/", JWKSURI: base + "/application/o/gmf/jwks/", ResponseTypes: []string{"code"}, IDTokenAlgs: []string{"RS256"}})
+		case "/application/o/gmf/jwks/":
+			_ = json.NewEncoder(w).Encode(jwks)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	base = srv.URL
+	cfg := OIDCConfig{Issuer: base + "/application/o/gmf/", ClientID: "gmf", RedirectURI: "http://127.0.0.1:18080/api/v1/oidc/callback"}
+	d, got, err := DiscoverProvider(context.Background(), srv.Client(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.TokenEndpoint == "" || len(got.Keys) != 1 || got.Keys[0].Kid != "kid-live" {
+		t.Fatalf("d=%#v jwks=%#v", d, got)
 	}
 }

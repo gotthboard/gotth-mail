@@ -480,6 +480,78 @@ func ValidateDiscovery(cfg OIDCConfig, d DiscoveryDocument) error {
 	return nil
 }
 
+func FetchDiscovery(ctx context.Context, client *http.Client, issuer string) (DiscoveryDocument, error) {
+	issuer = strings.TrimRight(issuer, "/") + "/"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, issuer+".well-known/openid-configuration", nil)
+	if err != nil {
+		return DiscoveryDocument{}, err
+	}
+	c := client
+	if c == nil {
+		c = http.DefaultClient
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return DiscoveryDocument{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return DiscoveryDocument{}, ErrInvalidOIDCToken
+	}
+	var d DiscoveryDocument
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&d); err != nil {
+		return DiscoveryDocument{}, ErrInvalidOIDCToken
+	}
+	return d, nil
+}
+
+func FetchJWKS(ctx context.Context, client *http.Client, jwksURI string) (JWKS, error) {
+	if strings.TrimSpace(jwksURI) == "" {
+		return JWKS{}, ErrInvalidOIDCToken
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURI, nil)
+	if err != nil {
+		return JWKS{}, err
+	}
+	c := client
+	if c == nil {
+		c = http.DefaultClient
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return JWKS{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return JWKS{}, ErrInvalidOIDCToken
+	}
+	var j JWKS
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&j); err != nil {
+		return JWKS{}, ErrInvalidOIDCToken
+	}
+	if len(j.Keys) == 0 {
+		return JWKS{}, ErrInvalidOIDCToken
+	}
+	return j, nil
+}
+
+func DiscoverProvider(ctx context.Context, client *http.Client, cfg OIDCConfig) (DiscoveryDocument, JWKS, error) {
+	d, err := FetchDiscovery(ctx, client, cfg.Issuer)
+	if err != nil {
+		return DiscoveryDocument{}, JWKS{}, err
+	}
+	if err := ValidateDiscovery(cfg, d); err != nil {
+		return DiscoveryDocument{}, JWKS{}, err
+	}
+	j, err := FetchJWKS(ctx, client, d.JWKSURI)
+	if err != nil {
+		return DiscoveryDocument{}, JWKS{}, err
+	}
+	return d, j, nil
+}
+
 type TokenResponse struct {
 	IDToken     string `json:"id_token"`
 	AccessToken string `json:"access_token,omitempty"`

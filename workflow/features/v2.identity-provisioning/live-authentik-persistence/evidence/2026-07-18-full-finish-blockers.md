@@ -94,3 +94,20 @@ Remaining work after this slice:
 
 - Run the interactive browser/passkey login against the installed Authentik provider with GMF running and the live client secret supplied outside the repository.
 - Assert live `gophermailforge-admins` group claim mapping to GopherMailForge authorization.
+
+## 2026-07-18 OIDC discovery/JWKS loader progress
+
+Added provider metadata loading to `internal/authn`:
+
+- `FetchDiscovery` retrieves the issuer `.well-known/openid-configuration` document with bounded response size.
+- `FetchJWKS` retrieves and validates a non-empty JWKS with bounded response size.
+- `DiscoverProvider` fetches discovery, validates issuer/code/RS256 support against `OIDCConfig`, then fetches JWKS.
+
+Verification:
+
+- `go test ./internal/authn` includes an `httptest` provider proving discovery/JWKS fetch and validation.
+
+Remaining live wiring:
+
+- Runtime command/config still needs to call `DiscoverProvider` when starting GMF with the installed Authentik issuer.
+- Interactive browser code redemption remains scheduled for manual/passkey verification.
