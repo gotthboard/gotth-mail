@@ -21,6 +21,30 @@ func HandlerWithAdmin(store *admin.Store) http.Handler {
 	return HandlerWithAdminAndIdentity(store, identity.NewService("example.test"), authz.StaticAuthorizer{})
 }
 
+func requireUIActor(w http.ResponseWriter, r *http.Request, ids *identity.Service, az authz.Authorizer, action string, resource authz.Resource) (authz.Actor, bool) {
+	actor, err := ids.AuthenticateBearer(r.Header.Get("Authorization"), "api_token")
+	if err != nil {
+		http.Error(w, "admin bearer token required", http.StatusUnauthorized)
+		return authz.Actor{}, false
+	}
+	if az == nil {
+		az = authz.StaticAuthorizer{}
+	}
+	d, err := az.Decide(r.Context(), actor, authz.Action(action), resource)
+	if err != nil || !d.Allow {
+		http.Error(w, "admin authorization required", http.StatusForbidden)
+		return authz.Actor{}, false
+	}
+	return actor, true
+}
+
+func requireUIAuditActor(w http.ResponseWriter, r *http.Request, ids *identity.Service, az authz.Authorizer, action string, resource authz.Resource) (audit.ActorRef, bool) {
+	actor, ok := requireUIActor(w, r, ids, az, action, resource)
+	if !ok {
+		return audit.ActorRef{}, false
+	}
+	return audit.ActorRef{Type: actor.Type, ID: actor.ID}, true
+}
 func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az authz.Authorizer) http.Handler {
 	if store == nil {
 		store = admin.NewStore()
@@ -47,6 +71,9 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 	mux.HandleFunc("/admin/domains", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
+			if _, ok := requireUIActor(w, r, ids, az, "domain:admin", authz.Resource{Type: "domain", ID: r.FormValue("name")}); !ok {
+				return
+			}
 			err := r.ParseForm()
 			if err == nil {
 				err = store.UpsertDomain(admin.Domain{Name: r.Form.Get("name"), Enabled: r.Form.Get("enabled") == "on", MailHost: r.Form.Get("mail_host"), DKIMSelector: r.Form.Get("dkim_selector")})
@@ -64,6 +91,9 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 			return
 		}
 		_ = r.ParseForm()
+		if _, ok := requireUIActor(w, r, ids, az, "domain:admin", authz.Resource{Type: "domain", ID: r.Form.Get("name")}); !ok {
+			return
+		}
 		_ = store.DeleteDomain(r.Form.Get("name"))
 		renderPage(w, store, ids, "domain deleted", "")
 	})
@@ -71,6 +101,9 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 		switch r.Method {
 		case http.MethodPost:
 			_ = r.ParseForm()
+			if _, ok := requireUIActor(w, r, ids, az, "mailbox:admin", authz.Resource{Type: "mailbox", ID: r.Form.Get("address")}); !ok {
+				return
+			}
 			q, _ := strconv.Atoi(r.Form.Get("quota_mb"))
 			err := store.UpsertUser(admin.User{Address: r.Form.Get("address"), Enabled: r.Form.Get("enabled") == "on", QuotaMB: q})
 			renderPage(w, store, ids, message(err, "user saved"), "")
@@ -86,6 +119,9 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 			return
 		}
 		_ = r.ParseForm()
+		if _, ok := requireUIActor(w, r, ids, az, "mailbox:admin", authz.Resource{Type: "mailbox", ID: r.Form.Get("address")}); !ok {
+			return
+		}
 		_ = store.DeleteUser(r.Form.Get("address"))
 		renderPage(w, store, ids, "user deleted", "")
 	})
@@ -93,6 +129,9 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 		switch r.Method {
 		case http.MethodPost:
 			_ = r.ParseForm()
+			if _, ok := requireUIActor(w, r, ids, az, "alias:admin", authz.Resource{Type: "alias", ID: r.Form.Get("address")}); !ok {
+				return
+			}
 			targets := splitTargets(r.Form.Get("targets"))
 			err := store.UpsertAlias(admin.Alias{Address: r.Form.Get("address"), Enabled: r.Form.Get("enabled") == "on", Targets: targets})
 			renderPage(w, store, ids, message(err, "alias saved"), "")
@@ -108,6 +147,9 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 			return
 		}
 		_ = r.ParseForm()
+		if _, ok := requireUIActor(w, r, ids, az, "alias:admin", authz.Resource{Type: "alias", ID: r.Form.Get("address")}); !ok {
+			return
+		}
 		_ = store.DeleteAlias(r.Form.Get("address"))
 		renderPage(w, store, ids, "alias deleted", "")
 	})
@@ -118,7 +160,11 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 			return
 		}
 		_ = r.ParseForm()
-		m, err := ids.CreateOrReplaceUser(r.Context(), authz.Actor{Type: "local_admin", ID: "ui"}, identity.Mailbox{Email: r.Form.Get("userName"), DisplayName: r.Form.Get("displayName"), Active: true}, r.Form.Get("password"))
+		actor, ok := requireUIActor(w, r, ids, az, "mailbox:provision", authz.Resource{Type: "mailbox", ID: r.Form.Get("userName")})
+		if !ok {
+			return
+		}
+		m, err := ids.CreateOrReplaceUser(r.Context(), actor, identity.Mailbox{Email: r.Form.Get("userName"), DisplayName: r.Form.Get("displayName"), Active: true}, r.Form.Get("password"))
 		renderPage(w, store, ids, message(err, "SCIM test user provisioned: "+m.Email), "")
 	})
 
@@ -128,10 +174,10 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 			return
 		}
 		_ = r.ParseForm()
-		ref := r.Form.Get("artifact_ref")
-		storage := ops.MemoryBackupStorage{Artifacts: map[string]ops.BackupArtifact{ref: {Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}, SchemaVersion: "schema_migrations", ConfigSetID: "ui-config"}}}
-		b := ops.VerifyBackupFromStorage(r.Context(), storage, ref)
-		renderPage(w, store, ids, "backup verification status="+b.Status, "")
+		if _, ok := requireUIAuditActor(w, r, ids, az, "ops:admin", authz.Resource{Type: "ops", ID: "backup"}); !ok {
+			return
+		}
+		renderPage(w, store, ids, "backup verification unavailable: no configured backup storage", "")
 	})
 	mux.HandleFunc("/ops/mailu-preview", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -139,7 +185,11 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 			return
 		}
 		_ = r.ParseForm()
-		p := importStore.Preview(r.Form.Get("source"), audit.ActorRef{Type: "local_admin", ID: "ui"}, time.Now())
+		actor, ok := requireUIAuditActor(w, r, ids, az, "ops:admin", authz.Resource{Type: "ops", ID: "mailu-import"})
+		if !ok {
+			return
+		}
+		p := importStore.Preview(r.Form.Get("source"), actor, time.Now())
 		renderPage(w, store, ids, "mailu preview created: "+p.ID+" hash="+p.Hash+" source_fingerprint="+p.SourceFingerprint, "")
 	})
 	mux.HandleFunc("/ops/bulk-preview", func(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +198,11 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 			return
 		}
 		_ = r.ParseForm()
-		p, err := bulkStore.Preview(r.Form.Get("operation"), splitTargets(r.Form.Get("items")), audit.ActorRef{Type: "local_admin", ID: "ui"}, time.Now())
+		actor, ok := requireUIAuditActor(w, r, ids, az, "ops:admin", authz.Resource{Type: "ops", ID: "bulk"})
+		if !ok {
+			return
+		}
+		p, err := bulkStore.Preview(r.Form.Get("operation"), splitTargets(r.Form.Get("items")), actor, time.Now())
 		renderPage(w, store, ids, message(err, "bulk preview created: "+p.ID+" hash="+p.Hash), "")
 	})
 
@@ -158,8 +212,12 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 			return
 		}
 		_ = r.ParseForm()
+		actor, ok := requireUIAuditActor(w, r, ids, az, "ops:admin", authz.Resource{Type: "ops", ID: "mailu-import"})
+		if !ok {
+			return
+		}
 		verify := daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}}
-		err := importStore.Apply(r.Context(), ids.Audit, audit.ActorRef{Type: "local_admin", ID: "ui"}, r.Form.Get("id"), r.Form.Get("hash"), r.Form.Get("source_fingerprint"), time.Now(), verify)
+		err := importStore.Apply(r.Context(), ids.Audit, actor, r.Form.Get("id"), r.Form.Get("hash"), r.Form.Get("source_fingerprint"), time.Now(), verify)
 		renderPage(w, store, ids, message(err, "mailu import applied"), "")
 	})
 	mux.HandleFunc("/ops/bulk-apply", func(w http.ResponseWriter, r *http.Request) {
@@ -168,14 +226,22 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 			return
 		}
 		_ = r.ParseForm()
-		_, err := bulkStore.Apply(r.Context(), ids.Audit, audit.ActorRef{Type: "local_admin", ID: "ui"}, r.Form.Get("operation"), r.Form.Get("id"), r.Form.Get("confirm"), r.Form.Get("hash"), time.Now())
+		actor, ok := requireUIAuditActor(w, r, ids, az, "ops:admin", authz.Resource{Type: "ops", ID: "bulk"})
+		if !ok {
+			return
+		}
+		_, err := bulkStore.Apply(r.Context(), ids.Audit, actor, r.Form.Get("operation"), r.Form.Get("id"), r.Form.Get("confirm"), r.Form.Get("hash"), time.Now())
 		renderPage(w, store, ids, message(err, "bulk operation applied"), "")
 	})
 	mux.HandleFunc("/identity/app-passwords", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			_ = r.ParseForm()
-			created, err := ids.CreateAppPassword(r.Context(), authz.Actor{Type: "local_admin", ID: "ui"}, r.Form.Get("mailbox"), r.Form.Get("label"))
+			actor, ok := requireUIActor(w, r, ids, az, "mailbox:app_password.create", authz.Resource{Type: "mailbox", ID: r.Form.Get("mailbox")})
+			if !ok {
+				return
+			}
+			created, err := ids.CreateAppPassword(r.Context(), actor, r.Form.Get("mailbox"), r.Form.Get("label"))
 			msg := message(err, "app password created; secret_once="+created.SecretOnce)
 			renderPage(w, store, ids, msg, "")
 		case http.MethodGet:
@@ -190,7 +256,11 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 			return
 		}
 		_ = r.ParseForm()
-		err := ids.RevokeAppPassword(r.Context(), authz.Actor{Type: "local_admin", ID: "ui"}, r.Form.Get("mailbox"), r.Form.Get("token_id"))
+		actor, ok := requireUIActor(w, r, ids, az, "mailbox:app_password.revoke", authz.Resource{Type: "mailbox", ID: r.Form.Get("mailbox")})
+		if !ok {
+			return
+		}
+		err := ids.RevokeAppPassword(r.Context(), actor, r.Form.Get("mailbox"), r.Form.Get("token_id"))
 		renderPage(w, store, ids, message(err, "app password revoked"), "")
 	})
 	mux.HandleFunc("/identity/simulator", func(w http.ResponseWriter, r *http.Request) {

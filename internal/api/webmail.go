@@ -137,7 +137,8 @@ func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
 		if !method(w, r, http.MethodPost) {
 			return
 		}
-		if _, _, ok := require(w, r); !ok {
+		_, mailbox, ok := require(w, r)
+		if !ok {
 			return
 		}
 		if sender == nil {
@@ -147,6 +148,15 @@ func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/webmail/drafts/"), "/submit")
 		if !strings.HasSuffix(r.URL.Path, "/submit") || id == "" {
 			http.NotFound(w, r)
+			return
+		}
+		draft, ok := sender.Draft(id)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		if draft.From != mailbox {
+			http.Error(w, "draft does not belong to authenticated mailbox", http.StatusForbidden)
 			return
 		}
 		d, err := sender.Submit(r.Context(), id)

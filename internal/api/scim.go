@@ -56,7 +56,12 @@ func (s Server) registerIdentityAPI(mux *http.ServeMux, auditLog *audit.MemoryWr
 		}
 		switch {
 		case len(parts) == 2 && r.Method == http.MethodGet:
-			writeJSON(w, ids.ListAppPasswords(mailboxID))
+			apps, err := ids.ListAppPasswordsForActor(r.Context(), actor, mailboxID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
+			writeJSON(w, apps)
 		case len(parts) == 2 && r.Method == http.MethodPost:
 			var in struct {
 				Label string `json:"label"`

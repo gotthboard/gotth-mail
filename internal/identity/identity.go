@@ -218,6 +218,15 @@ func (s *Service) ListAppPasswords(mailboxID string) []AppPassword {
 	}
 	return out
 }
+
+func (s *Service) ListAppPasswordsForActor(ctx context.Context, actor authz.Actor, mailboxID string) ([]AppPassword, error) {
+	if err := s.authorize(ctx, actor, "mailbox:app_password.read", authz.Resource{Type: "mailbox", ID: mailboxID}); err != nil {
+		_ = s.audit(ctx, actor, "app_password.list", mailboxID, "denied", err)
+		return nil, err
+	}
+	return s.ListAppPasswords(mailboxID), nil
+}
+
 func (s *Service) CreateAppPassword(ctx context.Context, actor authz.Actor, mailboxID, label string) (AppPasswordCreated, error) {
 	if label = strings.TrimSpace(label); label == "" {
 		err := errors.New("label required")

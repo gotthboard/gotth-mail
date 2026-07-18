@@ -188,7 +188,23 @@ func (s Server) Handler() http.Handler {
 		if !method(w, r, "GET") {
 			return
 		}
-		writeJSON(w, ops.FilterAudit(auditLog.Events, auditFilter(r)))
+		ids := s.identityService(auditLog)
+		a, err := ids.AuthenticateBearer(r.Header.Get("Authorization"), "api_token")
+		if err != nil {
+			http.Error(w, "admin bearer token required", http.StatusUnauthorized)
+			return
+		}
+		d, err := s.authorizer().Decide(r.Context(), a, "ops:admin", authz.Resource{Type: "ops", ID: "audit"})
+		if err != nil || !d.Allow {
+			http.Error(w, "admin authorization required", http.StatusForbidden)
+			return
+		}
+		events := ops.FilterAudit(auditLog.Events, auditFilter(r))
+		out := make([]any, 0, len(events))
+		for _, e := range events {
+			out = append(out, audit.Redact(e))
+		}
+		writeJSON(w, out)
 	})
 	mux.HandleFunc("/api/v1/plugins", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {

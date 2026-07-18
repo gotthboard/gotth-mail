@@ -21,9 +21,49 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Repair v2-v4 admission blockers in vertical slices
+### 2026-07-18 CDT — Reopen v2-v4 full-finish work and close trust-boundary holes
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/api/scim.go`
+- `internal/api/webmail.go`
+- `internal/httpui/httpui.go`
+- `internal/httpui/httpui_test.go`
+- `internal/identity/identity.go`
+- `internal/store/store.go`
+- `internal/store/store_test.go`
+- `internal/store/sql_test.go`
+- `internal/webmail/webmail.go`
+- `migrations/0001_initial.sql`
+- `workflow.toml`
+- `workflow/COVERAGE.md`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/README.md`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/evidence/2026-07-18-full-finish-blockers.md`
+- `workflow/features/v3.ops-import-admin/production-ops/README.md`
+- `workflow/features/v3.ops-import-admin/production-ops/evidence/2026-07-18-full-finish-blockers.md`
+- `workflow/features/v4.webmail/production-webmail/README.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-full-finish-blockers.md`
+
+Explanation:
+
+Danny rejected "enough" as the quality bar. This change stops representing v2/v3/v4 as fully done while major production integrations remain missing. The workflow root states for v2 identity provisioning, v3 ops/import/admin, and v4 webmail are reopened, the active feature returns to the v2 full-finish work, and explicit finishing features are added for live Authentik/durable persistence, production ops/import/backup/audit/snapshot work, and production webmail.
+
+The patch also closes concrete trust-boundary holes found during full-finish audits. App-password listing now requires scoped mailbox read authorization. The legacy audit event list route now requires ops-admin bearer authorization and redacts events before returning them. Webmail draft submit now checks draft ownership against the authenticated mailbox scope before submission, so a leaked draft ID cannot cross mailbox boundaries. UI mutation routes now require bearer authorization instead of fabricating `local_admin ui`, and the backup verification UI no longer manufactures a fake verified artifact when no backup storage is configured.
+
+Durable schema contracts were added for OIDC login state, sessions, backup artifacts/verifications, snapshots, and mailbox-owned webmail drafts, with embedded Postgres tests proving the tables and key constraints exist. This does not claim that all runtime services are fully wired to durable SQL yet; the blocker evidence states that remaining work explicitly.
+
+Verification:
+
+- Confirmed `go test -count=1 ./internal/api ./internal/httpui ./internal/store ./internal/identity ./internal/webmail ./internal/ops` passes.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Repair v2-v4 admission blockers in vertical slices
+
+Commit: a7225af
 
 Affected files:
 

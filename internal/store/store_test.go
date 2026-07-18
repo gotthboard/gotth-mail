@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMigrationsOnEmptyDB(t *testing.T) {
 	var r Runner
@@ -33,5 +36,21 @@ func TestPluginRegistrationRequiresServiceCredential(t *testing.T) {
 	}
 	if err := ValidatePluginRegistration(true, "plugin_service"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSchemaIncludesDurableV2V3V4State(t *testing.T) {
+	want := []string{"oidc_login_states", "sessions", "backup_artifacts", "backup_verifications", "snapshots", "webmail_drafts"}
+	for _, table := range want {
+		found := false
+		for _, stmt := range InitialSchema {
+			if strings.Contains(stmt, "CREATE TABLE "+table+" ") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing durable table %s", table)
+		}
 	}
 }

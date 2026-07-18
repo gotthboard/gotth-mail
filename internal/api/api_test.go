@@ -58,7 +58,6 @@ plugins:
 		{http.MethodGet, "/api/v1/status"},
 		{http.MethodGet, "/api/v1/config/effective"},
 		{http.MethodPost, "/api/v1/config/render"},
-		{http.MethodGet, "/api/v1/audit/events"},
 		{http.MethodPost, "/api/v1/authz/explain"},
 		{http.MethodGet, "/api/v1/plugins"},
 		{http.MethodGet, "/api/v1/plugins/stub-dns/health"},
@@ -82,6 +81,11 @@ plugins:
 		}
 	}
 	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/audit/events", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth audit events status %d", rr.Code)
+	}
+	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/config/render", nil))
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("method gate status %d", rr.Code)
@@ -210,7 +214,7 @@ func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
 func TestAppPasswordAPICreateListRevokeSecretOnce(t *testing.T) {
 	ids := identity.NewService("example.test")
 	ids.Secret = func() (string, error) { return "one-time-client-secret", nil }
-	if err := ids.AddTokenWithScopes("api-test", "api_token", "api-secret-token", "mailbox:user@example.test:mailbox:app_password.create", "mailbox:user@example.test:mailbox:app_password.revoke"); err != nil {
+	if err := ids.AddTokenWithScopes("api-test", "api_token", "api-secret-token", "mailbox:user@example.test:mailbox:app_password.create", "mailbox:user@example.test:mailbox:app_password.read", "mailbox:user@example.test:mailbox:app_password.revoke"); err != nil {
 		t.Fatal(err)
 	}
 	d := daemon.Service{}
@@ -246,6 +250,11 @@ func TestAppPasswordAPICreateListRevokeSecretOnce(t *testing.T) {
 	h.ServeHTTP(rr, authed(http.MethodGet, "/api/v1/mailboxes/user@example.test/app-passwords", "", "api-secret-token"))
 	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "one-time-client-secret") || strings.Contains(rr.Body.String(), "verifier") {
 		t.Fatalf("list leaked secret/verifier status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodGet, "/api/v1/mailboxes/other@example.test/app-passwords", "", "api-secret-token"))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("cross-mailbox list status=%d body=%s", rr.Code, rr.Body.String())
 	}
 
 	rr = httptest.NewRecorder()
@@ -343,6 +352,26 @@ func TestV3OpsAPIRoutes(t *testing.T) {
 				t.Fatalf("status=%d body=%s want=%s", rr.Code, rr.Body.String(), tc.want)
 			}
 		})
+	}
+}
+
+func TestAuditEventsListRequiresAdminAndRedacts(t *testing.T) {
+	w := &audit.MemoryWriter{}
+	_ = w.Write(nil, audit.Event{ID: "secret-event", Actor: audit.ActorRef{Type: "admin", ID: "a"}, Action: "auth.failure", Resource: audit.ResourceRef{Type: "session", ID: "s"}, Result: "failure", BeforeRedacted: map[string]any{"password": "secret-password"}, AfterRedacted: map[string]any{"token": "secret-token"}})
+	h := v3AdminServer(t, w)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/audit/events", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth audit list status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodGet, "/api/v1/audit/events", ""))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("audit list status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "secret-password") || strings.Contains(body, "secret-token") || !strings.Contains(body, "[REDACTED]") {
+		t.Fatalf("audit list not redacted: %s", body)
 	}
 }
 
@@ -521,5 +550,39 @@ func TestWebmailAPIRoutesRequireAuthAndReachClientSender(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK || !smtp.sent {
 		t.Fatalf("submit status=%d body=%s sent=%v", rr.Code, rr.Body.String(), smtp.sent)
+	}
+}
+
+func TestWebmailDraftSubmitRequiresMailboxOwnership(t *testing.T) {
+	ids := identity.NewService("example.test")
+	if err := ids.AddTokenWithScopes("web-a-token", "api_token", "web-a-secret", "mailbox:a@example.test:webmail:use"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ids.AddTokenWithScopes("web-b-token", "api_token", "web-b-secret", "mailbox:b@example.test:webmail:use"); err != nil {
+		t.Fatal(err)
+	}
+	smtp := &apiFakeSMTP{}
+	sender := &webmail.Sender{Drafts: map[string]webmail.Draft{}, SMTP: smtp, Signer: apiFakeSigner{}, Resolver: apiFakeResolver{}, Audit: &audit.MemoryWriter{}}
+	h := Server{Identity: ids, WebmailClient: &webmail.Client{IMAP: apiFakeIMAP{}}, WebmailSender: sender}.Handler()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webmail/drafts", strings.NewReader(`{"from":"a@example.test","to":"r@example.test","subject":"s","body":"b","signingfingerprint":"fp"}`))
+	req.Header.Set("Authorization", "Bearer web-a-secret")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("draft status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var d webmail.Draft
+	if err := json.Unmarshal(rr.Body.Bytes(), &d); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/webmail/drafts/"+d.ID+"/submit", nil)
+	req.Header.Set("Authorization", "Bearer web-b-secret")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("cross-mailbox submit status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if smtp.sent {
+		t.Fatal("cross-mailbox submit sent message")
 	}
 }

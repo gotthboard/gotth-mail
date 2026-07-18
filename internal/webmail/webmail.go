@@ -181,6 +181,11 @@ func (s *Sender) Reply(orig Message, from, body string) Draft {
 func (s *Sender) Forward(orig Message, from, to string) Draft {
 	return s.SaveDraft(Draft{From: from, To: to, Subject: "Fwd: " + orig.Subject, Body: orig.BodyText, ForwardOf: orig.ID, Attachments: orig.Attachments})
 }
+func (s *Sender) Draft(id string) (Draft, bool) {
+	d, ok := s.Drafts[id]
+	return d, ok
+}
+
 func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 	d, ok := s.Drafts[id]
 	if !ok {

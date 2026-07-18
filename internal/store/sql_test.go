@@ -64,6 +64,18 @@ func TestMigrateSQLOnEmbeddedPostgres(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO plugin_registrations(id, name, seam, image, endpoint, enabled, created_at, updated_at) VALUES ($1,'stub','dns','img','ep',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, "00000000-0000-0000-0000-000000000005"); err == nil {
 		t.Fatal("expected enabled plugin credential constraint")
 	}
+	if _, err := db.Exec(`INSERT INTO oidc_login_states(state_id, nonce, browser_binding_hash, redirect_after_login, created_at, expires_at) VALUES ('s','n','b','/',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions(id, identity_ref_id, csrf_secret_hash, auth_method, created_at, expires_at, last_seen_at) VALUES ('sess','authentik|sub','csrf','oidc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO webmail_drafts(id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, created_at, updated_at) VALUES ('draft-a','user@example.test','to@example.test','s','b','fp','draft',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO webmail_drafts(id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, created_at, updated_at) VALUES ('draft-b','user@example.test','to@example.test','s','b','fp','garbage',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err == nil {
+		t.Fatal("expected draft state check constraint")
+	}
 	aw := audit.SQLWriter{DB: db}
 	if err := aw.Write(context.Background(), audit.Event{Actor: audit.ActorRef{Type: "local_admin", ID: "test"}, Source: &audit.RequestSource{IP: "127.0.0.1", UserAgent: "test-agent"}, Action: "config.apply", Resource: audit.ResourceRef{Type: "generated_config_set", ID: "abc"}, BeforeRedacted: map[string]any{"token": "secret"}, Result: "success"}); err != nil {
 		t.Fatal(err)
