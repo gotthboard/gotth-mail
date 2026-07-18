@@ -748,3 +748,26 @@ func TestV3AuditRoutesUseSQLAuditStoreWhenConfigured(t *testing.T) {
 		t.Fatalf("events=%#v", events)
 	}
 }
+
+func TestV3BackupVerifyRecordsSQLVerificationWhenConfigured(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	ids := identity.NewService("example.test")
+	if err := ids.AddTokenWithScopes("ops-admin", "api_token", "ops-secret-token", "ops:admin"); err != nil {
+		t.Fatal(err)
+	}
+	rt := ops.NewV3Runtime()
+	rt.BackupStore.Artifacts["artifact"] = ops.BackupArtifact{SchemaVersion: "schema_migrations", ConfigSetID: "cfg", Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"user@example.test": {Address: "user@example.test", Enabled: true}}, Aliases: map[string]daemon.Alias{}}
+	h := Server{AuditDB: db, Identity: ids, V3: rt}.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodPost, "/api/v1/backups/verify?artifact_ref=artifact", ""))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "verified") {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	got, ok, err := (ops.SQLBackupVerificationStore{DB: db}).Latest(context.Background(), "artifact")
+	if err != nil || !ok {
+		t.Fatalf("latest ok=%v err=%v", ok, err)
+	}
+	if got.Status != "verified" || got.ConfigSetID != "cfg" {
+		t.Fatalf("latest=%#v", got)
+	}
+}

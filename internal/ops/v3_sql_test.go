@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"forgejo/linus/gophermailforge/internal/audit"
+	"forgejo/linus/gophermailforge/internal/daemon"
 	"forgejo/linus/gophermailforge/internal/store"
 	"forgejo/linus/gophermailforge/internal/testpg"
 )
@@ -78,5 +79,25 @@ func TestSQLAuditStoreRetentionDeletesOnlyExpiredWithAudit(t *testing.T) {
 	}
 	if seenOld || !seenNew || !seenRetention {
 		t.Fatalf("events=%#v", events)
+	}
+}
+
+func TestSQLBackupVerificationStoreRecordsVerifiedBackup(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	storage := MemoryBackupStorage{Artifacts: map[string]BackupArtifact{"artifact": {SchemaVersion: "schema_migrations", ConfigSetID: "cfg", Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"user@example.test": {Address: "user@example.test", Enabled: true}}, Aliases: map[string]daemon.Alias{}}}}
+	st := SQLBackupVerificationStore{DB: db}
+	b, err := st.VerifyAndRecord(context.Background(), storage, "artifact", "plugin-backup", "isolated-test", time.Unix(10, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Status != "verified" || b.SchemaVersion != "schema_migrations" || b.ConfigSetID != "cfg" {
+		t.Fatalf("backup=%#v", b)
+	}
+	got, ok, err := st.Latest(context.Background(), "artifact")
+	if err != nil || !ok {
+		t.Fatalf("latest ok=%v err=%v", ok, err)
+	}
+	if got.Status != "verified" || got.ArtifactRef != "artifact" {
+		t.Fatalf("latest=%#v", got)
 	}
 }

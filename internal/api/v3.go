@@ -158,6 +158,15 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 			_ = json.NewDecoder(r.Body).Decode(&in)
 			ref = in.ArtifactRef
 		}
+		if s.AuditDB != nil {
+			b, err := (ops.SQLBackupVerificationStore{DB: s.AuditDB}).VerifyAndRecord(r.Context(), rt.BackupStore, ref, "configured-backup", "api-verify", time.Now())
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			writeJSON(w, b)
+			return
+		}
 		writeJSON(w, ops.VerifyBackupFromStorage(r.Context(), rt.BackupStore, ref))
 	})
 	mux.HandleFunc("/api/v1/snapshots", func(w http.ResponseWriter, r *http.Request) {

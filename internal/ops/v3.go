@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/csv"
@@ -747,3 +748,82 @@ func scanAuditEvent(row auditScanner) (audit.Event, error) {
 	return e, nil
 }
 func nullAuditString(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
+
+type SQLBackupVerificationStore struct{ DB *sql.DB }
+
+func (s SQLBackupVerificationStore) VerifyAndRecord(ctx context.Context, storage BackupStorage, ref, pluginID, isolatedRestoreRef string, now time.Time) (Backup, error) {
+	if pluginID == "" {
+		pluginID = "configured-backup"
+	}
+	if isolatedRestoreRef == "" {
+		isolatedRestoreRef = "local-contract-restore"
+	}
+	b := VerifyBackupFromStorage(ctx, storage, ref)
+	if b.Status == "failed" && b.SchemaVersion == "" && b.ConfigSetID == "" {
+		return b, nil
+	}
+	artID := newOpsUUID()
+	verID := newOpsUUID()
+	if b.SchemaVersion == "" {
+		b.SchemaVersion = storageSchemaVersion(ctx, storage, ref)
+	}
+	if b.ConfigSetID == "" {
+		b.ConfigSetID = storageConfigSetID(ctx, storage, ref)
+	}
+	failure, _ := json.Marshal(b.FailureReport)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return b, err
+	}
+	defer tx.Rollback()
+	if err := tx.QueryRowContext(ctx, `INSERT INTO backup_artifacts(id, artifact_ref, plugin_id, schema_version, config_set_id, captured_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (artifact_ref) DO UPDATE SET plugin_id=EXCLUDED.plugin_id, schema_version=EXCLUDED.schema_version, config_set_id=EXCLUDED.config_set_id RETURNING id`, artID, ref, pluginID, b.SchemaVersion, b.ConfigSetID, now).Scan(&artID); err != nil {
+		return b, err
+	}
+	var verifiedAt any
+	if b.Status == "verified" {
+		verifiedAt = b.VerifiedAt
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_verifications(id, artifact_id, status, isolated_restore_ref, failure_report_json, verified_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, verID, artID, b.Status, isolatedRestoreRef, string(failure), verifiedAt, now); err != nil {
+		return b, err
+	}
+	return b, tx.Commit()
+}
+
+func (s SQLBackupVerificationStore) Latest(ctx context.Context, artifactRef string) (Backup, bool, error) {
+	row := s.DB.QueryRowContext(ctx, `SELECT v.id, v.status, a.artifact_ref, a.schema_version, a.config_set_id, coalesce(v.failure_report_json,'{}'), coalesce(v.verified_at, timestamp '0001-01-01'), v.created_at FROM backup_verifications v JOIN backup_artifacts a ON a.id=v.artifact_id WHERE a.artifact_ref=$1 ORDER BY v.created_at DESC, v.id DESC LIMIT 1`, artifactRef)
+	var b Backup
+	var failure string
+	if err := row.Scan(&b.ID, &b.Status, &b.ArtifactRef, &b.SchemaVersion, &b.ConfigSetID, &failure, &b.VerifiedAt, &b.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Backup{}, false, nil
+		}
+		return Backup{}, false, err
+	}
+	_ = json.Unmarshal([]byte(failure), &b.FailureReport)
+	return b, true, nil
+}
+
+func storageSchemaVersion(ctx context.Context, storage BackupStorage, ref string) string {
+	a, err := storage.ReadBackup(ctx, ref)
+	if err != nil {
+		return ""
+	}
+	return a.SchemaVersion
+}
+func storageConfigSetID(ctx context.Context, storage BackupStorage, ref string) string {
+	a, err := storage.ReadBackup(ctx, ref)
+	if err != nil {
+		return ""
+	}
+	return a.ConfigSetID
+}
+func newOpsUUID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "00000000-0000-4000-8000-000000000000"
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	s := hex.EncodeToString(b[:])
+	return s[0:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:32]
+}

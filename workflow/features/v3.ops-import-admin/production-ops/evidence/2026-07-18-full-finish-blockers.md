@@ -35,3 +35,22 @@ Remaining v3 work after this slice:
 - live-compatible Mailu import/parser/plugin path
 - canonical bulk mutations against durable domain/mailbox/alias storage
 - persisted snapshots linked to verified backup state
+
+
+## 2026-07-18 durable backup verification record progress
+
+Closed the disposable-JSON backup verification record seam for configured SQL deployments:
+
+- Added `ops.SQLBackupVerificationStore`.
+- Successful verification records/upserts `backup_artifacts` metadata and inserts `backup_verifications` rows.
+- `/api/v1/backups/verify` records SQL verification state when `api.Server.AuditDB` is configured.
+- Latest verification lookup is covered for persisted rows.
+
+Important limit:
+
+- This does **not** claim a real isolated restore engine. `VerifyBackupFromStorage` still uses the current in-process contract restore model. The remaining v3 blocker for a true isolated restore remains open.
+
+Verification:
+
+- `go test -count=1 ./internal/ops` covers persisted backup artifact/verification records.
+- `go test -count=1 ./internal/api` covers authenticated API backup verification writing SQL verification state.

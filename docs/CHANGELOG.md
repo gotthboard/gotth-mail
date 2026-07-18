@@ -21,9 +21,35 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Add SQL-backed v3 audit query and retention
+### 2026-07-18 CDT — Persist v3 backup verification records
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/ops/v3.go`
+- `internal/ops/v3_sql_test.go`
+- `internal/api/v3.go`
+- `internal/api/api_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v3.ops-import-admin/production-ops/evidence/2026-07-18-full-finish-blockers.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added durable SQL records for v3 backup verification. `ops.SQLBackupVerificationStore` records/upserts `backup_artifacts`, inserts `backup_verifications`, and can load the latest verification by artifact reference. The authenticated `/api/v1/backups/verify` route records SQL verification state when a DB is configured.
+
+This fixes the disposable verification-record seam. It does not claim the remaining isolated-restore blocker is solved; the current restore verification mechanism is still the in-process contract model.
+
+Verification:
+
+- Confirmed `go test -count=1 ./internal/ops` passes with SQL artifact/verification persistence coverage.
+- Confirmed `go test -count=1 ./internal/api` passes with API route SQL verification coverage.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Add SQL-backed v3 audit query and retention
+
+Commit: 55d41a5
 
 Affected files:
 
