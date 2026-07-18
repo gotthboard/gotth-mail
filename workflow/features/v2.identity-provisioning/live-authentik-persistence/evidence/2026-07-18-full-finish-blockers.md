@@ -76,3 +76,21 @@ Remaining v2 work after this slice:
 - Live Authentik group claim mapping assertion.
 - SCIM client compatibility against installed Authentik SCIM, not only service/API fixtures.
 - Password verifier compatibility decision beyond PBKDF2-only local support.
+
+## 2026-07-18 browser-shaped OIDC route progress
+
+Repaired the GopherMailForge OIDC API route shape so the installed Authentik browser/passkey flow can actually complete through a browser:
+
+- `/api/v1/oidc/login?mode=redirect` now creates a browser-binding cookie and redirects to the provider authorization endpoint.
+- `/api/v1/oidc/callback` now accepts browser GET callbacks with query `state`/`code`, reads the binding cookie, exchanges the code through the configured exchanger, validates the ID token, sets `gmf_session`, clears the binding cookie, and redirects to the stored post-login target.
+- JSON/header-based callback behavior remains available for API tests.
+- `api.Server` now accepts an OIDC code exchanger seam so live/runtime wiring can supply the installed Authentik token endpoint/client secret without accepting caller-supplied ID tokens.
+
+Verification:
+
+- `go test ./internal/api` includes a signed-token regression proving redirect login + GET callback + session cookie + redirect-after-login behavior.
+
+Remaining work after this slice:
+
+- Run the interactive browser/passkey login against the installed Authentik provider with GMF running and the live client secret supplied outside the repository.
+- Assert live `gophermailforge-admins` group claim mapping to GopherMailForge authorization.

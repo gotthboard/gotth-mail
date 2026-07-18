@@ -167,8 +167,9 @@ type CodeExchanger interface {
 type HTTPCodeExchanger struct{ Client *http.Client }
 
 type CallbackResult struct {
-	Identity Identity
-	Session  Session
+	Identity           Identity
+	Session            Session
+	RedirectAfterLogin string
 }
 
 func StartLogin(cfg OIDCConfig, store StateStore, authorizeEndpoint, browserBindingHash, redirectAfter string, ttl time.Duration) (LoginStart, error) {
@@ -254,7 +255,7 @@ func CompleteCallback(ctx context.Context, cfg OIDCConfig, store StateStore, in 
 	if err := store.putSession(sess); err != nil {
 		return CallbackResult{}, err
 	}
-	return CallbackResult{Identity: identity, Session: sess}, nil
+	return CallbackResult{Identity: identity, Session: sess, RedirectAfterLogin: st.RedirectAfterLogin}, nil
 }
 
 func (h HTTPCodeExchanger) ExchangeCode(ctx context.Context, req TokenRequest) (TokenResponse, error) {
@@ -436,6 +437,10 @@ func randomToken(n int) (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
+func NewBrowserBinding() (string, error) {
+	return randomToken(32)
+}
+
 func hashText(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return base64.RawURLEncoding.EncodeToString(h[:])

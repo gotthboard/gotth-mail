@@ -2,14 +2,23 @@ package api
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"forgejo/linus/gophermailforge/internal/audit"
+	"forgejo/linus/gophermailforge/internal/authn"
 	"forgejo/linus/gophermailforge/internal/authz"
 	"forgejo/linus/gophermailforge/internal/config"
 	"forgejo/linus/gophermailforge/internal/daemon"
@@ -90,6 +99,95 @@ plugins:
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("method gate status %d", rr.Code)
 	}
+}
+
+type apiOIDCExchange struct{ token string }
+
+func (f apiOIDCExchange) ExchangeCode(ctx context.Context, req authn.TokenRequest) (authn.TokenResponse, error) {
+	return authn.TokenResponse{IDToken: f.token, TokenType: "Bearer"}, nil
+}
+
+func TestOIDCBrowserRedirectLoginAndGETCallback(t *testing.T) {
+	key, jwks := apiJWKS(t, "kid1")
+	now := time.Unix(1234, 0).UTC()
+	cfg := authn.OIDCConfig{Issuer: "https://auth.example.test/application/o/gmf/", ClientID: "gmf", RedirectURI: "http://127.0.0.1:18080/api/v1/oidc/callback", TokenEndpoint: "https://auth.example.test/token", ClockSkew: time.Minute, Now: func() time.Time { return now }}
+	store := authn.NewStore()
+	h := Server{OIDCConfig: cfg, OIDCStore: store, OIDCAuthorizeEndpoint: "https://auth.example.test/application/o/authorize/", OIDCJWKS: jwks}.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/oidc/login?mode=redirect&redirect=/done", nil))
+	if rr.Code != http.StatusFound {
+		t.Fatalf("login status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	binding := ""
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "gmf_oidc_binding" {
+			binding = c.Value
+		}
+	}
+	if binding == "" {
+		t.Fatal("missing browser binding cookie")
+	}
+	loc := rr.Header().Get("Location")
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := u.Query().Get("state")
+	nonce := u.Query().Get("nonce")
+	if state == "" || nonce == "" || u.Query().Get("redirect_uri") != cfg.RedirectURI {
+		t.Fatalf("bad authorize redirect %s", loc)
+	}
+	tok := apiSignToken(t, key, "kid1", map[string]any{"iss": cfg.Issuer, "sub": "user-123", "aud": []string{cfg.ClientID}, "azp": cfg.ClientID, "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "nbf": now.Add(-time.Second).Unix(), "nonce": nonce, "email": "alice@example.test", "name": "Alice"})
+	h = Server{OIDCConfig: cfg, OIDCStore: store, OIDCAuthorizeEndpoint: "https://auth.example.test/application/o/authorize/", OIDCJWKS: jwks, OIDCExchanger: apiOIDCExchange{token: tok}}.Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/oidc/callback?state="+url.QueryEscape(state)+"&code=auth-code", nil)
+	req.AddCookie(&http.Cookie{Name: "gmf_oidc_binding", Value: binding})
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/done" {
+		t.Fatalf("callback status=%d location=%q body=%s", rr.Code, rr.Header().Get("Location"), rr.Body.String())
+	}
+	gotSession := false
+	clearedBinding := false
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "gmf_session" && c.Value != "" {
+			gotSession = true
+		}
+		if c.Name == "gmf_oidc_binding" && c.MaxAge < 0 {
+			clearedBinding = true
+		}
+	}
+	if !gotSession || !clearedBinding {
+		t.Fatalf("cookies=%#v", rr.Result().Cookies())
+	}
+}
+
+func apiJWKS(t *testing.T, kid string) (*rsa.PrivateKey, authn.JWKS) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := big.NewInt(int64(key.PublicKey.E)).Bytes()
+	return key, authn.JWKS{Keys: []authn.JWK{{Kty: "RSA", Kid: kid, Alg: "RS256", Use: "sig", N: base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()), E: base64.RawURLEncoding.EncodeToString(e)}}}
+}
+func apiSignToken(t *testing.T, key *rsa.PrivateKey, kid string, claims map[string]any) string {
+	t.Helper()
+	h := apiEncJSON(t, map[string]any{"alg": "RS256", "kid": kid, "typ": "JWT"})
+	c := apiEncJSON(t, claims)
+	d := sha256.Sum256([]byte(h + "." + c))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, d[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h + "." + c + "." + base64.RawURLEncoding.EncodeToString(sig)
+}
+func apiEncJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func TestOIDCLoginRouteRequiresBrowserBinding(t *testing.T) {

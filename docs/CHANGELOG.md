@@ -21,9 +21,33 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Add SQL-backed identity and app-password persistence
+### 2026-07-18 CDT — Add browser-shaped OIDC callback flow
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/authn/oidc.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/evidence/2026-07-18-full-finish-blockers.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Repaired the OIDC route shape so a real browser/passkey authorization-code flow can complete through GopherMailForge. `/api/v1/oidc/login?mode=redirect` now issues a browser-binding cookie and redirects to the provider authorization endpoint. `/api/v1/oidc/callback` now accepts browser GET callbacks with query `state`/`code`, validates the binding cookie, exchanges the code through the configured exchanger, validates the ID token, sets the `gmf_session` cookie, clears the binding cookie, and redirects to the stored post-login target. The existing JSON/header callback path remains for API clients/tests.
+
+Added an OIDC exchanger seam on `api.Server` so live runtime wiring can use the installed Authentik token endpoint/client secret without accepting caller-supplied ID tokens. Added a signed-token API regression proving redirect login, callback, session cookie, binding-cookie clearing, and redirect-after-login behavior.
+
+Verification:
+
+- Confirmed `go test ./internal/api` passes with browser-shaped OIDC callback coverage.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Add SQL-backed identity and app-password persistence
+
+Commit: 17f6bb3
 
 Affected files:
 

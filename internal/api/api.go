@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -35,6 +36,7 @@ type Server struct {
 	OIDCStore             authn.StateStore
 	OIDCAuthorizeEndpoint string
 	OIDCJWKS              authn.JWKS
+	OIDCExchanger         authn.CodeExchanger
 	Identity              *identity.Service
 	V3                    *ops.V3Runtime
 	WebmailClient         *webmail.Client
@@ -74,6 +76,16 @@ func (s Server) Handler() http.Handler {
 			s.OIDCStore = store
 		}
 		browser := r.Header.Get("X-GMF-Browser-Binding")
+		redirectMode := r.URL.Query().Get("mode") == "redirect"
+		if browser == "" && redirectMode {
+			var err error
+			browser, err = authn.NewBrowserBinding()
+			if err != nil {
+				http.Error(w, authn.SafeOIDCError(err), http.StatusBadRequest)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "gmf_oidc_binding", Value: browser, Path: "/api/v1/oidc", HttpOnly: true, Secure: secureCookieFor(s.OIDCConfig.RedirectURI), SameSite: http.SameSiteLaxMode, Expires: time.Now().Add(10 * time.Minute)})
+		}
 		if browser == "" {
 			http.Error(w, "browser binding required", http.StatusBadRequest)
 			return
@@ -83,12 +95,13 @@ func (s Server) Handler() http.Handler {
 			http.Error(w, authn.SafeOIDCError(err), http.StatusBadRequest)
 			return
 		}
+		if redirectMode {
+			http.Redirect(w, r, start.URL, http.StatusFound)
+			return
+		}
 		writeJSON(w, start)
 	})
 	mux.HandleFunc("/api/v1/oidc/callback", func(w http.ResponseWriter, r *http.Request) {
-		if !method(w, r, "POST") {
-			return
-		}
 		store := s.OIDCStore
 		if store == nil {
 			http.Error(w, "oidc state store unavailable", http.StatusBadRequest)
@@ -99,16 +112,43 @@ func (s Server) Handler() http.Handler {
 			Code        string `json:"code"`
 			RedirectURI string `json:"redirect_uri"`
 		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
-			http.Error(w, "bad oidc callback", http.StatusBadRequest)
+		browserBinding := r.Header.Get("X-GMF-Browser-Binding")
+		browserCallback := r.Method == http.MethodGet
+		switch r.Method {
+		case http.MethodPost:
+			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
+				http.Error(w, "bad oidc callback", http.StatusBadRequest)
+				return
+			}
+		case http.MethodGet:
+			c, err := r.Cookie("gmf_oidc_binding")
+			if err != nil || c.Value == "" {
+				http.Error(w, "oidc browser binding required", http.StatusBadRequest)
+				return
+			}
+			browserBinding = c.Value
+			in.State = r.URL.Query().Get("state")
+			in.Code = r.URL.Query().Get("code")
+			in.RedirectURI = s.OIDCConfig.RedirectURI
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		res, err := authn.CompleteCallback(r.Context(), s.OIDCConfig, store, authn.CallbackInput{StateID: in.State, BrowserBindingHash: r.Header.Get("X-GMF-Browser-Binding"), RedirectURI: in.RedirectURI, Code: in.Code, JWKS: s.OIDCJWKS})
+		res, err := authn.CompleteCallback(r.Context(), s.OIDCConfig, store, authn.CallbackInput{StateID: in.State, BrowserBindingHash: browserBinding, RedirectURI: in.RedirectURI, Code: in.Code, JWKS: s.OIDCJWKS, Exchanger: s.OIDCExchanger})
 		if err != nil {
 			http.Error(w, authn.SafeOIDCError(err), http.StatusBadRequest)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: "gmf_session", Value: res.Session.ID, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, Expires: res.Session.ExpiresAt})
+		http.SetCookie(w, &http.Cookie{Name: "gmf_session", Value: res.Session.ID, Path: "/", HttpOnly: true, Secure: secureCookieFor(s.OIDCConfig.RedirectURI), SameSite: http.SameSiteStrictMode, Expires: res.Session.ExpiresAt})
+		if browserCallback {
+			http.SetCookie(w, &http.Cookie{Name: "gmf_oidc_binding", Value: "", Path: "/api/v1/oidc", HttpOnly: true, Secure: secureCookieFor(s.OIDCConfig.RedirectURI), SameSite: http.SameSiteLaxMode, MaxAge: -1})
+			target := res.RedirectAfterLogin
+			if target == "" {
+				target = "/"
+			}
+			http.Redirect(w, r, target, http.StatusSeeOther)
+			return
+		}
 		writeJSON(w, map[string]any{"identity": res.Identity, "session": map[string]any{"expires_at": res.Session.ExpiresAt, "auth_method": res.Session.AuthMethod}})
 	})
 	identitySvc := s.identityService(auditLog)
@@ -300,3 +340,8 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 func writeText(w http.ResponseWriter, s string) bool { _, _ = w.Write([]byte(s)); return true }
+
+func secureCookieFor(rawurl string) bool {
+	u, err := url.Parse(rawurl)
+	return err != nil || u.Scheme != "http"
+}
