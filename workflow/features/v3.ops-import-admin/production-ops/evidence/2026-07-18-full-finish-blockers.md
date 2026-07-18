@@ -1,6 +1,6 @@
 # v3 full-finish blockers
 
-Status: planned/incomplete after full-finish audit.
+Status: in_progress/incomplete after full-finish audit and v2 interactive blocker.
 
 Required before v3 can honestly return to done:
 

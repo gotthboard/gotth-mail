@@ -18,7 +18,7 @@ Implemented a real `authn.StateStore` interface with both memory and SQL-backed 
 
 Verification:
 
-- `go test ./internal/authn` passed with embedded Postgres SQL-store coverage.
+- `go test ./internal/authn` passed with SQL-store coverage; later harness repair moved this to local Postgres via `internal/testpg`.
 - `go test ./internal/api ./internal/authn` passed after API store-interface wiring.
 
 Remaining v2 work after this slice:
@@ -67,7 +67,7 @@ Implemented SQL-backed persistence for the v2 identity service:
 
 Verification:
 
-- `go test ./internal/identity` includes an embedded Postgres restart test proving: provisioned mailbox reload, mailbox password still verifies, app password still verifies after fresh service load, API token scopes reload, and revoked app password remains revoked across another reload.
+- `go test ./internal/identity` includes a local-Postgres restart test via `internal/testpg` proving: provisioned mailbox reload, mailbox password still verifies, app password still verifies after fresh service load, API token scopes reload, and revoked app password remains revoked across another reload.
 
 Remaining v2 work after this slice:
 
@@ -202,3 +202,30 @@ Verification:
 - `go test -count=1 ./internal/authn ./internal/identity ./internal/store` passed.
 - `git diff --check -- .` passed.
 - `go test -count=1 ./...` passed after the harness repair.
+
+## 2026-07-18 v2 local-work blocker
+
+Status after completed local slices: blocked on interactive/live proof, not done.
+
+Completed local slices in this child include:
+
+- SQL-backed OIDC state/session persistence.
+- SQL-backed mailbox, mailbox-password, API-token, app-password, and revocation persistence.
+- Browser-shaped OIDC login/callback route support.
+- OIDC discovery/JWKS loader.
+- Runtime Authentik environment discovery wiring.
+- Live runtime authorize redirect smoke against installed Authentik.
+- Honest PBKDF2-only Authentik/Django password verifier contract.
+- OIDC group-claim preservation and `gophermailforge-admins` authorization mapping regression.
+- Stable local-Postgres SQL test harness.
+
+Real blocker:
+
+- Final live browser/passkey authorization-code redemption requires an interactive browser session for user `Dan` and the live Authentik client secret supplied at runtime.
+- The remaining proof must confirm callback code redemption, ID-token validation, `gmf_session` cookie issuance, and live `gophermailforge-admins` group claim mapping.
+
+Workflow decision:
+
+- Do not mark v2 or this child done.
+- Leave the v2 child `in_progress` with this blocker evidence.
+- Advance active work to `v3.ops-import-admin.production-ops` so local v3 repairs can continue while the v2 interactive proof waits.

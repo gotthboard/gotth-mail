@@ -21,9 +21,31 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Replace flaky embedded Postgres test dependency
+### 2026-07-18 CDT — Record v2 interactive blocker and advance active work to v3
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `workflow.toml`
+- `workflow/features/v2.identity-provisioning/live-authentik-persistence/evidence/2026-07-18-full-finish-blockers.md`
+- `workflow/features/v3.ops-import-admin/production-ops/evidence/2026-07-18-full-finish-blockers.md`
+- `workflow/COVERAGE.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Recorded the remaining v2 blocker honestly: final browser/passkey authorization-code redemption and live `gophermailforge-admins` group assertion require an interactive browser session and the live Authentik client secret at runtime. The v2 production child remains `in_progress`; it is not marked done.
+
+Advanced `active_feature` to `v3.ops-import-admin.production-ops` and changed that child to `in_progress` so local v3 repairs can continue while the v2 interactive proof waits.
+
+Verification:
+
+- Confirmed `git diff --check -- .` passes for the workflow/evidence update.
+
+### 2026-07-18 CDT — Replace flaky embedded Postgres test dependency
+
+Commit: 7c098b8
 
 Affected files:
 
@@ -49,7 +71,7 @@ Verification:
 
 ### 2026-07-18 CDT — Preserve OIDC group claims for Authentik role mapping
 
-Commit: current commit; hash assigned by Git after commit
+Commit: 7c098b8
 
 Affected files:
 

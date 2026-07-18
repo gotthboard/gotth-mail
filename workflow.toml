@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GopherMailForge"
 profile = "medium"
-active_feature = "v2.identity-provisioning.live-authentik-persistence"
+active_feature = "v3.ops-import-admin.production-ops"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -373,7 +373,7 @@ verification = ["live Authentik authorization-code smoke", "durable OIDC state/s
 id = "v3.ops-import-admin.production-ops"
 root = "v3.ops-import-admin"
 title = "Production backup restore, Mailu import, audit durability, canonical bulk and snapshots"
-state = "planned"
+state = "in_progress"
 path = "workflow/features/v3.ops-import-admin/production-ops"
 source_path = "internal/ops"
 branch = "workflow/feature/v3.ops-import-admin.production-ops"
