@@ -23,7 +23,7 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ### 2026-07-18 CDT — Persist v3 backup verification records
 
-Commit: current commit; hash assigned by Git after commit
+Commit: 88355de
 
 Affected files:
 
