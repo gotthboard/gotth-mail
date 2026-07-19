@@ -11,7 +11,7 @@ Custom webmail must remain separate from the control-plane product and must not 
 
 ## Deployment
 
-Custom webmail runs as a separate containerized webmail provider implementation. It may use a plugin seam for provider registration/status, but it must not receive authority over core policy.
+Custom webmail runs as a containerized webmail provider implementation and now exposes a minimal GopherMailForge-owned `/webmail` shell from the API container for reachability proof. Roundcube remains the external provider reference, not the custom UI. The custom shell may use a plugin seam for provider registration/status, but it must not receive authority over core policy.
 
 Control-plane mutations initiated from webmail must call core service/auth/audit paths.
 
@@ -26,7 +26,7 @@ Required capabilities:
 - quota display
 - safe MIME parsing foundation
 
-IMAP connection configuration is derived from core state/config. The webmail client does not read mailbox files directly and does not replace Dovecot.
+IMAP connection configuration is derived from core state/config. The production transport adapter is `webmail.NetIMAPClient`, which talks TCP IMAP to Dovecot for folder/list/search/read operations. The webmail client does not read mailbox files directly and does not replace Dovecot.
 
 Message list response shape:
 
@@ -49,7 +49,7 @@ Message list response shape:
 
 ## Compose/send
 
-Sending uses SMTP submission.
+Sending uses SMTP submission. The production transport adapter is `webmail.NetSMTPSubmitter`, which submits already-built/already-signed MIME bytes over TCP SMTP; signing, sender identity binding, and policy remain in `webmail.Sender`, not in the transport adapter.
 
 State machine:
 
@@ -66,6 +66,8 @@ Features:
 - reply/forward
 - send failure reporting
 - honest app-password/session boundary
+
+Configured SQL draft storage persists mailbox ownership, submit state, reply/forward linkage, and attachment metadata/content. Draft creation at the API boundary ignores caller-supplied draft IDs and binds ownership to the authenticated mailbox; SQL updates refuse cross-mailbox overwrites.
 
 Web session identity may authorize webmail access, but SMTP submission must use the configured submission path and must not pretend OIDC is an SMTP protocol.
 
@@ -86,14 +88,16 @@ HTML email is hostile input.
 
 Renderer requirements:
 
-- sanitize HTML before rendering
+- v4 rendering decision: HTML email is rendered as conservative escaped text, not rich HTML, until a real parser-backed allowlist renderer and browser proof are admitted
 - no unsafe HTML bypass
 - baseline CSP: `default-src 'none'; img-src 'self' data:; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`
-- remote image policy enforced by default; remote images require explicit user action or configured proxy policy
+- remote image policy enforced by default; remote URLs are removed/blocked by the text-only render boundary
 - attachment content type and disposition rules
-- MIME edge-case tests
+- MIME edge-case tests using hostile raw message fixtures
 - no script execution from message content
-- safe URL handling with an allowlist for `http`, `https`, and `mailto`
+- safe URL handling must be reviewed again before any future rich-HTML renderer is admitted
+
+Raw MIME parsing is handled by `webmail.ParseRawMessage`, which bounds message size, multipart nesting, part count, and per-part content size; decodes base64 and quoted-printable parts; extracts plain text, HTML-as-data, and attachments; and fails closed on malformed multipart boundaries.
 
 Attachment handling:
 
@@ -111,6 +115,7 @@ If webmail exposes actions such as aliases, identities, forwarding, sieve/rules,
 Required tests:
 
 - external webmail remains usable until custom webmail is production-ready
+- custom `/webmail` shell is reachable from the repo-owned Compose `test-runner`
 - folder/message reads through IMAP with pagination/windowing
 - quota display uses Dovecot/core contract
 - compose/draft/submit/reply/forward flows
@@ -130,7 +135,7 @@ Required tests:
 
 Implementation must conform to [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md). Search/audit behavior related to exact sender identity must conform to [Operational Identity History and Audit Indexing for Exact Sender Binding](../reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md).
 
-Compose/send flows must OpenPGP-sign every outbound email with the sending user's configured signing identity. The UI may expose identity/signature state, but it may not offer a bypass that sends unsigned mail.
+Compose/send flows must OpenPGP-sign every outbound email with the sending user's configured signing identity. The implemented `OpenPGPMIMESigner` emits `multipart/signed` with `protocol="application/pgp-signature"` and `micalg=pgp-sha256` using the maintained ProtonMail OpenPGP fork. The implemented verifier checks the detached signature, visible outer From, signed sender-binding assertion, and expected fingerprint before accepting exact sender proof. The UI may expose identity/signature state, but it may not offer a bypass that sends unsigned mail.
 
 Required behavior:
 
@@ -139,6 +144,7 @@ Required behavior:
 - signatures use OpenPGP/MIME for MIME messages rather than ad-hoc headers;
 - canonicalization and signed header/body coverage are specified and tested;
 - DKIM signing remains domain-level proof and does not replace exact-user OpenPGP signatures.
+- production key storage/unlock lifecycle is deployment-specific, but the core sender path fails closed when signing or exact-sender validation cannot complete.
 
 
 The signature requirement is not merely provenance for a domain or server. Verification must answer exactly which configured user identity signed the message. If the signer cannot be mapped to the asserted From/Sender identity and active user/key binding, the message is treated as unsigned/invalid.

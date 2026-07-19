@@ -1,0 +1,427 @@
+From: Attacker <evil@example.test>
+To: Victim <user@example.test>
+Subject: part flood
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="flood"
+
+--flood
+Content-Type: text/plain
+
+part 0
+--flood
+Content-Type: text/plain
+
+part 1
+--flood
+Content-Type: text/plain
+
+part 2
+--flood
+Content-Type: text/plain
+
+part 3
+--flood
+Content-Type: text/plain
+
+part 4
+--flood
+Content-Type: text/plain
+
+part 5
+--flood
+Content-Type: text/plain
+
+part 6
+--flood
+Content-Type: text/plain
+
+part 7
+--flood
+Content-Type: text/plain
+
+part 8
+--flood
+Content-Type: text/plain
+
+part 9
+--flood
+Content-Type: text/plain
+
+part 10
+--flood
+Content-Type: text/plain
+
+part 11
+--flood
+Content-Type: text/plain
+
+part 12
+--flood
+Content-Type: text/plain
+
+part 13
+--flood
+Content-Type: text/plain
+
+part 14
+--flood
+Content-Type: text/plain
+
+part 15
+--flood
+Content-Type: text/plain
+
+part 16
+--flood
+Content-Type: text/plain
+
+part 17
+--flood
+Content-Type: text/plain
+
+part 18
+--flood
+Content-Type: text/plain
+
+part 19
+--flood
+Content-Type: text/plain
+
+part 20
+--flood
+Content-Type: text/plain
+
+part 21
+--flood
+Content-Type: text/plain
+
+part 22
+--flood
+Content-Type: text/plain
+
+part 23
+--flood
+Content-Type: text/plain
+
+part 24
+--flood
+Content-Type: text/plain
+
+part 25
+--flood
+Content-Type: text/plain
+
+part 26
+--flood
+Content-Type: text/plain
+
+part 27
+--flood
+Content-Type: text/plain
+
+part 28
+--flood
+Content-Type: text/plain
+
+part 29
+--flood
+Content-Type: text/plain
+
+part 30
+--flood
+Content-Type: text/plain
+
+part 31
+--flood
+Content-Type: text/plain
+
+part 32
+--flood
+Content-Type: text/plain
+
+part 33
+--flood
+Content-Type: text/plain
+
+part 34
+--flood
+Content-Type: text/plain
+
+part 35
+--flood
+Content-Type: text/plain
+
+part 36
+--flood
+Content-Type: text/plain
+
+part 37
+--flood
+Content-Type: text/plain
+
+part 38
+--flood
+Content-Type: text/plain
+
+part 39
+--flood
+Content-Type: text/plain
+
+part 40
+--flood
+Content-Type: text/plain
+
+part 41
+--flood
+Content-Type: text/plain
+
+part 42
+--flood
+Content-Type: text/plain
+
+part 43
+--flood
+Content-Type: text/plain
+
+part 44
+--flood
+Content-Type: text/plain
+
+part 45
+--flood
+Content-Type: text/plain
+
+part 46
+--flood
+Content-Type: text/plain
+
+part 47
+--flood
+Content-Type: text/plain
+
+part 48
+--flood
+Content-Type: text/plain
+
+part 49
+--flood
+Content-Type: text/plain
+
+part 50
+--flood
+Content-Type: text/plain
+
+part 51
+--flood
+Content-Type: text/plain
+
+part 52
+--flood
+Content-Type: text/plain
+
+part 53
+--flood
+Content-Type: text/plain
+
+part 54
+--flood
+Content-Type: text/plain
+
+part 55
+--flood
+Content-Type: text/plain
+
+part 56
+--flood
+Content-Type: text/plain
+
+part 57
+--flood
+Content-Type: text/plain
+
+part 58
+--flood
+Content-Type: text/plain
+
+part 59
+--flood
+Content-Type: text/plain
+
+part 60
+--flood
+Content-Type: text/plain
+
+part 61
+--flood
+Content-Type: text/plain
+
+part 62
+--flood
+Content-Type: text/plain
+
+part 63
+--flood
+Content-Type: text/plain
+
+part 64
+--flood
+Content-Type: text/plain
+
+part 65
+--flood
+Content-Type: text/plain
+
+part 66
+--flood
+Content-Type: text/plain
+
+part 67
+--flood
+Content-Type: text/plain
+
+part 68
+--flood
+Content-Type: text/plain
+
+part 69
+--flood
+Content-Type: text/plain
+
+part 70
+--flood
+Content-Type: text/plain
+
+part 71
+--flood
+Content-Type: text/plain
+
+part 72
+--flood
+Content-Type: text/plain
+
+part 73
+--flood
+Content-Type: text/plain
+
+part 74
+--flood
+Content-Type: text/plain
+
+part 75
+--flood
+Content-Type: text/plain
+
+part 76
+--flood
+Content-Type: text/plain
+
+part 77
+--flood
+Content-Type: text/plain
+
+part 78
+--flood
+Content-Type: text/plain
+
+part 79
+--flood
+Content-Type: text/plain
+
+part 80
+--flood
+Content-Type: text/plain
+
+part 81
+--flood
+Content-Type: text/plain
+
+part 82
+--flood
+Content-Type: text/plain
+
+part 83
+--flood
+Content-Type: text/plain
+
+part 84
+--flood
+Content-Type: text/plain
+
+part 85
+--flood
+Content-Type: text/plain
+
+part 86
+--flood
+Content-Type: text/plain
+
+part 87
+--flood
+Content-Type: text/plain
+
+part 88
+--flood
+Content-Type: text/plain
+
+part 89
+--flood
+Content-Type: text/plain
+
+part 90
+--flood
+Content-Type: text/plain
+
+part 91
+--flood
+Content-Type: text/plain
+
+part 92
+--flood
+Content-Type: text/plain
+
+part 93
+--flood
+Content-Type: text/plain
+
+part 94
+--flood
+Content-Type: text/plain
+
+part 95
+--flood
+Content-Type: text/plain
+
+part 96
+--flood
+Content-Type: text/plain
+
+part 97
+--flood
+Content-Type: text/plain
+
+part 98
+--flood
+Content-Type: text/plain
+
+part 99
+--flood
+Content-Type: text/plain
+
+part 100
+--flood
+Content-Type: text/plain
+
+part 101
+--flood
+Content-Type: text/plain
+
+part 102
+--flood
+Content-Type: text/plain
+
+part 103
+--flood
+Content-Type: text/plain
+
+part 104
+--flood--

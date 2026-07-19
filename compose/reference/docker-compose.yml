@@ -14,12 +14,61 @@ services:
       - manual-dns-plugin
       - cert-plugin
       - backup-plugin
+      - notification-plugin
+  test-runner:
+    build:
+      context: ../..
+      target: build
+    profiles: ["test"]
+    command: ["go", "test", "./..."]
+
   database:
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: gophermailforge
       POSTGRES_USER: gmf
       POSTGRES_PASSWORD: gmf-dev-only
+  mailu-redis:
+    image: redis:alpine
+    profiles: ["mailu-import"]
+    volumes:
+      - mailu-redis:/data
+  mailu-admin:
+    image: ghcr.io/mailu/admin:2.0
+    profiles: ["mailu-import"]
+    environment:
+      MAILU_VERSION: "2.0"
+      DOCKER_ORG: ghcr.io/mailu
+      DOCKER_PREFIX: ""
+      SECRET_KEY: gmf-mailu-fixture-dev-only
+      DOMAIN: example.test
+      HOSTNAMES: mail.example.test
+      POSTMASTER: postmaster
+      TLS_FLAVOR: notls
+      AUTH_RATELIMIT_IP: 100000/hour
+      AUTH_RATELIMIT_USER: 100000/day
+      DISABLE_STATISTICS: "True"
+      ADMIN: "true"
+      WEB_ADMIN: /admin
+      WEB_WEBMAIL: /webmail
+      WEB_API: /api
+      WEBMAIL: none
+      SITENAME: GMF Mailu Fixture
+      WEBSITE: https://example.test
+      SESSION_COOKIE_SECURE: "False"
+      INITIAL_ADMIN_ACCOUNT: postmaster
+      INITIAL_ADMIN_DOMAIN: example.test
+      INITIAL_ADMIN_PW: gmf-dev-postmaster
+      INITIAL_ADMIN_MODE: ifmissing
+      LOG_LEVEL: INFO
+      SUBNET: 172.28.241.0/24
+      REDIS_HOST: mailu-redis
+    volumes:
+      - mailu-data:/data
+      - mailu-dkim:/dkim
+    depends_on:
+      - mailu-redis
+
   authentik:
     image: ghcr.io/goauthentik/server:latest
     command: server
@@ -158,7 +207,17 @@ services:
       GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
     volumes:
       - backup-data:/backup
+  notification-plugin:
+    build:
+      context: ../..
+    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    environment:
+      GMF_PLUGIN_NAME: telegram-notification-sink
+      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
 volumes:
   backup-data:
   maildata:
   dkimdata:
+  mailu-data:
+  mailu-dkim:
+  mailu-redis:

@@ -1,0 +1,27 @@
+From: Attacker <evil@example.test>
+To: Victim <user@example.test>
+Date: Sat, 18 Jul 2026 16:50:00 +0000
+Subject: Hostile <script>alert(1)</script>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer"
+
+--outer
+Content-Type: multipart/alternative; boundary="inner"
+
+--inner
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+plain=20body
+--inner
+Content-Type: text/html; charset=utf-8
+
+<html><body><img src="https://tracker.example.test/pixel"><script>alert(1)</script><a href="javascript:bad" onclick="steal()">x</a></body></html>
+--inner--
+--outer
+Content-Type: text/plain; name="../../evil.txt"
+Content-Disposition: attachment; filename="../../evil.txt"
+Content-Transfer-Encoding: base64
+
+cGF5bG9hZA==
+--outer--

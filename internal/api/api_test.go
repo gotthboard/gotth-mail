@@ -9,10 +9,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +25,7 @@ import (
 	"forgejo/linus/gophermailforge/internal/config"
 	"forgejo/linus/gophermailforge/internal/daemon"
 	"forgejo/linus/gophermailforge/internal/identity"
+	"forgejo/linus/gophermailforge/internal/notification"
 	"forgejo/linus/gophermailforge/internal/ops"
 	"forgejo/linus/gophermailforge/internal/plugin"
 	"forgejo/linus/gophermailforge/internal/store"
@@ -492,6 +495,47 @@ func TestV3RoutesRejectAnonymous(t *testing.T) {
 	}
 }
 
+func TestV3MailuImportAPIUsesSQLCanonicalApplyWhenConfigured(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	ids := identity.NewService("example.test")
+	if err := ids.AddTokenWithScopes("ops", "api_token", "ops-secret-token", "ops:admin"); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.ReadFile("../../test/fixtures/mailu/config-export-secrets.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := Server{AuditDB: db, Identity: ids}.Handler()
+	body, _ := json.Marshal(map[string]string{"source": string(source)})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodPost, "/api/v1/imports/mailu/preview", string(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("preview status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var p ops.ImportPreview
+	if err := json.Unmarshal(rr.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodPost, "/api/v1/imports/mailu/apply?hash="+p.Hash+"&source_fingerprint="+p.SourceFingerprint, `{"id":"`+p.ID+`"}`))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("apply status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM mailboxes`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("mailbox count=%d", count)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM audit_events WHERE action='import.mailu.apply'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("import audit count=%d", count)
+	}
+}
+
 func TestV3ImportAndBulkAPIBindPreviewConfirmation(t *testing.T) {
 	w := &audit.MemoryWriter{}
 	h := v3AdminServer(t, w)
@@ -591,7 +635,7 @@ func (f *apiFakeSMTP) Submit(context.Context, webmail.Envelope, []byte) error {
 type apiFakeSigner struct{}
 
 func (apiFakeSigner) SignMIME(ctx context.Context, id webmail.Identity, b []byte) ([]byte, webmail.SignatureStatus, error) {
-	return append([]byte("Content-Type: multipart/signed; protocol=application/pgp-signature; micalg=pgp-sha256\r\nContent-Type: application/pgp-signature\r\n\r\n"), b...), webmail.SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
+	return append([]byte("From: "+id.Address+"\r\nMIME-Version: 1.0\r\nContent-Type: multipart/signed; protocol=\"application/pgp-signature\"; micalg=pgp-sha256; boundary=\"sig\"\r\n\r\n--sig\r\nContent-Type: multipart/mixed; boundary=\"fake\"\r\nX-GopherMailForge-Signed-From: "+id.Address+"\r\nX-GopherMailForge-Signing-Fingerprint: "+id.Fingerprint+"\r\n\r\n"), append(b, []byte("\r\n--sig\r\nContent-Type: application/pgp-signature\r\n\r\n-----BEGIN PGP SIGNATURE-----\r\n\r\nfake-signature\r\n-----END PGP SIGNATURE-----\r\n--sig--\r\n")...)...), webmail.SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
 }
 
 type apiFakeResolver struct{}
@@ -609,6 +653,38 @@ func webmailServer(t *testing.T, smtp *apiFakeSMTP) http.Handler {
 	client := &webmail.Client{IMAP: apiFakeIMAP{messages: []webmail.Message{{ID: "m1", Folder: "INBOX", From: "a@example.test", Subject: "Hi", BodyHTML: "<script>x</script><b>safe</b>"}}}}
 	sender := &webmail.Sender{Drafts: map[string]webmail.Draft{}, SMTP: smtp, Signer: apiFakeSigner{}, Resolver: apiFakeResolver{}, Audit: &audit.MemoryWriter{}}
 	return Server{Identity: ids, WebmailClient: client, WebmailSender: sender}.Handler()
+}
+
+func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
+	h := webmailServer(t, &apiFakeSMTP{})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/webmail", nil))
+	body := rr.Body.String()
+	for _, want := range []string{"GopherMailForge Webmail", "/api/v1/webmail/folders", "/api/v1/webmail/messages", "/api/v1/webmail/drafts", "text-only"} {
+		if rr.Code != http.StatusOK || !strings.Contains(body, want) {
+			t.Fatalf("webmail shell status=%d missing %q body=%s", rr.Code, want, body)
+		}
+	}
+}
+
+func TestLiveContainerWebmailShellReachable(t *testing.T) {
+	base := os.Getenv("GMF_LIVE_WEBMAIL_UI_URL")
+	if base == "" {
+		t.Skip("GMF_LIVE_WEBMAIL_UI_URL not set")
+	}
+	resp, err := http.Get(strings.TrimRight(base, "/") + "/webmail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(b)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "GopherMailForge Webmail") || !strings.Contains(body, "Custom webmail shell") {
+		t.Fatalf("webmail UI status=%d body=%s", resp.StatusCode, body)
+	}
 }
 
 func TestWebmailAPIRoutesRequireAuthAndReachClientSender(t *testing.T) {
@@ -687,6 +763,95 @@ func TestWebmailDraftSubmitRequiresMailboxOwnership(t *testing.T) {
 	}
 }
 
+func TestWebmailAPIUsesSQLDraftStoreWhenConfigured(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	ids := identity.NewService("example.test")
+	if err := ids.AddTokenWithScopes("web-user-token", "api_token", "web-secret-token", "mailbox:web-user@example.test:webmail:use"); err != nil {
+		t.Fatal(err)
+	}
+	smtp := &apiFakeSMTP{}
+	sender := &webmail.Sender{SMTP: smtp, Signer: apiFakeSigner{}, Resolver: apiFakeResolver{}, Audit: &audit.MemoryWriter{}}
+	h := Server{AuditDB: db, Identity: ids, WebmailClient: &webmail.Client{IMAP: apiFakeIMAP{}}, WebmailSender: sender}.Handler()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webmail/drafts", strings.NewReader(`{"id":"attacker-chosen","from":"web-user@example.test","to":"r@example.test","subject":"s","body":"b","replyto":"imap-42","forwardof":"imap-17","signingfingerprint":"fp","attachments":[{"filename":"note.txt","contenttype":"text/plain","size":5,"content":"aGVsbG8="}]}`))
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("draft status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var d webmail.Draft
+	if err := json.Unmarshal(rr.Body.Bytes(), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.ID == "attacker-chosen" {
+		t.Fatal("API accepted caller-supplied draft id")
+	}
+	var mailbox string
+	if err := db.QueryRow(`SELECT mailbox FROM webmail_drafts WHERE id=$1`, d.ID).Scan(&mailbox); err != nil {
+		t.Fatal(err)
+	}
+	if mailbox != "web-user@example.test" {
+		t.Fatalf("mailbox=%q", mailbox)
+	}
+	stored, ok, err := (webmail.SQLDraftStore{DB: db}).Draft(context.Background(), d.ID)
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if stored.ReplyTo != "imap-42" || stored.ForwardOf != "imap-17" || len(stored.Attachments) != 1 || stored.Attachments[0].Filename != "note.txt" || string(stored.Attachments[0].Content) != "hello" {
+		t.Fatalf("draft metadata not persisted: %#v", stored)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/webmail/drafts/"+d.ID+"/submit", nil)
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !smtp.sent {
+		t.Fatalf("submit status=%d body=%s sent=%v", rr.Code, rr.Body.String(), smtp.sent)
+	}
+	var state string
+	if err := db.QueryRow(`SELECT state FROM webmail_drafts WHERE id=$1`, d.ID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "sent" {
+		t.Fatalf("state=%q", state)
+	}
+}
+
+func TestNotificationDeliveryStatusAPIUsesSQLRecorderWhenConfigured(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	ids := identity.NewService("example.test")
+	if err := ids.AddTokenWithScopes("notify-reader", "api_token", "notify-secret", "notification:read", "notification:read:alert-1"); err != nil {
+		t.Fatal(err)
+	}
+	rec := notification.SQLRecorder{DB: db}
+	if err := rec.RecordPending(context.Background(), notification.Alert{ID: "alert-1", Class: "backup.failure", Severity: notification.SeverityCritical, Title: "Backup failed", Summary: "password=hunter2 failed", Resource: notification.ResourceRef{Type: "backup", ID: "artifact-1"}}, time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.RecordFinal(context.Background(), "alert-1", notification.StatusFailedPermanent, "plugin rejected", time.Unix(2, 0)); err != nil {
+		t.Fatal(err)
+	}
+	h := Server{AuditDB: db, Identity: ids}.Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications/deliveries", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/notifications/deliveries", nil)
+	req.Header.Set("Authorization", "Bearer notify-secret")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "failed_permanent") || strings.Contains(rr.Body.String(), "hunter2") || !strings.Contains(rr.Body.String(), "[REDACTED]") {
+		t.Fatalf("list status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/notifications/deliveries/alert-1", nil)
+	req.Header.Set("Authorization", "Bearer notify-secret")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "plugin rejected") || !strings.Contains(rr.Body.String(), "backup.failure") {
+		t.Fatalf("detail status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestV3AuditRoutesUseSQLAuditStoreWhenConfigured(t *testing.T) {
 	db := testpg.DB(t, store.MigrateSQL)
 	ids := identity.NewService("example.test")
@@ -756,6 +921,8 @@ func TestV3BackupVerifyRecordsSQLVerificationWhenConfigured(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt := ops.NewV3Runtime()
+	restoreDB := testpg.DB(t, nil)
+	rt.RestoreEngine = ops.SQLIsolatedRestoreEngine{DB: restoreDB, Ref: "api-isolated-restore"}
 	rt.BackupStore.Artifacts["artifact"] = ops.BackupArtifact{SchemaVersion: "schema_migrations", ConfigSetID: "cfg", Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"user@example.test": {Address: "user@example.test", Enabled: true}}, Aliases: map[string]daemon.Alias{}}
 	h := Server{AuditDB: db, Identity: ids, V3: rt}.Handler()
 	rr := httptest.NewRecorder()
@@ -767,7 +934,86 @@ func TestV3BackupVerifyRecordsSQLVerificationWhenConfigured(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("latest ok=%v err=%v", ok, err)
 	}
-	if got.Status != "verified" || got.ConfigSetID != "cfg" {
+	if got.Status != "verified" || got.ConfigSetID != "cfg" || got.IsolatedRestoreRef != "api-isolated-restore" {
 		t.Fatalf("latest=%#v", got)
+	}
+}
+
+func TestV3SnapshotsReadPersistedSQLLinkage(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	ids := identity.NewService("example.test")
+	if err := ids.AddTokenWithScopes("ops-admin", "api_token", "ops-secret-token", "ops:admin"); err != nil {
+		t.Fatal(err)
+	}
+	storage := ops.MemoryBackupStorage{Artifacts: map[string]ops.BackupArtifact{"artifact": {SchemaVersion: "schema_migrations", ConfigSetID: "cfg", Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"user@example.test": {Address: "user@example.test", Enabled: true}}}}}
+	backupStore := ops.SQLBackupVerificationStore{DB: db}
+	if _, err := backupStore.VerifyAndRecord(context.Background(), storage, "artifact", "plugin-backup", "snapshot-restore", time.Unix(10, 0)); err != nil {
+		t.Fatal(err)
+	}
+	latest, ok, err := backupStore.Latest(context.Background(), "artifact")
+	if err != nil || !ok {
+		t.Fatalf("latest ok=%v err=%v", ok, err)
+	}
+	if _, err := (ops.SQLSnapshotStore{DB: db}).Capture(context.Background(), ops.SnapshotView{ID: "00000000-0000-4000-8000-000000000401", MigrationVersion: "schema_migrations", DeploymentPolicyHash: "policy-a", LinkedBackupVerificationID: latest.ID, ImageVersions: []string{"gmf@sha256:1"}}, time.Unix(20, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (ops.SQLSnapshotStore{DB: db}).Capture(context.Background(), ops.SnapshotView{ID: "00000000-0000-4000-8000-000000000402", MigrationVersion: "schema_migrations", DeploymentPolicyHash: "policy-b", ImageVersions: []string{"gmf@sha256:2"}}, time.Unix(30, 0)); err != nil {
+		t.Fatal(err)
+	}
+	h := Server{AuditDB: db, Identity: ids}.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodGet, "/api/v1/snapshots", ""))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "verified") {
+		t.Fatalf("list status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodGet, "/api/v1/snapshots/00000000-0000-4000-8000-000000000401", ""))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "rollback may proceed") {
+		t.Fatalf("get status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodGet, "/api/v1/snapshots/00000000-0000-4000-8000-000000000401/diff?against=00000000-0000-4000-8000-000000000402", ""))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "deployment_policy") || !strings.Contains(rr.Body.String(), "image_versions") {
+		t.Fatalf("diff status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestV3BulkApplyUsesSQLCanonicalStateWhenConfigured(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	if _, err := db.Exec(`INSERT INTO domains(id, name, created_at, updated_at) VALUES ($1,$2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, "00000000-0000-4000-8000-000000000601", "example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO mailboxes(id, domain_id, local_part, enabled, created_at, updated_at) VALUES ($1,$2,$3,true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, "00000000-0000-4000-8000-000000000602", "00000000-0000-4000-8000-000000000601", "user"); err != nil {
+		t.Fatal(err)
+	}
+	ids := identity.NewService("example.test")
+	if err := ids.AddTokenWithScopes("ops-admin", "api_token", "ops-secret-token", "ops:admin"); err != nil {
+		t.Fatal(err)
+	}
+	h := Server{AuditDB: db, Identity: ids}.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodPost, "/api/v1/bulk/disable-users/preview", `{"items":["user@example.test"]}`))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("preview status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var bp ops.BulkPreview
+	if err := json.Unmarshal(rr.Body.Bytes(), &bp); err != nil {
+		t.Fatal(err)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, v3Req(http.MethodPost, "/api/v1/bulk/disable-users/apply?confirm="+bp.ID+"&hash="+bp.Hash, `{"id":"`+bp.ID+`"}`))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("apply status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var enabled bool
+	if err := db.QueryRow(`SELECT enabled FROM mailboxes WHERE id=$1`, "00000000-0000-4000-8000-000000000602").Scan(&enabled); err != nil {
+		t.Fatal(err)
+	}
+	if enabled {
+		t.Fatal("bulk API left mailbox enabled")
+	}
+	events, err := (ops.SQLAuditStore{DB: db}).Query(context.Background(), ops.AuditFilter{Action: "bulk.disable-users"}, 10)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events=%#v err=%v", events, err)
 	}
 }

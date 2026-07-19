@@ -16,7 +16,7 @@ import (
 
 func TestFirstMechanismPluginsExposeAuthenticatedCapabilities(t *testing.T) {
 	reg := FirstMechanismPlugins("tok")
-	want := map[string]Seam{FirstWebmailName: Webmail, FirstDNSName: DNS, FirstCertName: ACME, FirstBackupName: Backup}
+	want := map[string]Seam{FirstWebmailName: Webmail, FirstDNSName: DNS, FirstCertName: ACME, FirstBackupName: Backup, FirstNotifyName: Notification}
 	for name, seam := range want {
 		p, ok := reg.Plugins[name]
 		if !ok {

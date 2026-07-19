@@ -35,6 +35,7 @@ func main() {
 	mux.Handle("/internal/", server.Handler())
 	mux.Handle("/healthz", server.Handler())
 	mux.Handle("/readyz", server.Handler())
+	mux.Handle("/webmail", server.Handler())
 	mux.Handle("/", httpui.HandlerWithAdmin(referenceAdminStore()))
 	addr := os.Getenv("GMF_LISTEN")
 	if addr == "" {

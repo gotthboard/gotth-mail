@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,53 @@ func TestBulkApplyBindsOperationPath(t *testing.T) {
 	}
 	if _, err := st.Apply(context.Background(), &audit.MemoryWriter{}, actor, "enable-users", p.ID, p.ID, p.Hash, time.Unix(1, 0)); err == nil {
 		t.Fatal("accepted operation mismatch")
+	}
+}
+
+func TestMailuImportAcceptsLiveConfigExportAndWrapsMailuHashes(t *testing.T) {
+	actor := audit.ActorRef{Type: "admin", ID: "u"}
+	source, err := os.ReadFile("../../test/fixtures/mailu/config-export-secrets.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := NewImportStore()
+	p := st.Preview(string(source), actor, time.Unix(0, 0))
+	if len(p.Items) != 4 {
+		t.Fatalf("items=%#v", p.Items)
+	}
+	for _, it := range p.Items {
+		if it.Status != "imported" {
+			t.Fatalf("item not importable: %#v all=%#v", it, p.Items)
+		}
+	}
+	if err := st.Apply(context.Background(), &audit.MemoryWriter{}, actor, p.ID, p.Hash, p.SourceFingerprint, time.Unix(1, 0), daemon.Service{}); err != nil {
+		t.Fatal(err)
+	}
+	mb := st.Mailboxes["user@example.test"]
+	if !strings.HasPrefix(mb.Verifier, mailuBcryptSHA256Prefix+"$bcrypt-sha256$") {
+		t.Fatalf("mailu verifier was not preserved under wrapper: %q", mb.Verifier)
+	}
+	alias := st.Aliases["alias@example.test"]
+	if len(alias.Targets) != 2 || alias.Targets[0] != "postmaster@example.test" || alias.Targets[1] != "user@example.test" {
+		t.Fatalf("alias targets=%#v", alias.Targets)
+	}
+}
+
+func TestMailuImportRejectsRedactedConfigExportPassword(t *testing.T) {
+	actor := audit.ActorRef{Type: "admin", ID: "u"}
+	source, err := os.ReadFile("../../test/fixtures/mailu/config-export.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewImportStore().Preview(string(source), actor, time.Unix(0, 0))
+	var rejected bool
+	for _, it := range p.Items {
+		if it.Type == "user" && it.Status == "failed_validation" && strings.Contains(it.Reason, "invalid mailu bcrypt-sha256") {
+			rejected = true
+		}
+	}
+	if !rejected {
+		t.Fatalf("redacted Mailu password was not rejected: %#v", p.Items)
 	}
 }
 

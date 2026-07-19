@@ -10,9 +10,45 @@ service PluginControl {
   rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
 }
 
+service NotificationBackend {
+  rpc SendAlert(SendAlertRequest) returns (DeliveryResponse);
+  rpc SendPrompt(SendPromptRequest) returns (PromptResponse);
+}
+
 message HealthRequest { string correlation_id = 1; }
 message HealthResponse { bool healthy = 1; string message = 2; }
 message VersionRequest { string correlation_id = 1; }
 message VersionResponse { string name = 1; string version = 2; }
 message CapabilitiesRequest { string correlation_id = 1; }
 message CapabilitiesResponse { repeated string capabilities = 1; }
+
+message AlertResource { string type = 1; string id = 2; }
+message AlertMessage {
+  string id = 1;
+  string class = 2;
+  string severity = 3;
+  string title = 4;
+  string summary = 5;
+  string correlation_id = 6;
+  AlertResource resource = 7;
+  map<string, string> details = 8;
+}
+message SendAlertRequest { AlertMessage alert = 1; }
+message DeliveryResponse { string status = 1; string reason = 2; }
+
+message SendPromptRequest {
+  string id = 1;
+  string correlation_id = 2;
+  string transport = 3;
+  string external_actor_id = 4;
+  string actor_type = 5;
+  string actor_id = 6;
+  string action = 7;
+  string resource_type = 8;
+  string resource_id = 9;
+  string request_hash = 10;
+  string expires_at = 11;
+  string title = 12;
+  string summary = 13;
+}
+message PromptResponse { bool accepted = 1; string message = 2; }

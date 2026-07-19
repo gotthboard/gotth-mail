@@ -16,6 +16,7 @@ import (
 	"forgejo/linus/gophermailforge/internal/daemon"
 	"forgejo/linus/gophermailforge/internal/diag"
 	"forgejo/linus/gophermailforge/internal/identity"
+	"forgejo/linus/gophermailforge/internal/notification"
 	"forgejo/linus/gophermailforge/internal/ops"
 	"forgejo/linus/gophermailforge/internal/plugin"
 	"forgejo/linus/gophermailforge/internal/render"
@@ -43,6 +44,7 @@ type Server struct {
 	V3                    *ops.V3Runtime
 	WebmailClient         *webmail.Client
 	WebmailSender         *webmail.Sender
+	NotificationRecorder  notification.Recorder
 }
 
 func (s Server) Handler() http.Handler {
@@ -247,6 +249,69 @@ func (s Server) Handler() http.Handler {
 			out = append(out, audit.Redact(e))
 		}
 		writeJSON(w, out)
+	})
+	notificationRecorder := s.NotificationRecorder
+	if notificationRecorder == nil && s.AuditDB != nil {
+		notificationRecorder = notification.SQLRecorder{DB: s.AuditDB}
+	}
+	mux.HandleFunc("/api/v1/notifications/deliveries", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "GET") {
+			return
+		}
+		a, err := identitySvc.AuthenticateBearer(r.Header.Get("Authorization"), "api_token")
+		if err != nil {
+			http.Error(w, "admin bearer token required", http.StatusUnauthorized)
+			return
+		}
+		d, err := s.authorizer().Decide(r.Context(), a, "notification:read", authz.Resource{Type: "notification", ID: "deliveries"})
+		if err != nil || !d.Allow {
+			http.Error(w, "notification authorization required", http.StatusForbidden)
+			return
+		}
+		if notificationRecorder == nil {
+			http.Error(w, "notification delivery recorder unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		records, err := notificationRecorder.List(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, records)
+	})
+	mux.HandleFunc("/api/v1/notifications/deliveries/", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "GET") {
+			return
+		}
+		a, err := identitySvc.AuthenticateBearer(r.Header.Get("Authorization"), "api_token")
+		if err != nil {
+			http.Error(w, "admin bearer token required", http.StatusUnauthorized)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/notifications/deliveries/")
+		if id == "" || strings.Contains(id, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		d, err := s.authorizer().Decide(r.Context(), a, "notification:read", authz.Resource{Type: "notification_delivery", ID: id})
+		if err != nil || !d.Allow {
+			http.Error(w, "notification authorization required", http.StatusForbidden)
+			return
+		}
+		if notificationRecorder == nil {
+			http.Error(w, "notification delivery recorder unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		record, ok, err := notificationRecorder.Get(r.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, record)
 	})
 	mux.HandleFunc("/api/v1/plugins", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {

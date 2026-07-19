@@ -1,0 +1,31 @@
+{
+  "alias": [
+    {
+      "destination": [
+        "postmaster@example.test",
+        "user@example.test"
+      ],
+      "email": "alias@example.test"
+    }
+  ],
+  "domain": [
+    {
+      "dkim_key": "<hidden>",
+      "name": "example.test"
+    }
+  ],
+  "relay": [],
+  "user": [
+    {
+      "email": "postmaster@example.test",
+      "global_admin": true,
+      "password": "$bcryp…DW9W",
+      "spam_threshold": 80
+    },
+    {
+      "email": "user@example.test",
+      "password": "$bcryp…xqQm",
+      "spam_threshold": 80
+    }
+  ]
+}

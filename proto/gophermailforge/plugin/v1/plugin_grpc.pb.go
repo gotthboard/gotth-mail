@@ -195,3 +195,143 @@ var PluginControl_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "proto/gophermailforge/plugin/v1/plugin.proto",
 }
+
+const (
+	NotificationBackend_SendAlert_FullMethodName  = "/gophermailforge.plugin.v1.NotificationBackend/SendAlert"
+	NotificationBackend_SendPrompt_FullMethodName = "/gophermailforge.plugin.v1.NotificationBackend/SendPrompt"
+)
+
+// NotificationBackendClient is the client API for NotificationBackend service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type NotificationBackendClient interface {
+	SendAlert(ctx context.Context, in *SendAlertRequest, opts ...grpc.CallOption) (*DeliveryResponse, error)
+	SendPrompt(ctx context.Context, in *SendPromptRequest, opts ...grpc.CallOption) (*PromptResponse, error)
+}
+
+type notificationBackendClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewNotificationBackendClient(cc grpc.ClientConnInterface) NotificationBackendClient {
+	return &notificationBackendClient{cc}
+}
+
+func (c *notificationBackendClient) SendAlert(ctx context.Context, in *SendAlertRequest, opts ...grpc.CallOption) (*DeliveryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeliveryResponse)
+	err := c.cc.Invoke(ctx, NotificationBackend_SendAlert_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *notificationBackendClient) SendPrompt(ctx context.Context, in *SendPromptRequest, opts ...grpc.CallOption) (*PromptResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PromptResponse)
+	err := c.cc.Invoke(ctx, NotificationBackend_SendPrompt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// NotificationBackendServer is the server API for NotificationBackend service.
+// All implementations must embed UnimplementedNotificationBackendServer
+// for forward compatibility.
+type NotificationBackendServer interface {
+	SendAlert(context.Context, *SendAlertRequest) (*DeliveryResponse, error)
+	SendPrompt(context.Context, *SendPromptRequest) (*PromptResponse, error)
+	mustEmbedUnimplementedNotificationBackendServer()
+}
+
+// UnimplementedNotificationBackendServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedNotificationBackendServer struct{}
+
+func (UnimplementedNotificationBackendServer) SendAlert(context.Context, *SendAlertRequest) (*DeliveryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendAlert not implemented")
+}
+func (UnimplementedNotificationBackendServer) SendPrompt(context.Context, *SendPromptRequest) (*PromptResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendPrompt not implemented")
+}
+func (UnimplementedNotificationBackendServer) mustEmbedUnimplementedNotificationBackendServer() {}
+func (UnimplementedNotificationBackendServer) testEmbeddedByValue()                             {}
+
+// UnsafeNotificationBackendServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to NotificationBackendServer will
+// result in compilation errors.
+type UnsafeNotificationBackendServer interface {
+	mustEmbedUnimplementedNotificationBackendServer()
+}
+
+func RegisterNotificationBackendServer(s grpc.ServiceRegistrar, srv NotificationBackendServer) {
+	// If the following call panics, it indicates UnimplementedNotificationBackendServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&NotificationBackend_ServiceDesc, srv)
+}
+
+func _NotificationBackend_SendAlert_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendAlertRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NotificationBackendServer).SendAlert(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NotificationBackend_SendAlert_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NotificationBackendServer).SendAlert(ctx, req.(*SendAlertRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NotificationBackend_SendPrompt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendPromptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NotificationBackendServer).SendPrompt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NotificationBackend_SendPrompt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NotificationBackendServer).SendPrompt(ctx, req.(*SendPromptRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// NotificationBackend_ServiceDesc is the grpc.ServiceDesc for NotificationBackend service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var NotificationBackend_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "gophermailforge.plugin.v1.NotificationBackend",
+	HandlerType: (*NotificationBackendServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "SendAlert",
+			Handler:    _NotificationBackend_SendAlert_Handler,
+		},
+		{
+			MethodName: "SendPrompt",
+			Handler:    _NotificationBackend_SendPrompt_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "proto/gophermailforge/plugin/v1/plugin.proto",
+}

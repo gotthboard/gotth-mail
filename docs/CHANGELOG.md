@@ -21,6 +21,578 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-07-18 CDT — Add narrow approved notification mutation executor
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/notifyruntime/executor.go`
+- `internal/notifyruntime/executor_test.go`
+- `scripts/containerized-notification-plugin-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `docs/implementation/v5-notifications.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v5.notifications/commands-approvals/evidence/2026-07-18-approved-mutation-executor.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added `notifyruntime.ApprovalExecutor`, which confirms durable SQL approval bindings and then executes only the admitted queue mutation set (`queue:flush`, `queue:retry`) through existing ops methods. Unsupported approved actions fail closed and are audited. This deliberately avoids a generic chat-to-shell or arbitrary mutation registry.
+
+Verification:
+
+- `go test -count=1 ./internal/notifyruntime` passed.
+- `scripts/containerized-notification-plugin-smoke.sh` now runs executor tests inside `test-runner`.
+
+### 2026-07-18 CDT — Add Telegram update receiver core
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/notification/telegram.go`
+- `internal/notification/telegram_test.go`
+- `scripts/containerized-notification-plugin-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `docs/implementation/v5-notifications.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v5.notifications/commands-approvals/evidence/2026-07-18-telegram-update-receiver-core.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added a Telegram-shaped update receiver core for bounded read-only commands and approval callbacks. Commands route through explicit actor mapping and `CommandService`; approval callbacks route through durable SQL approval binding checks. The receiver does not call Telegram APIs and does not execute approved mutations.
+
+Verification:
+
+- `go test -count=1 ./internal/notification` passed.
+- `scripts/containerized-notification-plugin-smoke.sh` now runs receiver tests inside `test-runner`.
+
+### 2026-07-18 CDT — Add runtime notification command summaries
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/notifyruntime/provider.go`
+- `internal/notifyruntime/provider_test.go`
+- `scripts/containerized-notification-plugin-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `docs/implementation/v5-notifications.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v5.notifications/commands-approvals/evidence/2026-07-18-runtime-command-provider.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added a runtime command provider for v5 read-only notification commands. It summarizes existing doctor, queue, domain, backup, deployment, and plugin state without shell execution, broad logs, Docker calls, database handles, or mutation authority.
+
+Verification:
+
+- `go test -count=1 ./internal/notification ./internal/notifyruntime` passed.
+- `scripts/containerized-notification-plugin-smoke.sh` now runs the provider tests in `test-runner`.
+
+### 2026-07-18 CDT — Add real OpenPGP/MIME exact-sender signing
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `go.mod`
+- `go.sum`
+- `internal/webmail/openpgp.go`
+- `internal/webmail/openpgp_test.go`
+- `internal/webmail/webmail.go`
+- `internal/webmail/webmail_test.go`
+- `scripts/containerized-webmail-smtp-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `docs/implementation/v4-webmail.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-openpgp-mime-exact-sender.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added real OpenPGP/MIME `multipart/signed` signing and exact-sender verification using the maintained ProtonMail OpenPGP fork. The verifier parses the signed MIME structure, verifies the detached signature, and checks visible From plus signed sender-binding assertions against the expected fingerprint. The old loose string-grep validator was replaced with parser-backed structure validation.
+
+Verification:
+
+- `go test -count=1 ./internal/webmail` passed.
+- `scripts/containerized-webmail-smtp-smoke.sh` now includes real OpenPGP/MIME signer/verifier tests inside the repo-owned `test-runner` container.
+
+### 2026-07-18 CDT — Add containerized custom webmail UI shell smoke
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/api/webmail.go`
+- `internal/api/api_test.go`
+- `scripts/containerized-webmail-ui-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `docs/implementation/v4-webmail.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-containerized-custom-webmail-ui-smoke.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added a minimal GopherMailForge-owned `/webmail` shell and a repo-owned Compose smoke that proves it is reachable from the `test-runner` container. This closes custom webmail UI/container reachability without pretending Roundcube is the custom UI.
+
+Verification:
+
+- `go test -count=1 ./internal/api` passed.
+
+### 2026-07-18 CDT — Add notification backend gRPC seam
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `proto/gophermailforge/plugin/v1/plugin.proto`
+- `proto/gophermailforge/plugin/v1/plugin.pb.go`
+- `proto/gophermailforge/plugin/v1/plugin_grpc.pb.go`
+- `internal/plugin/notification.go`
+- `internal/plugin/notification_test.go`
+- `internal/plugin/grpc_test.go`
+- `internal/plugin/first.go`
+- `cmd/gmf-plugin/main.go`
+- `scripts/containerized-notification-plugin-smoke.sh`
+- `docs/implementation/v5-notifications.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v5.notifications/telegram-plugin-alerts/evidence/2026-07-18-notification-backend-grpc-smoke.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added the notification-specific protobuf/gRPC backend seam for `SendAlert` and `SendPrompt`, registered it in the repo-owned notification plugin container, and extended the container smoke to exercise both plugin-control and notification-backend RPCs. The prompt RPC delivers prompt payloads only; it does not approve, execute mutations, or grant Telegram state authority.
+
+Verification:
+
+- `go test -count=1 ./internal/plugin ./cmd/gmf-plugin ./proto/gophermailforge/plugin/v1` passed.
+
+### 2026-07-18 CDT — Add notification read-only command core
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/notification/commands.go`
+- `internal/notification/commands_test.go`
+- `docs/implementation/v5-notifications.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v5.notifications/commands-approvals/evidence/2026-07-18-readonly-command-core.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added a local notification read-only command dispatcher that maps transport actors explicitly, authorizes command-specific read actions, calls only a bounded summary provider, redacts/bounds returned text, and audits denied, failed, and successful attempts. It intentionally exposes no shell, mutation callback, database handle, or Telegram send primitive.
+
+Verification:
+
+- `go test -count=1 ./internal/notification` passed.
+
+### 2026-07-18 CDT — Add SQL notification actor mapping and approval binding
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/notification/approval.go`
+- `internal/notification/approval_test.go`
+- `internal/store/store.go`
+- `migrations/0001_initial.sql`
+- `docs/implementation/v5-notifications.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v5.notifications/commands-approvals/evidence/2026-07-18-actor-mapping-approval-binding.md`
+- `workflow/features/v5.notifications/telegram-plugin-alerts/evidence/2026-07-18-local-alert-core.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added configured SQL actor mapping and approval prompt binding primitives for v5 notifications. Transport actors must map explicitly to `authz.Actor`; chat membership alone grants nothing. Approval confirmation now has durable single-use binding checks for transport actor, mapped actor, action, resource, request hash, and expiry. This intentionally stops before Telegram live delivery, read-only command service plumbing, or mutation execution.
+
+Verification:
+
+- `go test -count=1 ./internal/notification ./internal/store` passed.
+
+### 2026-07-18 CDT — Expose SQL notification delivery status
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/notification/sql.go`
+- `internal/notification/sql_test.go`
+- `internal/api/api.go`
+- `internal/api/api_test.go`
+- `internal/store/store.go`
+- `migrations/0001_initial.sql`
+- `docs/implementation/v5-notifications.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v5.notifications/telegram-plugin-alerts/evidence/2026-07-18-local-alert-core.md`
+- `workflow/features/v5.notifications/telegram-plugin-alerts/evidence/2026-07-18-sql-delivery-status-api.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added SQL-backed notification delivery records and a read-only authorized API surface for operator visibility. This closes the configured runtime/API delivery-status surface without adding Telegram live delivery, prompt mutation authority, or approval workflows.
+
+Verification:
+
+- `go test -count=1 ./internal/notification ./internal/api ./internal/store` passed.
+
+### 2026-07-18 CDT — Add bounded raw MIME parser and text-only rendering decision
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/webmail/mime.go`
+- `internal/webmail/mime_test.go`
+- `internal/webmail/imap.go`
+- `test/fixtures/webmail/hostile-multipart.eml`
+- `test/fixtures/webmail/mime-part-flood.eml`
+- `docs/implementation/v4-webmail.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-full-finish-blockers.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-raw-mime-text-rendering.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added bounded raw MIME parsing for IMAP-fetched messages with hostile fixture coverage. The parser walks multipart MIME with nesting/part limits, decodes base64 and quoted-printable parts, extracts text/html-as-data/attachments, sanitizes attachment boundaries, and fails closed on malformed multipart boundaries. v4 now explicitly uses conservative text-only HTML rendering instead of pretending regex-based rich sanitization is a production security boundary.
+
+Verification:
+
+- `go test -count=1 ./internal/webmail` passed.
+
+### 2026-07-18 CDT — Persist SQL webmail draft metadata
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/webmail/webmail.go`
+- `internal/webmail/sql_draft_store_test.go`
+- `internal/api/api_test.go`
+- `internal/store/store.go`
+- `migrations/0001_initial.sql`
+- `docs/implementation/v4-webmail.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-durable-draft-store.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-full-finish-blockers.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-sql-draft-metadata-durability.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Extended the configured SQL draft path so reply/forward source IDs and attachment metadata/content survive process reload. The mailbox ownership guard remains on conflict updates; API draft creation still ignores caller-supplied IDs and binds the draft to the authenticated mailbox.
+
+Verification:
+
+- `go test -count=1 ./internal/webmail ./internal/api ./internal/store` passed.
+
+### 2026-07-18 CDT — Add containerized webmail IMAP smoke
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/webmail/imap.go`
+- `internal/webmail/imap_test.go`
+- `scripts/containerized-webmail-imap-smoke.sh`
+- `scripts/containerized-mailu-import-smoke.sh`
+- `scripts/containerized-webmail-smtp-smoke.sh`
+- `scripts/containerized-notification-plugin-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `docs/implementation/v4-webmail.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-full-finish-blockers.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-containerized-webmail-imap-smoke.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added a small real `webmail.NetIMAPClient` transport adapter for Dovecot-backed folder/list/search/read operations and a repo-owned containerized smoke that injects a message through the real SMTP adapter, then reads it back through Dovecot IMAP from the Compose `test-runner`. The smoke exposed two real issues and they were fixed: Dovecot namespace delimiter noise from `LIST` must not be shown as a mailbox, and container smoke scripts must rebuild the `test-runner` image before running tests or cached images can lie.
+
+Verification:
+
+- `go test -count=1 ./internal/webmail ./test/contract` passed.
+- `scripts/containerized-webmail-imap-smoke.sh` passed, including container build-stage `go test ./...`, SMTP injection through Compose Postfix, and live IMAP read from `dovecot:143`.
+
+### 2026-07-18 CDT — Add containerized notification plugin gRPC smoke
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `compose/reference/docker-compose.yml`
+- `internal/plugin/first.go`
+- `internal/plugin/first_test.go`
+- `internal/plugin/grpc_test.go`
+- `scripts/containerized-notification-plugin-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `docs/implementation/v5-notifications.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v5.notifications/telegram-plugin-alerts/evidence/2026-07-18-local-alert-core.md`
+- `workflow/features/v5.notifications/telegram-plugin-alerts/evidence/2026-07-18-containerized-notification-plugin-grpc-smoke.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added `telegram-notification-sink` as a notification first-mechanism plugin, wired a `notification-plugin` service into the repo-owned reference Compose topology, and added an env-gated live gRPC plugin-control smoke. The smoke starts the containerized plugin, runs authenticated health/version/capability checks from the Compose `test-runner`, and verifies wrong-token rejection. This is intentionally only the plugin container/control seam; the notification-specific SendAlert/prompt protobuf service and live Telegram API delivery remain blockers.
+
+Verification:
+
+- `go test -count=1 ./internal/plugin ./test/contract` passed.
+- `git diff --check -- .` passed.
+- `scripts/containerized-notification-plugin-smoke.sh` passed, including container build-stage `go test ./...`, live gRPC control checks against `notification-plugin:9443`, and wrong-token rejection.
+
+### 2026-07-18 CDT — Add containerized webmail SMTP transport smoke
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/webmail/smtp.go`
+- `internal/webmail/smtp_test.go`
+- `scripts/containerized-webmail-smtp-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `docs/implementation/v4-webmail.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-full-finish-blockers.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-containerized-webmail-smtp-smoke.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added a real `webmail.NetSMTPSubmitter` transport adapter for already-built/already-signed MIME bytes and a repo-owned containerized smoke that runs the adapter test inside the Compose `test-runner` container against the reference Postfix service, then verifies delivery into the smoke Maildir. This closes the fake-only SMTP transport gap without claiming full webmail send completion; OpenPGP/MIME exact-sender signing remains required before production webmail send can be admitted.
+
+Verification:
+
+- `go test -count=1 ./internal/webmail ./test/contract` passed.
+- `git diff --check -- .` passed.
+- `scripts/containerized-webmail-smtp-smoke.sh` passed, including container build-stage `go test ./...`, live SMTP submitter test against `postfix:25`, and Maildir delivery verification.
+
+### 2026-07-18 CDT — Add containerized Mailu import smoke fixture
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `compose/reference/docker-compose.yml`
+- `scripts/containerized-mailu-import-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v3.ops-import-admin/production-ops/evidence/2026-07-18-full-finish-blockers.md`
+- `workflow/features/v3.ops-import-admin/production-ops/evidence/2026-07-18-containerized-mailu-import-smoke.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Moved the Mailu import compatibility fixture into the repo-owned reference Compose topology. Added a `test-runner` service using the Dockerfile build target and a `mailu-import` profile with Mailu admin plus Redis, isolated volumes, no public mail ports, and dev-only fixture configuration. Added `scripts/containerized-mailu-import-smoke.sh` to start the fixture, seed representative Mailu state, export redacted and secret config into a temporary directory, validate the live Mailu export shape, and run focused import/API tests inside the Compose test-runner container. Added contract tests so the Compose fixture and smoke script cannot silently disappear or start overwriting checked-in fixtures again.
+
+Verification:
+
+- `sudo docker compose -f compose/reference/docker-compose.yml --profile mailu-import --profile test config` passed.
+- `go test -count=1 ./test/contract ./internal/ops ./internal/api` passed.
+- `git diff --check -- .` passed.
+- `go test -count=1 ./...` passed.
+- `scripts/containerized-mailu-import-smoke.sh` passed, including container build-stage `go test ./...`, containerized focused import/API tests, and live Mailu export shape checks.
+
+### 2026-07-18 CDT — Add durable webmail drafts and local notification core
+
+Commit: 1da110a
+
+Affected files:
+
+- `internal/webmail/webmail.go`
+- `internal/webmail/sql_draft_store_test.go`
+- `internal/api/webmail.go`
+- `internal/api/api_test.go`
+- `internal/notification/notification.go`
+- `internal/notification/notification_test.go`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/COVERAGE.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-full-finish-blockers.md`
+- `workflow/features/v4.webmail/production-webmail/evidence/2026-07-18-durable-draft-store.md`
+- `workflow/features/v5.notifications/telegram-plugin-alerts/evidence/2026-07-18-local-alert-core.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added durable mailbox-owned webmail draft persistence behind a narrow `webmail.DraftStore` seam. The default memory behavior remains for unconfigured callers, while `webmail.SQLDraftStore` uses the existing `webmail_drafts` table for configured SQL deployments. Webmail submit now persists state transitions through the configured store, and API wiring uses SQL draft persistence when `api.Server.AuditDB` is configured. This closes the local durable-draft slice without pretending production IMAP, SMTP, OpenPGP/MIME, raw MIME parsing, rich sanitizer/browser proof, attachment metadata durability, or UI/container reachability are done.
+
+Added a local `internal/notification` alert core for v5. It defines a bounded sanitized alert contract, redacts secret-looking values before backend delivery, records pending/final delivery state, exposes retryable failure status, and only passes a sanitized `Alert` to the injected backend. This is fake-backend local groundwork only; it does not claim Telegram plugin/container/gRPC delivery, live Telegram sends, approval binding, or OpenPGP-signed email notifications are complete.
+
+Verification:
+
+- Confirmed `go test -count=1 ./internal/notification ./internal/webmail ./internal/api ./internal/store` passes.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Record v3 configured-path completion under v2 blocker
+
+Commit: 9d634be
+
+Affected files:
+
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/features/v3.ops-import-admin/production-ops/evidence/2026-07-18-full-finish-blockers.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Updated canonical workflow state for v3 configured-path child slices after the SQL audit/retention, isolated SQL restore, verified-backup snapshot linkage, canonical SQL bulk mutation, and live Mailu config-export import repairs passed verification. The v3 child features and production-ops finishing child are now marked done in `workflow.toml`, while the v3 root itself remains `in_progress` because the root dependency chain still passes through the v2 live Authentik browser/passkey/group-claim blocker. Cleaned stale evidence language from earlier incremental slices so old blocker notes are clearly historical and superseded rather than current truth.
+
+Verification:
+
+- Workflow state was inspected directly from `workflow.toml`.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Import live Mailu config-export password state
+
+Commit: dc409f6
+
+Affected files:
+
+- `internal/ops/v3.go`
+- `internal/ops/v3_test.go`
+- `internal/ops/v3_sql_test.go`
+- `internal/api/v3.go`
+- `internal/api/api_test.go`
+- `test/fixtures/mailu/config-export.json`
+- `test/fixtures/mailu/config-export-secrets.json`
+- `docs/reference/authentik-password-hashing.md`
+- `docs/implementation/v3-ops-import-admin.md`
+- `workflow/COVERAGE.md`
+- `workflow/features/v3.ops-import-admin/production-ops/evidence/2026-07-18-full-finish-blockers.md`
+- `workflow/features/v3.ops-import-admin/production-ops/evidence/2026-07-18-mailu-live-import-passwords.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added live Mailu `config-export --json` import parsing instead of relying only on synthetic candidate arrays. The importer now reads Mailu's top-level `domain`, `user`, `alias`, and `relay` export shape, preserves multi-destination aliases, rejects redacted non-secret password exports for user password preservation, and wraps Mailu Passlib `bcrypt-sha256` hashes from `config-export --secrets --json` as `mailu_bcrypt_sha256$<original-mailu-passlib-hash>`. Added SQL import apply for configured deployments so admissible Mailu imports write canonical `domains`, `mailboxes`, `aliases`, and `relays`, reload daemon state from SQL, verify imported recipients from persisted state, and write durable SQL audit through the API route. This records Bryce's proven Authentik migration mechanism without pretending Mailu hashes can be losslessly converted to Django `bcrypt_sha256` or locally verified by the existing PBKDF2-only Dovecot verifier.
+
+Verification:
+
+- Confirmed `go test -count=1 ./internal/ops` passes with live Mailu export fixture coverage.
+- Confirmed `go test -count=1 ./internal/ops ./internal/api` passes with canonical SQL import apply and API route coverage.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Apply bulk operations to canonical SQL state
+
+Commit: 0b2eef4
+
+Affected files:
+
+- `internal/ops/v3.go`
+- `internal/ops/v3_sql_test.go`
+- `internal/api/v3.go`
+- `internal/api/api_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v3.ops-import-admin/production-ops/evidence/2026-07-18-full-finish-blockers.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added canonical SQL-backed bulk mutation for configured v3 deployments. Bulk apply still requires preview binding, actor match, operation match, preview ID confirmation, preview hash, expiry, and non-empty item scope, but SQL-configured routes now mutate canonical `mailboxes` and `aliases` rows instead of only memory maps. `disable-users` and `enable-users` update mailbox enabled state, `delete-aliases` deletes alias rows, and durable audit events are written through the SQL audit writer. README and coverage records were narrowed so durable canonical bulk mutations are no longer listed as an open v3 blocker.
+
+Verification:
+
+- Confirmed `go test -count=1 ./internal/ops` passes with canonical SQL bulk mutation and durable audit coverage.
+- Confirmed `go test -count=1 ./internal/api` passes with SQL-backed bulk API mutation coverage.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Persist snapshot linkage to verified backups
+
+Commit: 2c4050b
+
+Affected files:
+
+- `internal/ops/v3.go`
+- `internal/ops/v3_sql_test.go`
+- `internal/api/v3.go`
+- `internal/api/api_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v3.ops-import-admin/production-ops/evidence/2026-07-18-full-finish-blockers.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added persisted SQL snapshot linkage for configured v3 deployments. `ops.SQLSnapshotStore` can capture, list, and retrieve snapshots from the canonical `snapshots` table, link snapshots to `backup_verifications`, and derive verified restore status from the linked backup verification row. The v3 snapshot API now reads persisted SQL snapshots when a DB is configured for list, detail/rollback guidance, and diff routes. README and coverage records were narrowed so persisted snapshot linkage is no longer listed as an open v3 blocker.
+
+Verification:
+
+- Confirmed `go test -count=1 ./internal/ops` passes with persisted snapshot/verified-backup linkage coverage.
+- Confirmed `go test -count=1 ./internal/api` passes with SQL-backed snapshot API coverage.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Add isolated SQL backup restore verification engine
+
+Commit: 6caa51d
+
+Affected files:
+
+- `internal/ops/v3.go`
+- `internal/ops/v3_sql_test.go`
+- `internal/api/v3.go`
+- `internal/api/api_test.go`
+- `workflow/COVERAGE.md`
+- `workflow/features/v3.ops-import-admin/production-ops/evidence/2026-07-18-full-finish-blockers.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added a real isolated SQL restore verification mechanism for configured v3 backup verification paths. The new restore engine migrates an isolated empty SQL database, restores backup artifact domain/mailbox/alias state into canonical tables, reloads daemon contract state from SQL, and runs daemon recipient contract verification against that restored state instead of only checking an in-process model. SQL backup verification recording now preserves the restore-engine reference, and the v3 API uses the configured runtime restore engine when SQL verification is enabled. The README and coverage map were narrowed so they no longer claim isolated SQL restore is still entirely absent, while preserving the remaining v3 blockers: live-compatible Mailu import, durable canonical bulk mutations, and persisted snapshot linkage.
+
+Verification:
+
+- Confirmed `go test -count=1 ./internal/ops` passes with SQL isolated restore, dirty restore DB rejection, and persisted restore-ref coverage.
+- Confirmed `go test -count=1 ./internal/api` passes with API backup verification using a configured SQL isolated restore engine.
+- Full repository verification is run before commit.
+
+### 2026-07-18 CDT — Record root README implementation blockers
+
+Commit: 12c003f
+
+Affected files:
+
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added a root README blocker section that exposes the remaining real implementation gaps instead of burying them in workflow evidence. The README now states that v2 still needs interactive browser/passkey Authentik authorization-code redemption with the runtime client secret and live `gophermailforge-admins` group-claim assertion. It also states that v3 still needs a real isolated restore engine, live-compatible Mailu import, durable canonical bulk mutations, and snapshot linkage, and explicitly rejects fake bulk SQL paperwork as a completion substitute.
+
+Verification:
+
+- Confirmed `git diff --check -- README.md docs/CHANGELOG.md` passes.
+
 ### 2026-07-18 CDT — Persist v3 backup verification records
 
 Commit: 88355de

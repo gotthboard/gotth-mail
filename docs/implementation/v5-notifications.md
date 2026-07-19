@@ -25,7 +25,7 @@ Every RPC requires plugin service identity authentication, correlation ID metada
 
 ## Telegram plugin
 
-Telegram runs as a separate Docker container. It receives sanitized payloads from core and calls Telegram APIs. It does not read core DB state directly and never mutates canonical state.
+Telegram runs as a separate Docker container. The current reference container is `telegram-notification-sink`, exposed as `notification-plugin:9443` on the existing authenticated `PluginControl` gRPC seam with notification health/version/capabilities and the notification-specific `NotificationBackend.SendAlert`/`SendPrompt` protobuf service. The current sink accepts sanitized alert/prompt payloads inside the repo-owned container smoke; live Telegram API delivery remains required before this is a real Telegram backend. The plugin does not read core DB state directly and never mutates canonical state.
 
 Telegram plugin config:
 
@@ -59,7 +59,7 @@ pending -> delivered
         -> failed_permanent
 ```
 
-Notification delivery failures are recorded in core status and visible to operators.
+Notification delivery failures are recorded in core status and visible to operators. Configured SQL deployments store delivery records in `notification_deliveries`; operators can read bounded delivery status through `GET /api/v1/notifications/deliveries` and `GET /api/v1/notifications/deliveries/{alert_id}` with `notification:read` authorization. The notification backend gRPC seam accepts delivery status from the sink but does not grant state mutation authority to the plugin.
 
 ## Read-only commands
 
@@ -78,11 +78,11 @@ Command flow:
 telegram update -> authenticate actor -> map identity -> authorize read action -> query bounded summary -> audit request -> send response
 ```
 
-Read-only responses must be bounded summaries. No raw logs, secrets, private keys, full tokens, or broad shell output.
+Read-only responses must be bounded summaries. No raw logs, secrets, private keys, full tokens, or broad shell output. The local command core maps the transport actor, authorizes the command-specific read action, calls only a `CommandProvider` summary interface, redacts/bounds returned text, and audits denied, failed, and successful attempts. `notifyruntime.RuntimeCommandProvider` supplies real bounded summaries from existing doctor, queue, domain, backup, deployment, and plugin state objects without invoking shell commands or broad logs.
 
 ## Actor mapping
 
-Telegram actor mapping is explicit. Chat membership is not authorization.
+Telegram actor mapping is explicit. Chat membership is not authorization. Configured SQL deployments store mappings in `notification_actor_mappings` and require an exact `(transport, external_actor_id)` mapping to an `authz.Actor` before command or approval handling can proceed.
 
 Mapping sources may include:
 
@@ -93,6 +93,8 @@ Mapping sources may include:
 
 Approval workflows cannot be enabled until mapping is configured and verified.
 
+The local SQL core now provides this mapping store, and the local read-only command dispatcher consumes it. Runtime summary providers exist for configured state objects. The Telegram update receiver core now parses Telegram-shaped command/callback updates and routes them into `CommandService` and `SQLApprovalStore`; live Telegram webhook/API delivery remains pending.
+
 ## Approval workflow
 
 Supported approvals:
@@ -102,6 +104,8 @@ Supported approvals:
 - queue flush/retry
 - rollback
 - break-glass use
+
+Configured SQL deployments store prompt bindings in `notification_approvals`; confirmation accepts only the exact original transport actor, mapped actor, action, resource, request hash, and unexpired prompt ID. Mismatched, replayed, and expired confirmations fail closed before any mutation path can run.
 
 Prompt record fields:
 
@@ -135,7 +139,7 @@ Rejection cases:
 - changed preview/request hash
 - unauthorized actor
 
-Telegram carries the prompt only. Core decides authorization, validates confirmation, performs mutation, and writes audit events.
+Telegram carries the prompt only. Core decides authorization, validates confirmation, performs mutation, and writes audit events. The current local implementation receives approval callbacks, validates durable SQL prompt binding, and can execute only the narrow approved queue mutation set through `notifyruntime.ApprovalExecutor` (`queue:flush`, `queue:retry`). There is no generic chat-to-shell or arbitrary mutation registry.
 
 ## Non-goals
 

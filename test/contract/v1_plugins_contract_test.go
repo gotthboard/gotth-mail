@@ -12,13 +12,109 @@ func TestV1ReferenceComposeIncludesFirstPluginContainers(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"external-webmail-plugin:", "manual-dns-plugin:", "cert-plugin:", "backup-plugin:", "GMF_PLUGIN_NAME: external-webmail", "GMF_PLUGIN_NAME: manual-dns-export", "GMF_PLUGIN_NAME: manual-letsencrypt-cert", "GMF_PLUGIN_NAME: local-filesystem-backup"} {
+	for _, want := range []string{"external-webmail-plugin:", "manual-dns-plugin:", "cert-plugin:", "backup-plugin:", "notification-plugin:", "GMF_PLUGIN_NAME: external-webmail", "GMF_PLUGIN_NAME: manual-dns-export", "GMF_PLUGIN_NAME: manual-letsencrypt-cert", "GMF_PLUGIN_NAME: local-filesystem-backup", "GMF_PLUGIN_NAME: telegram-notification-sink"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("compose missing %q", want)
 		}
 	}
 	if strings.Contains(s, "/var/run/docker.sock") {
 		t.Fatal("plugin containers must not mount Docker socket")
+	}
+}
+
+func TestReferenceComposeIncludesContainerizedMailuImportFixture(t *testing.T) {
+	b, err := os.ReadFile("../../compose/reference/docker-compose.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"test-runner:", "target: build", "mailu-redis:", "mailu-admin:", "profiles: [\"mailu-import\"]", "ghcr.io/mailu/admin:2.0", "REDIS_HOST: mailu-redis", "mailu-data:", "mailu-dkim:", "mailu-redis:"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("containerized Mailu fixture missing %q", want)
+		}
+	}
+	b, err = os.ReadFile("../../scripts/containerized-mailu-import-smoke.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = string(b)
+	for _, want := range []string{"--profile mailu-import", "flask mailu config-export --secrets --json", "mktemp -d", "go test -count=1 ./internal/ops ./internal/api", "containerized Mailu import smoke passed"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("containerized Mailu smoke missing %q", want)
+		}
+	}
+	if strings.Contains(s, "test/fixtures/mailu/config-export-secrets.json >") || strings.Contains(s, "test/fixtures/mailu/config-export.json >") {
+		t.Fatal("containerized smoke must not overwrite checked-in fixtures")
+	}
+}
+
+func TestReferenceComposeIncludesContainerizedWebmailSMTPSmoke(t *testing.T) {
+	b, err := os.ReadFile("../../scripts/containerized-webmail-smtp-smoke.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"gophermailforge postfix dovecot rspamd", "GMF_LIVE_SMTP_ADDR=postfix:25", "TestNetSMTPSubmitterLiveComposePostfix", "TestOpenPGPMIMESignerProducesVerifiableExactSenderSignature", "TestOpenPGPMIMEVerifierRejectsTamperedSignedPart", "find /mail/example.test/smoke/new", "containerized webmail SMTP smoke passed"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("containerized webmail SMTP smoke missing %q", want)
+		}
+	}
+}
+
+func TestReferenceComposeIncludesContainerizedWebmailIMAPSmoke(t *testing.T) {
+	b, err := os.ReadFile("../../scripts/containerized-webmail-imap-smoke.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"gophermailforge postfix dovecot rspamd", "GMF_LIVE_IMAP_ADDR=dovecot:143", "GMF_LIVE_IMAP_USER=smoke@example.test", "GMF_LIVE_IMAP_PASSWORD=smoke-secret", "TestNetIMAPClientLiveComposeDovecot", "containerized webmail IMAP smoke passed"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("containerized webmail IMAP smoke missing %q", want)
+		}
+	}
+}
+
+func TestReferenceComposeIncludesContainerizedCustomWebmailUISmoke(t *testing.T) {
+	b, err := os.ReadFile("../../scripts/containerized-webmail-ui-smoke.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"gophermailforge", "GMF_LIVE_WEBMAIL_UI_URL=http://gophermailforge:8080", "TestLiveContainerWebmailShellReachable", "containerized custom webmail UI smoke passed"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("containerized custom webmail UI smoke missing %q", want)
+		}
+	}
+}
+
+func TestReferenceComposeIncludesContainerizedNotificationPluginSmoke(t *testing.T) {
+	b, err := os.ReadFile("../../scripts/containerized-notification-plugin-smoke.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"notification-plugin", "GMF_LIVE_PLUGIN_ENDPOINT=notification-plugin:9443", "GMF_LIVE_PLUGIN_NAME=telegram-notification-sink", "GMF_LIVE_PLUGIN_TOKEN=dev-plugin-token", "TestLivePluginControlOverGRPC", "TestLiveNotificationBackendOverGRPC", "TestRuntimeCommandProvider", "TestTelegramReceiver", "TestApprovalExecutor", "containerized notification plugin gRPC/backend smoke passed"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("containerized notification plugin smoke missing %q", want)
+		}
+	}
+}
+
+func TestContainerSmokesRebuildTestRunner(t *testing.T) {
+	for _, path := range []string{
+		"../../scripts/containerized-mailu-import-smoke.sh",
+		"../../scripts/containerized-webmail-smtp-smoke.sh",
+		"../../scripts/containerized-webmail-imap-smoke.sh",
+		"../../scripts/containerized-webmail-ui-smoke.sh",
+		"../../scripts/containerized-notification-plugin-smoke.sh",
+	} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), `build test-runner`) {
+			t.Fatalf("%s must rebuild test-runner before running containerized tests", path)
+		}
 	}
 }
 

@@ -12,6 +12,13 @@ import (
 )
 
 func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
+	mux.HandleFunc("/webmail", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, http.MethodGet) {
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(webmailShellHTML))
+	})
 	require := func(w http.ResponseWriter, r *http.Request) (authz.Actor, string, bool) {
 		a, err := ids.AuthenticateBearer(r.Header.Get("Authorization"), "api_token")
 		if err != nil {
@@ -32,6 +39,9 @@ func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
 	}
 	client := s.WebmailClient
 	sender := s.WebmailSender
+	if sender != nil && sender.Store == nil && s.AuditDB != nil {
+		sender.Store = webmail.SQLDraftStore{DB: s.AuditDB}
+	}
 	mux.HandleFunc("/api/v1/webmail/folders", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, http.MethodGet) {
 			return
@@ -131,7 +141,13 @@ func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
 			http.Error(w, "draft sender must match authenticated actor", http.StatusForbidden)
 			return
 		}
-		writeJSON(w, sender.SaveDraft(d))
+		d.ID = ""
+		saved, err := sender.SaveDraftContext(r.Context(), d)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		writeJSON(w, saved)
 	})
 	mux.HandleFunc("/api/v1/webmail/drafts/", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, http.MethodPost) {
@@ -150,7 +166,11 @@ func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
 			http.NotFound(w, r)
 			return
 		}
-		draft, ok := sender.Draft(id)
+		draft, ok, err := sender.DraftContext(r.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -167,6 +187,8 @@ func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
 		writeJSON(w, d)
 	})
 }
+
+const webmailShellHTML = `<!doctype html><html><head><meta charset="utf-8"><title>GopherMailForge Webmail</title></head><body><main id="gmf-webmail"><h1>GopherMailForge Webmail</h1><p id="transport-note">Custom webmail shell backed by the GopherMailForge webmail API, Dovecot IMAP, SMTP submission, durable drafts, and conservative text-only message rendering.</p><section id="folders"><h2>Folders</h2><p>Loads from <code>/api/v1/webmail/folders</code> with a mailbox-scoped bearer token.</p></section><section id="messages"><h2>Messages</h2><p>Lists, searches, and reads via <code>/api/v1/webmail/messages</code>. HTML message bodies are treated as data unless a real sanitizer/browser proof is admitted.</p></section><section id="drafts"><h2>Drafts</h2><p>Saves mailbox-owned drafts through <code>/api/v1/webmail/drafts</code>; submit requires exact sender signing and SMTP submission.</p></section></main></body></html>`
 
 func webmailMailboxScope(a authz.Actor) string {
 	for _, scope := range a.Scopes {

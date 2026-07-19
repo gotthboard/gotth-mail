@@ -3,7 +3,9 @@ package webmail
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"html"
 	"mime"
@@ -151,29 +153,125 @@ type Draft struct {
 	ReplyTo, ForwardOf          string
 	SigningFingerprint          string
 }
+type DraftStore interface {
+	PutDraft(context.Context, Draft) error
+	Draft(context.Context, string) (Draft, bool, error)
+}
+
 type Sender struct {
 	Drafts   map[string]Draft
+	Store    DraftStore
 	SMTP     SMTPSubmitter
 	Signer   OpenPGPSigner
 	Resolver SenderIdentityResolver
 	Audit    audit.Writer
 }
 
-func (s *Sender) SaveDraft(d Draft) Draft {
-	if s.Drafts == nil {
-		s.Drafts = map[string]Draft{}
+type memoryDraftStore struct{ drafts *map[string]Draft }
+
+func (m memoryDraftStore) PutDraft(ctx context.Context, d Draft) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	if *m.drafts == nil {
+		*m.drafts = map[string]Draft{}
+	}
+	(*m.drafts)[d.ID] = d
+	return nil
+}
+func (m memoryDraftStore) Draft(ctx context.Context, id string) (Draft, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Draft{}, false, err
+	}
+	if *m.drafts == nil {
+		return Draft{}, false, nil
+	}
+	d, ok := (*m.drafts)[id]
+	return d, ok, nil
+}
+
+type SQLDraftStore struct{ DB *sql.DB }
+
+func (s SQLDraftStore) PutDraft(ctx context.Context, d Draft) error {
+	if s.DB == nil {
+		return errors.New("webmail draft db required")
+	}
+	if d.ID == "" || d.From == "" {
+		return errors.New("draft id and mailbox required")
+	}
+	state := d.State
+	if state == "" {
+		state = "draft"
+	}
+	attachments, err := json.Marshal(d.Attachments)
+	if err != nil {
+		return err
+	}
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO webmail_drafts(id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, reply_to, forward_of, attachments_json, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (id) DO UPDATE SET to_addr=EXCLUDED.to_addr, subject=EXCLUDED.subject, body_text=EXCLUDED.body_text, signing_fingerprint=EXCLUDED.signing_fingerprint, state=EXCLUDED.state, reply_to=EXCLUDED.reply_to, forward_of=EXCLUDED.forward_of, attachments_json=EXCLUDED.attachments_json, updated_at=CURRENT_TIMESTAMP WHERE webmail_drafts.mailbox=EXCLUDED.mailbox`, d.ID, strings.ToLower(d.From), d.To, d.Subject, d.Body, d.SigningFingerprint, state, d.ReplyTo, d.ForwardOf, string(attachments))
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return errors.New("draft mailbox ownership mismatch")
+	}
+	return nil
+}
+func (s SQLDraftStore) Draft(ctx context.Context, id string) (Draft, bool, error) {
+	if s.DB == nil {
+		return Draft{}, false, errors.New("webmail draft db required")
+	}
+	var d Draft
+	var attachments string
+	err := s.DB.QueryRowContext(ctx, `SELECT id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, reply_to, forward_of, attachments_json FROM webmail_drafts WHERE id=$1`, id).Scan(&d.ID, &d.From, &d.To, &d.Subject, &d.Body, &d.SigningFingerprint, &d.State, &d.ReplyTo, &d.ForwardOf, &attachments)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Draft{}, false, nil
+	}
+	if err != nil {
+		return Draft{}, false, err
+	}
+	if attachments != "" {
+		if err := json.Unmarshal([]byte(attachments), &d.Attachments); err != nil {
+			return Draft{}, false, err
+		}
+	}
+	return d, true, nil
+}
+
+func (s *Sender) draftStore() DraftStore {
+	if s.Store != nil {
+		return s.Store
+	}
+	return memoryDraftStore{drafts: &s.Drafts}
+}
+
+func (s *Sender) putDraft(ctx context.Context, d Draft) error { return s.draftStore().PutDraft(ctx, d) }
+
+func (s *Sender) SaveDraft(d Draft) Draft {
+	saved, err := s.SaveDraftContext(context.Background(), d)
+	if err != nil {
+		d.State = "failed"
+		return d
+	}
+	return saved
+}
+
+func (s *Sender) SaveDraftContext(ctx context.Context, d Draft) (Draft, error) {
+	store := s.draftStore()
 	if d.ID == "" {
 		for {
 			d.ID = "draft-" + strings.ReplaceAll(safeToken(12), "=", "")
-			if _, exists := s.Drafts[d.ID]; !exists {
+			if _, exists, err := store.Draft(ctx, d.ID); err != nil {
+				return Draft{}, err
+			} else if !exists {
 				break
 			}
 		}
 	}
 	d.State = "draft"
-	s.Drafts[d.ID] = d
-	return d
+	if err := store.PutDraft(ctx, d); err != nil {
+		return Draft{}, err
+	}
+	return d, nil
 }
 func (s *Sender) Reply(orig Message, from, body string) Draft {
 	return s.SaveDraft(Draft{From: from, To: orig.From, Subject: "Re: " + orig.Subject, Body: body, ReplyTo: orig.ID})
@@ -182,12 +280,22 @@ func (s *Sender) Forward(orig Message, from, to string) Draft {
 	return s.SaveDraft(Draft{From: from, To: to, Subject: "Fwd: " + orig.Subject, Body: orig.BodyText, ForwardOf: orig.ID, Attachments: orig.Attachments})
 }
 func (s *Sender) Draft(id string) (Draft, bool) {
-	d, ok := s.Drafts[id]
+	d, ok, err := s.DraftContext(context.Background(), id)
+	if err != nil {
+		return Draft{}, false
+	}
 	return d, ok
 }
 
+func (s *Sender) DraftContext(ctx context.Context, id string) (Draft, bool, error) {
+	return s.draftStore().Draft(ctx, id)
+}
+
 func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
-	d, ok := s.Drafts[id]
+	d, ok, err := s.DraftContext(ctx, id)
+	if err != nil {
+		return Draft{}, err
+	}
 	if !ok {
 		return Draft{}, errors.New("draft not found")
 	}
@@ -206,16 +314,18 @@ func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 	if d.SigningFingerprint == "" {
 		s.audit(ctx, d, "failure", "openpgp signing identity required", SignatureStatus{})
 		d.State = "failed"
-		s.Drafts[id] = d
+		_ = s.putDraft(ctx, d)
 		return d, errors.New("OpenPGP signing identity required")
 	}
 	d.State = "queued_for_submission"
-	s.Drafts[id] = d
+	if err := s.putDraft(ctx, d); err != nil {
+		return d, err
+	}
 	identity, err := s.Resolver.ResolveSender(ctx, d.SigningFingerprint, d.From, "")
 	if err != nil || identity.Address != d.From || identity.Fingerprint != d.SigningFingerprint {
 		s.audit(ctx, d, "failure", "exact sender identity binding failed", SignatureStatus{})
 		d.State = "failed"
-		s.Drafts[id] = d
+		_ = s.putDraft(ctx, d)
 		if err != nil {
 			return d, err
 		}
@@ -224,35 +334,39 @@ func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 	mime, err := BuildMIME(d)
 	if err != nil {
 		d.State = "failed"
-		s.Drafts[id] = d
+		_ = s.putDraft(ctx, d)
 		return d, err
 	}
 	signed, status, err := s.Signer.SignMIME(ctx, identity, mime)
 	if err != nil || !status.Signed || status.Identity != d.From || status.Fingerprint != d.SigningFingerprint {
 		s.audit(ctx, d, "failure", "openpgp signing identity invalid", status)
 		d.State = "failed"
-		s.Drafts[id] = d
+		_ = s.putDraft(ctx, d)
 		if err != nil {
 			return d, err
 		}
 		return d, errors.New("OpenPGP signing identity invalid")
 	}
 	d.State = "submitted"
-	s.Drafts[id] = d
+	if err := s.putDraft(ctx, d); err != nil {
+		return d, err
+	}
 	if err := ValidateOpenPGPMIME(signed); err != nil {
 		s.audit(ctx, d, "failure", err.Error(), status)
 		d.State = "failed"
-		s.Drafts[id] = d
+		_ = s.putDraft(ctx, d)
 		return d, err
 	}
 	if err := s.SMTP.Submit(ctx, Envelope{From: d.From, To: []string{d.To}}, signed); err != nil {
 		s.audit(ctx, d, "failure", err.Error(), status)
 		d.State = "failed"
-		s.Drafts[id] = d
+		_ = s.putDraft(ctx, d)
 		return d, err
 	}
 	d.State = "sent"
-	s.Drafts[id] = d
+	if err := s.putDraft(ctx, d); err != nil {
+		return d, err
+	}
 	s.audit(ctx, d, "success", "", status)
 	return d, nil
 }
@@ -371,8 +485,8 @@ func SafeAttachment(a Attachment) Attachment {
 }
 
 func ValidateOpenPGPMIME(b []byte) error {
-	s := string(b)
-	if !strings.Contains(strings.ToLower(s), "multipart/signed") || !strings.Contains(strings.ToLower(s), "protocol=application/pgp-signature") || !strings.Contains(strings.ToLower(s), "micalg=") || !strings.Contains(strings.ToLower(s), "application/pgp-signature") {
+	_, _, err := splitOpenPGPMIME(b)
+	if err != nil {
 		return errors.New("invalid OpenPGP/MIME structure")
 	}
 	return nil

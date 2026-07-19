@@ -150,6 +150,51 @@ type BackupArtifact struct {
 	Aliases                    map[string]daemon.Alias
 	ConfigSetID, SchemaVersion string
 }
+
+type RestoredBackup struct {
+	Ref     string
+	Service daemon.Service
+}
+
+type IsolatedRestoreEngine interface {
+	RestoreBackup(context.Context, BackupArtifact) (RestoredBackup, error)
+}
+
+type LocalContractRestoreEngine struct{}
+
+func (LocalContractRestoreEngine) RestoreBackup(ctx context.Context, art BackupArtifact) (RestoredBackup, error) {
+	if err := ctx.Err(); err != nil {
+		return RestoredBackup{}, err
+	}
+	return RestoredBackup{Ref: "local-contract-restore", Service: daemon.Service{Domains: art.Domains, Mailboxes: art.Mailboxes, Aliases: art.Aliases}}, nil
+}
+
+type SQLIsolatedRestoreEngine struct {
+	DB  *sql.DB
+	Ref string
+}
+
+func (e SQLIsolatedRestoreEngine) RestoreBackup(ctx context.Context, art BackupArtifact) (RestoredBackup, error) {
+	if e.DB == nil {
+		return RestoredBackup{}, errors.New("isolated_restore_db_required")
+	}
+	if err := store.MigrateSQL(ctx, e.DB); err != nil {
+		return RestoredBackup{}, err
+	}
+	if err := restoreArtifactToSQL(ctx, e.DB, art); err != nil {
+		return RestoredBackup{}, err
+	}
+	svc, err := loadDaemonServiceFromSQL(ctx, e.DB)
+	if err != nil {
+		return RestoredBackup{}, err
+	}
+	ref := e.Ref
+	if ref == "" {
+		ref = "sql-isolated-restore"
+	}
+	return RestoredBackup{Ref: ref, Service: svc}, nil
+}
+
 type BackupStorage interface {
 	ReadBackup(context.Context, string) (BackupArtifact, error)
 }
@@ -166,10 +211,144 @@ func (m MemoryBackupStorage) ReadBackup(ctx context.Context, ref string) (Backup
 	return a, nil
 }
 
+func restoreArtifactToSQL(ctx context.Context, db *sql.DB, art BackupArtifact) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC()
+	domainIDs := map[string]string{}
+	ensureDomain := func(domain string, enabled bool) (string, error) {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if !store.ValidateDomainName(domain) {
+			return "", errors.New("invalid restored domain: " + domain)
+		}
+		if id, ok := domainIDs[domain]; ok {
+			return id, nil
+		}
+		id := newOpsUUID()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO domains(id, name, enabled, created_at, updated_at) VALUES ($1,$2,$3,$4,$5)`, id, domain, enabled, now, now); err != nil {
+			return "", err
+		}
+		domainIDs[domain] = id
+		return id, nil
+	}
+	for name, d := range art.Domains {
+		enabled := d.Enabled
+		if d.Name == "" {
+			d.Name = name
+		}
+		if _, err := ensureDomain(d.Name, enabled); err != nil {
+			return err
+		}
+	}
+	for addr, m := range art.Mailboxes {
+		if m.Address == "" {
+			m.Address = addr
+		}
+		parsed, err := mail.ParseAddress(strings.ToLower(m.Address))
+		if err != nil {
+			return err
+		}
+		local, domain, ok := strings.Cut(parsed.Address, "@")
+		if !ok || local == "" {
+			return errors.New("invalid restored mailbox: " + m.Address)
+		}
+		domainID, err := ensureDomain(domain, true)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO mailboxes(id, domain_id, local_part, enabled, verifier, quota_bytes, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, newOpsUUID(), domainID, local, m.Enabled, nullOpsString(m.Verifier), nullOpsInt64(m.QuotaBytes), now, now); err != nil {
+			return err
+		}
+	}
+	for addr, a := range art.Aliases {
+		if a.Address == "" {
+			a.Address = addr
+		}
+		parsed, err := mail.ParseAddress(strings.ToLower(a.Address))
+		if err != nil {
+			return err
+		}
+		local, domain, ok := strings.Cut(parsed.Address, "@")
+		if !ok || local == "" {
+			return errors.New("invalid restored alias: " + a.Address)
+		}
+		domainID, err := ensureDomain(domain, true)
+		if err != nil {
+			return err
+		}
+		targets, err := json.Marshal(a.Targets)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO aliases(id, domain_id, local_part, targets_json, enabled, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, newOpsUUID(), domainID, local, string(targets), a.Enabled, now, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func loadDaemonServiceFromSQL(ctx context.Context, db *sql.DB) (daemon.Service, error) {
+	svc := daemon.Service{Domains: map[string]daemon.Domain{}, Mailboxes: map[string]daemon.Mailbox{}, Aliases: map[string]daemon.Alias{}}
+	rows, err := db.QueryContext(ctx, `SELECT name, enabled FROM domains`)
+	if err != nil {
+		return svc, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d daemon.Domain
+		if err := rows.Scan(&d.Name, &d.Enabled); err != nil {
+			return svc, err
+		}
+		svc.Domains[strings.ToLower(d.Name)] = d
+	}
+	if err := rows.Err(); err != nil {
+		return svc, err
+	}
+	rows, err = db.QueryContext(ctx, `SELECT d.name, m.local_part, m.enabled, COALESCE(m.verifier,''), COALESCE(m.quota_bytes,0) FROM mailboxes m JOIN domains d ON d.id=m.domain_id`)
+	if err != nil {
+		return svc, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var domain, local string
+		var m daemon.Mailbox
+		if err := rows.Scan(&domain, &local, &m.Enabled, &m.Verifier, &m.QuotaBytes); err != nil {
+			return svc, err
+		}
+		m.Address = strings.ToLower(local + "@" + domain)
+		svc.Mailboxes[m.Address] = m
+	}
+	if err := rows.Err(); err != nil {
+		return svc, err
+	}
+	rows, err = db.QueryContext(ctx, `SELECT d.name, a.local_part, a.enabled, a.targets_json FROM aliases a JOIN domains d ON d.id=a.domain_id`)
+	if err != nil {
+		return svc, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var domain, local, targetsJSON string
+		var a daemon.Alias
+		if err := rows.Scan(&domain, &local, &a.Enabled, &targetsJSON); err != nil {
+			return svc, err
+		}
+		_ = json.Unmarshal([]byte(targetsJSON), &a.Targets)
+		a.Address = strings.ToLower(local + "@" + domain)
+		svc.Aliases[a.Address] = a
+	}
+	return svc, rows.Err()
+}
+
+func nullOpsString(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
+func nullOpsInt64(n int64) sql.NullInt64    { return sql.NullInt64{Int64: n, Valid: n != 0} }
+
 type Backup struct {
-	ID, Status, ArtifactRef, SchemaVersion, ConfigSetID string
-	CreatedAt, VerifiedAt                               time.Time
-	FailureReport                                       FailureReport
+	ID, Status, ArtifactRef, SchemaVersion, ConfigSetID, IsolatedRestoreRef string
+	CreatedAt, VerifiedAt                                                   time.Time
+	FailureReport                                                           FailureReport
 }
 type FailureReport struct {
 	Step, SafeError, RemediationHint, CorrelationID string
@@ -177,6 +356,10 @@ type FailureReport struct {
 }
 
 func VerifyBackupFromStorage(ctx context.Context, storage BackupStorage, ref string) Backup {
+	return VerifyBackupWithRestore(ctx, storage, ref, LocalContractRestoreEngine{})
+}
+
+func VerifyBackupWithRestore(ctx context.Context, storage BackupStorage, ref string, engine IsolatedRestoreEngine) Backup {
 	b := Backup{ID: "backup", ArtifactRef: ref, Status: "verify_running"}
 	art, err := storage.ReadBackup(ctx, ref)
 	if err != nil {
@@ -186,20 +369,29 @@ func VerifyBackupFromStorage(ctx context.Context, storage BackupStorage, ref str
 	}
 	if art.SchemaVersion == "" || art.ConfigSetID == "" || len(art.Mailboxes) == 0 {
 		b.Status = "failed"
+		b.SchemaVersion = art.SchemaVersion
+		b.ConfigSetID = art.ConfigSetID
 		b.FailureReport = FailureReport{Step: "restored_state", SafeError: "backup missing schema/config/mailbox state", RemediationHint: "restore a complete backup artifact into isolated state before verification", RetryMayHelp: false}
 		return b
 	}
-	r := &store.Runner{}
-	if err := r.MigrateEmpty(); err != nil {
+	if engine == nil {
+		engine = LocalContractRestoreEngine{}
+	}
+	restored, err := engine.RestoreBackup(ctx, art)
+	b.IsolatedRestoreRef = restored.Ref
+	if err != nil {
 		b.Status = "failed"
-		b.FailureReport = FailureReport{Step: "schema", SafeError: err.Error(), RemediationHint: "restore into isolated empty database and rerun migrations", RetryMayHelp: true}
+		b.SchemaVersion = art.SchemaVersion
+		b.ConfigSetID = art.ConfigSetID
+		b.FailureReport = FailureReport{Step: "isolated_restore", SafeError: err.Error(), RemediationHint: "restore into isolated empty database/container and rerun migrations", RetryMayHelp: true}
 		return b
 	}
-	restored := daemon.Service{Domains: art.Domains, Mailboxes: art.Mailboxes, Aliases: art.Aliases}
 	for addr := range art.Mailboxes {
-		got := restored.PostfixRecipient("backup", addr)
+		got := restored.Service.PostfixRecipient("backup", addr)
 		if got.Decision != daemon.OK {
 			b.Status = "failed"
+			b.SchemaVersion = art.SchemaVersion
+			b.ConfigSetID = art.ConfigSetID
 			b.FailureReport = FailureReport{Step: "daemon_contract", SafeError: got.Reason, RemediationHint: "restore canonical mailbox/domain state before marking backup verified", CorrelationID: got.CorrelationID, RetryMayHelp: true}
 			return b
 		}
@@ -216,6 +408,7 @@ func VerifyBackup(ctx context.Context, b Backup, restored daemon.Service) Backup
 
 type SnapshotView struct {
 	ID, GeneratedConfigSetID, MigrationVersion, DeploymentPolicyHash, VerifiedRestoreStatus string
+	LinkedBackupVerificationID                                                              string
 	ImageVersions, PluginVersions                                                           []string
 }
 
@@ -225,6 +418,85 @@ func RollbackGuidance(s SnapshotView) string {
 	}
 	return "rollback may proceed only through confirmed restore workflow"
 }
+
+type SQLSnapshotStore struct{ DB *sql.DB }
+
+func (s SQLSnapshotStore) Capture(ctx context.Context, snap SnapshotView, now time.Time) (SnapshotView, error) {
+	if snap.ID == "" {
+		snap.ID = newOpsUUID()
+	}
+	if snap.MigrationVersion == "" {
+		snap.MigrationVersion = "schema_migrations"
+	}
+	if snap.DeploymentPolicyHash == "" {
+		snap.DeploymentPolicyHash = "unknown"
+	}
+	images, err := json.Marshal(snap.ImageVersions)
+	if err != nil {
+		return snap, err
+	}
+	plugins, err := json.Marshal(snap.PluginVersions)
+	if err != nil {
+		return snap, err
+	}
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO snapshots(id, name, generated_config_set_id, migration_version, image_digest_json, plugin_version_json, deployment_policy_hash, linked_backup_verification_id, captured_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, snap.ID, snap.ID, nullOpsUUID(snap.GeneratedConfigSetID), snap.MigrationVersion, string(images), string(plugins), snap.DeploymentPolicyHash, nullOpsUUID(snap.LinkedBackupVerificationID), now)
+	if err != nil {
+		return snap, err
+	}
+	got, ok, err := s.Get(ctx, snap.ID)
+	if err != nil {
+		return snap, err
+	}
+	if !ok {
+		return snap, errors.New("captured snapshot not found")
+	}
+	return got, nil
+}
+
+func (s SQLSnapshotStore) List(ctx context.Context) ([]SnapshotView, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT s.id, COALESCE(s.generated_config_set_id::text,''), s.migration_version, s.image_digest_json, s.plugin_version_json, s.deployment_policy_hash, COALESCE(s.linked_backup_verification_id::text,''), COALESCE(v.status,'unknown') FROM snapshots s LEFT JOIN backup_verifications v ON v.id=s.linked_backup_verification_id ORDER BY s.captured_at DESC, s.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SnapshotView
+	for rows.Next() {
+		snap, err := scanSnapshot(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, snap)
+	}
+	return out, rows.Err()
+}
+
+func (s SQLSnapshotStore) Get(ctx context.Context, id string) (SnapshotView, bool, error) {
+	row := s.DB.QueryRowContext(ctx, `SELECT s.id, COALESCE(s.generated_config_set_id::text,''), s.migration_version, s.image_digest_json, s.plugin_version_json, s.deployment_policy_hash, COALESCE(s.linked_backup_verification_id::text,''), COALESCE(v.status,'unknown') FROM snapshots s LEFT JOIN backup_verifications v ON v.id=s.linked_backup_verification_id WHERE s.id::text=$1 OR s.name=$1`, id)
+	snap, err := scanSnapshot(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SnapshotView{}, false, nil
+		}
+		return SnapshotView{}, false, err
+	}
+	return snap, true, nil
+}
+
+type snapshotScanner interface{ Scan(dest ...any) error }
+
+func scanSnapshot(row snapshotScanner) (SnapshotView, error) {
+	var snap SnapshotView
+	var images, plugins string
+	if err := row.Scan(&snap.ID, &snap.GeneratedConfigSetID, &snap.MigrationVersion, &images, &plugins, &snap.DeploymentPolicyHash, &snap.LinkedBackupVerificationID, &snap.VerifiedRestoreStatus); err != nil {
+		return snap, err
+	}
+	_ = json.Unmarshal([]byte(images), &snap.ImageVersions)
+	_ = json.Unmarshal([]byte(plugins), &snap.PluginVersions)
+	return snap, nil
+}
+
+func nullOpsUUID(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
+
 func SnapshotDiff(a, b SnapshotView) []string {
 	var out []string
 	if a.GeneratedConfigSetID != b.GeneratedConfigSetID {
@@ -246,8 +518,12 @@ func SnapshotDiff(a, b SnapshotView) []string {
 	return out
 }
 
+const mailuBcryptSHA256Algorithm = "mailu_bcrypt_sha256"
+const mailuBcryptSHA256Prefix = mailuBcryptSHA256Algorithm + "$"
+
 type MailuCandidate struct {
 	Type, ID, Value                                               string
+	Values                                                        []string
 	PlaintextSecret, WeakDKIMPermission, WeakRoleMapping, Revoked bool
 	VerifierAlgorithm                                             string
 }
@@ -272,11 +548,132 @@ type ImportStore struct {
 func NewImportStore() *ImportStore {
 	return &ImportStore{Previews: map[string]ImportPreview{}, Domains: map[string]daemon.Domain{}, Mailboxes: map[string]daemon.Mailbox{}, Aliases: map[string]daemon.Alias{}, Relays: map[string]string{}, DKIM: map[string]string{}, Tokens: map[string]MailuCandidate{}}
 }
-func (s *ImportStore) Preview(source string, actor audit.ActorRef, now time.Time) ImportPreview {
-	var cs []MailuCandidate
-	if err := json.Unmarshal([]byte(source), &cs); err != nil {
-		cs = []MailuCandidate{{Type: "malformed", ID: "source"}}
+
+type mailuConfigExport struct {
+	Domains []struct {
+		Name    string `json:"name"`
+		DKIMKey string `json:"dkim_key"`
+	} `json:"domain"`
+	Users []struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Enabled  *bool  `json:"enabled"`
+	} `json:"user"`
+	Aliases []struct {
+		Email       string            `json:"email"`
+		Destination mailuDestinations `json:"destination"`
+		Wildcard    bool              `json:"wildcard"`
+	} `json:"alias"`
+	Relays []struct {
+		Name string `json:"name"`
+		Host string `json:"host"`
+	} `json:"relay"`
+}
+
+type mailuDestinations []string
+
+func (d *mailuDestinations) UnmarshalJSON(raw []byte) error {
+	var many []string
+	if err := json.Unmarshal(raw, &many); err == nil {
+		*d = many
+		return nil
 	}
+	var one string
+	if err := json.Unmarshal(raw, &one); err != nil {
+		return err
+	}
+	*d = []string{one}
+	return nil
+}
+
+func parseMailuImportCandidates(source string) []MailuCandidate {
+	var cs []MailuCandidate
+	if err := json.Unmarshal([]byte(source), &cs); err == nil {
+		return cs
+	}
+	var exported mailuConfigExport
+	if err := json.Unmarshal([]byte(source), &exported); err != nil {
+		return []MailuCandidate{{Type: "malformed", ID: "source"}}
+	}
+	for _, d := range exported.Domains {
+		name := strings.ToLower(strings.TrimSpace(d.Name))
+		cs = append(cs, MailuCandidate{Type: "domain", ID: name})
+		if strings.TrimSpace(d.DKIMKey) != "" && d.DKIMKey != "<hidden>" {
+			cs = append(cs, MailuCandidate{Type: "dkim", ID: name, Value: d.DKIMKey})
+		}
+	}
+	for _, u := range exported.Users {
+		email := strings.ToLower(strings.TrimSpace(u.Email))
+		c := MailuCandidate{Type: "user", ID: email}
+		if strings.TrimSpace(u.Password) != "" {
+			c.VerifierAlgorithm = mailuBcryptSHA256Algorithm
+			c.Value = mailuBcryptSHA256Prefix + u.Password
+		}
+		if u.Enabled != nil && !*u.Enabled {
+			c.Revoked = true
+		}
+		cs = append(cs, c)
+	}
+	for _, a := range exported.Aliases {
+		cs = append(cs, MailuCandidate{Type: "alias", ID: strings.ToLower(strings.TrimSpace(a.Email)), Values: normalizeAddresses(a.Destination)})
+	}
+	for _, r := range exported.Relays {
+		id := strings.ToLower(strings.TrimSpace(r.Name))
+		if id == "" {
+			id = strings.ToLower(strings.TrimSpace(r.Host))
+		}
+		cs = append(cs, MailuCandidate{Type: "relay", ID: id, Value: strings.TrimSpace(r.Host)})
+	}
+	return cs
+}
+
+func aliasTargets(c MailuCandidate) []string {
+	if len(c.Values) > 0 {
+		return normalizeAddresses(c.Values)
+	}
+	if strings.TrimSpace(c.Value) == "" {
+		return nil
+	}
+	return normalizeAddresses([]string{c.Value})
+}
+
+func validAliasTargets(c MailuCandidate) bool {
+	for _, target := range aliasTargets(c) {
+		if !validAddress(target) {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeAddresses(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		addr := strings.ToLower(strings.TrimSpace(v))
+		if addr != "" {
+			out = append(out, addr)
+		}
+	}
+	return out
+}
+
+func validateMailuBcryptSHA256Wrapper(v string) error {
+	if !strings.HasPrefix(v, mailuBcryptSHA256Prefix) {
+		return errors.New("missing mailu bcrypt-sha256 wrapper")
+	}
+	raw := strings.TrimPrefix(v, mailuBcryptSHA256Prefix)
+	parts := strings.Split(raw, "$")
+	if len(parts) != 5 || parts[0] != "" || parts[1] != "bcrypt-sha256" || !strings.Contains(parts[2], "r=") || len(parts[3]) != 22 || len(parts[4]) != 31 {
+		return errors.New("invalid mailu bcrypt-sha256 verifier")
+	}
+	if strings.Contains(raw, "…") || strings.Contains(raw, "<hidden>") {
+		return errors.New("redacted mailu bcrypt-sha256 verifier")
+	}
+	return nil
+}
+
+func (s *ImportStore) Preview(source string, actor audit.ActorRef, now time.Time) ImportPreview {
+	cs := parseMailuImportCandidates(source)
 	items := []ImportItem{}
 	for _, c := range cs {
 		st, reason := "imported", "supported"
@@ -291,7 +688,9 @@ func (s *ImportStore) Preview(source string, actor audit.ActorRef, now time.Time
 			st, reason = "failed_validation", "invalid domain"
 		case (c.Type == "user" || c.Type == "alias") && !validAddress(c.ID):
 			st, reason = "failed_validation", "invalid address"
-		case c.Type == "alias" && !validAddress(c.Value):
+		case c.Type == "alias" && len(aliasTargets(c)) == 0:
+			st, reason = "failed_validation", "alias target required"
+		case c.Type == "alias" && !validAliasTargets(c):
 			st, reason = "failed_validation", "invalid alias target"
 		case c.Type == "user" && c.VerifierAlgorithm == "pbkdf2_sha256" && daemon.VerifyDjangoPBKDF2SHA256(c.Value, "probe") == nil:
 			st, reason = "failed_validation", "verifier unexpectedly matches probe secret"
@@ -303,10 +702,12 @@ func (s *ImportStore) Preview(source string, actor audit.ActorRef, now time.Time
 			st, reason = "manual_action_required", "dkim permission weakening requires manual review"
 		case c.WeakRoleMapping:
 			st, reason = "manual_action_required", "role mapping weakening requires manual review"
-		case c.VerifierAlgorithm != "" && c.VerifierAlgorithm != "pbkdf2_sha256":
+		case c.Type == "user" && c.VerifierAlgorithm == mailuBcryptSHA256Algorithm && validateMailuBcryptSHA256Wrapper(c.Value) != nil:
+			st, reason = "failed_validation", "invalid mailu bcrypt-sha256 verifier format"
+		case c.VerifierAlgorithm != "" && c.VerifierAlgorithm != "pbkdf2_sha256" && c.VerifierAlgorithm != mailuBcryptSHA256Algorithm:
 			st, reason = "incompatible", "unsupported verifier algorithm"
 		case c.Revoked:
-			st, reason = "skipped", "revoked token skipped"
+			st, reason = "skipped", "revoked or disabled source item skipped"
 		}
 		items = append(items, ImportItem{Type: c.Type, ID: c.ID, Status: st, Reason: reason})
 	}
@@ -323,11 +724,7 @@ func (s *ImportStore) Get(id string) (ImportPreview, bool) {
 	p, ok := s.Previews[id]
 	return p, ok
 }
-func (s *ImportStore) Apply(ctx context.Context, w audit.Writer, actor audit.ActorRef, id, hash, fingerprint string, now time.Time, base daemon.Service) error {
-	p, ok := s.Get(id)
-	if !ok {
-		return errors.New("preview not found")
-	}
+func validateImportPreviewForApply(p ImportPreview, actor audit.ActorRef, hash, fingerprint string, now time.Time) error {
 	if actor.Type != p.ActorType || actor.ID != p.ActorID {
 		return errors.New("actor mismatch")
 	}
@@ -345,6 +742,10 @@ func (s *ImportStore) Apply(ctx context.Context, w audit.Writer, actor audit.Act
 			return errors.New("preview contains inadmissible items")
 		}
 	}
+	return nil
+}
+
+func verifyAdoptedImportState(p ImportPreview, base daemon.Service) (daemon.Service, []string, error) {
 	adopted := daemon.Service{Domains: map[string]daemon.Domain{}, Mailboxes: map[string]daemon.Mailbox{}, Aliases: map[string]daemon.Alias{}, RateLimits: base.RateLimits}
 	for k, v := range base.Domains {
 		adopted.Domains[k] = v
@@ -357,6 +758,9 @@ func (s *ImportStore) Apply(ctx context.Context, w audit.Writer, actor audit.Act
 	}
 	var importedMailboxes []string
 	for _, c := range p.Candidates {
+		if c.Revoked {
+			continue
+		}
 		switch c.Type {
 		case "domain":
 			adopted.Domains[c.ID] = daemon.Domain{Name: c.ID, Enabled: true}
@@ -364,32 +768,50 @@ func (s *ImportStore) Apply(ctx context.Context, w audit.Writer, actor audit.Act
 			adopted.Mailboxes[c.ID] = daemon.Mailbox{Address: c.ID, Enabled: true, Verifier: c.Value}
 			importedMailboxes = append(importedMailboxes, c.ID)
 		case "alias":
-			adopted.Aliases[c.ID] = daemon.Alias{Address: c.ID, Enabled: true, Targets: []string{c.Value}}
+			adopted.Aliases[c.ID] = daemon.Alias{Address: c.ID, Enabled: true, Targets: aliasTargets(c)}
 		}
 	}
 	if len(importedMailboxes) == 0 && len(adopted.Mailboxes) == 0 {
-		return errors.New("daemon contract verification missing")
+		return adopted, importedMailboxes, errors.New("daemon contract verification missing")
 	}
 	for _, addr := range importedMailboxes {
 		domain := addr[strings.LastIndex(addr, "@")+1:]
 		if d, ok := adopted.Domains[domain]; !ok || !d.Enabled {
-			return errors.New("imported mailbox domain missing or disabled")
+			return adopted, importedMailboxes, errors.New("imported mailbox domain missing or disabled")
 		}
 		if got := adopted.PostfixRecipient("import", addr); got.Decision != daemon.OK {
-			return errors.New("imported daemon contract verification failed: " + got.Reason)
+			return adopted, importedMailboxes, errors.New("imported daemon contract verification failed: " + got.Reason)
 		}
 	}
 	if len(importedMailboxes) == 0 {
 		for addr := range adopted.Mailboxes {
 			if got := adopted.PostfixRecipient("import", addr); got.Decision != daemon.OK {
-				return errors.New("daemon contract verification failed: " + got.Reason)
+				return adopted, importedMailboxes, errors.New("daemon contract verification failed: " + got.Reason)
 			}
 			break
 		}
 	}
+	return adopted, importedMailboxes, nil
+}
+
+func (s *ImportStore) Apply(ctx context.Context, w audit.Writer, actor audit.ActorRef, id, hash, fingerprint string, now time.Time, base daemon.Service) error {
+	p, ok := s.Get(id)
+	if !ok {
+		return errors.New("preview not found")
+	}
+	if err := validateImportPreviewForApply(p, actor, hash, fingerprint, now); err != nil {
+		return err
+	}
+	adopted, _, err := verifyAdoptedImportState(p, base)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, c := range p.Candidates {
+		if c.Revoked {
+			continue
+		}
 		switch c.Type {
 		case "domain":
 			s.Domains[c.ID] = adopted.Domains[c.ID]
@@ -406,6 +828,118 @@ func (s *ImportStore) Apply(ctx context.Context, w audit.Writer, actor audit.Act
 				s.Tokens[c.ID] = c
 			}
 		}
+	}
+	return w.Write(ctx, audit.Event{Actor: actor, Action: "import.mailu.apply", Resource: audit.ResourceRef{Type: "import_preview", ID: p.ID}, Result: "success"})
+}
+
+type SQLImportStore struct{ DB *sql.DB }
+
+func (s SQLImportStore) Apply(ctx context.Context, w audit.Writer, previews *ImportStore, actor audit.ActorRef, id, hash, fingerprint string, now time.Time) error {
+	if s.DB == nil {
+		return errors.New("sql import db required")
+	}
+	if previews == nil {
+		return errors.New("import preview store required")
+	}
+	p, ok := previews.Get(id)
+	if !ok {
+		return errors.New("preview not found")
+	}
+	if err := validateImportPreviewForApply(p, actor, hash, fingerprint, now); err != nil {
+		return err
+	}
+	base, err := loadDaemonServiceFromSQL(ctx, s.DB)
+	if err != nil {
+		return err
+	}
+	if _, _, err := verifyAdoptedImportState(p, base); err != nil {
+		return err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	domainIDs := map[string]string{}
+	ensureDomain := func(domain string, enabled bool) (string, error) {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if !store.ValidateDomainName(domain) {
+			return "", errors.New("invalid import domain: " + domain)
+		}
+		if id, ok := domainIDs[domain]; ok {
+			return id, nil
+		}
+		var id string
+		if err := tx.QueryRowContext(ctx, `INSERT INTO domains(id, name, enabled, created_at, updated_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (name) DO UPDATE SET enabled=EXCLUDED.enabled, updated_at=EXCLUDED.updated_at RETURNING id`, newOpsUUID(), domain, enabled, now, now).Scan(&id); err != nil {
+			return "", err
+		}
+		domainIDs[domain] = id
+		return id, nil
+	}
+	for _, c := range p.Candidates {
+		if c.Revoked {
+			continue
+		}
+		if c.Type == "domain" {
+			if _, err := ensureDomain(c.ID, true); err != nil {
+				return err
+			}
+		}
+	}
+	for _, c := range p.Candidates {
+		if c.Revoked {
+			continue
+		}
+		switch c.Type {
+		case "user":
+			local, domain, ok := strings.Cut(c.ID, "@")
+			if !ok || local == "" {
+				return errors.New("invalid import mailbox: " + c.ID)
+			}
+			domainID, err := ensureDomain(domain, true)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO mailboxes(id, domain_id, local_part, enabled, verifier, created_at, updated_at) VALUES ($1,$2,$3,true,$4,$5,$6) ON CONFLICT (domain_id, local_part) DO UPDATE SET enabled=EXCLUDED.enabled, verifier=EXCLUDED.verifier, updated_at=EXCLUDED.updated_at`, newOpsUUID(), domainID, local, nullOpsString(c.Value), now, now); err != nil {
+				return err
+			}
+		case "alias":
+			local, domain, ok := strings.Cut(c.ID, "@")
+			if !ok || local == "" {
+				return errors.New("invalid import alias: " + c.ID)
+			}
+			domainID, err := ensureDomain(domain, true)
+			if err != nil {
+				return err
+			}
+			targets, err := json.Marshal(aliasTargets(c))
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO aliases(id, domain_id, local_part, targets_json, enabled, created_at, updated_at) VALUES ($1,$2,$3,$4,true,$5,$6) ON CONFLICT (domain_id, local_part) DO UPDATE SET targets_json=EXCLUDED.targets_json, enabled=EXCLUDED.enabled, updated_at=EXCLUDED.updated_at`, newOpsUUID(), domainID, local, string(targets), now, now); err != nil {
+				return err
+			}
+		case "relay":
+			if strings.TrimSpace(c.Value) == "" {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM relays WHERE name=$1 AND target=$2`, c.ID, c.Value); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO relays(id, name, target, enabled, created_at, updated_at) VALUES ($1,$2,$3,true,$4,$5)`, newOpsUUID(), c.ID, c.Value, now, now); err != nil {
+				return err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	adopted, err := loadDaemonServiceFromSQL(ctx, s.DB)
+	if err != nil {
+		return err
+	}
+	if _, _, err := verifyAdoptedImportState(p, adopted); err != nil {
+		return err
 	}
 	return w.Write(ctx, audit.Event{Actor: actor, Action: "import.mailu.apply", Resource: audit.ResourceRef{Type: "import_preview", ID: p.ID}, Result: "success"})
 }
@@ -503,6 +1037,84 @@ func (s *BulkStore) Preview(operation string, items []string, actor audit.ActorR
 	s.mu.Unlock()
 	return p, nil
 }
+
+type SQLBulkStore struct{ DB *sql.DB }
+
+func (s SQLBulkStore) Apply(ctx context.Context, w audit.Writer, previews *BulkStore, actor audit.ActorRef, operation, id, confirm, hash string, now time.Time) ([]BulkResult, error) {
+	previews.mu.Lock()
+	p, ok := previews.Previews[id]
+	previews.mu.Unlock()
+	if !ok {
+		return nil, errors.New("bulk preview not found")
+	}
+	if actor.ID != p.ActorID {
+		return nil, errors.New("actor mismatch")
+	}
+	if operation != p.Operation {
+		return nil, errors.New("bulk operation mismatch")
+	}
+	if now.After(p.ExpiresAt) {
+		return nil, errors.New("preview expired")
+	}
+	if confirm != p.ID || hash != p.Hash {
+		return nil, errors.New("bulk confirmation mismatch")
+	}
+	out := make([]BulkResult, 0, len(p.Items))
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	for _, item := range p.Items {
+		item = strings.ToLower(strings.TrimSpace(item))
+		res := BulkResult{Item: item, Status: "success"}
+		if item == "" {
+			return nil, errors.New("bulk item scope required")
+		}
+		var affected int64
+		switch p.Operation {
+		case "disable-users", "enable-users":
+			local, domain, ok := strings.Cut(item, "@")
+			if !ok || local == "" || !store.ValidateDomainName(domain) {
+				return nil, errors.New("invalid bulk mailbox: " + item)
+			}
+			enabled := p.Operation == "enable-users"
+			r, err := tx.ExecContext(ctx, `UPDATE mailboxes SET enabled=$1, updated_at=$2 FROM domains WHERE mailboxes.domain_id=domains.id AND domains.name=$3 AND mailboxes.local_part=$4`, enabled, now, domain, local)
+			if err != nil {
+				return nil, err
+			}
+			affected, _ = r.RowsAffected()
+		case "delete-aliases":
+			local, domain, ok := strings.Cut(item, "@")
+			if !ok || local == "" || !store.ValidateDomainName(domain) {
+				return nil, errors.New("invalid bulk alias: " + item)
+			}
+			r, err := tx.ExecContext(ctx, `DELETE FROM aliases USING domains WHERE aliases.domain_id=domains.id AND domains.name=$1 AND aliases.local_part=$2`, domain, local)
+			if err != nil {
+				return nil, err
+			}
+			affected, _ = r.RowsAffected()
+		default:
+			return nil, errors.New("unsupported bulk operation")
+		}
+		if affected == 0 {
+			res.Status = "not_found"
+			res.Reason = "canonical record not found"
+		}
+		out = append(out, res)
+		if err := w.Write(ctx, audit.Event{Actor: actor, Action: "bulk." + p.Operation, Resource: audit.ResourceRef{Type: "bulk_item", ID: item}, Result: "success"}); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	previews.mu.Lock()
+	previews.Jobs[p.ID] = BulkJob{ID: p.ID, Results: out}
+	previews.mu.Unlock()
+	return out, nil
+}
+
 func (s *BulkStore) Apply(ctx context.Context, w audit.Writer, actor audit.ActorRef, operation, id, confirm, hash string, now time.Time) ([]BulkResult, error) {
 	s.mu.Lock()
 	p, ok := s.Previews[id]
@@ -587,6 +1199,7 @@ type V3Runtime struct {
 	ImportStore    *ImportStore
 	BulkStore      *BulkStore
 	BackupStore    MemoryBackupStorage
+	RestoreEngine  IsolatedRestoreEngine
 	Snapshots      map[string]SnapshotView
 }
 
@@ -752,13 +1365,20 @@ func nullAuditString(s string) sql.NullString { return sql.NullString{String: s,
 type SQLBackupVerificationStore struct{ DB *sql.DB }
 
 func (s SQLBackupVerificationStore) VerifyAndRecord(ctx context.Context, storage BackupStorage, ref, pluginID, isolatedRestoreRef string, now time.Time) (Backup, error) {
+	return s.VerifyAndRecordWithRestore(ctx, storage, ref, pluginID, isolatedRestoreRef, LocalContractRestoreEngine{}, now)
+}
+
+func (s SQLBackupVerificationStore) VerifyAndRecordWithRestore(ctx context.Context, storage BackupStorage, ref, pluginID, isolatedRestoreRef string, engine IsolatedRestoreEngine, now time.Time) (Backup, error) {
 	if pluginID == "" {
 		pluginID = "configured-backup"
+	}
+	b := VerifyBackupWithRestore(ctx, storage, ref, engine)
+	if isolatedRestoreRef == "" {
+		isolatedRestoreRef = b.IsolatedRestoreRef
 	}
 	if isolatedRestoreRef == "" {
 		isolatedRestoreRef = "local-contract-restore"
 	}
-	b := VerifyBackupFromStorage(ctx, storage, ref)
 	if b.Status == "failed" && b.SchemaVersion == "" && b.ConfigSetID == "" {
 		return b, nil
 	}
@@ -790,10 +1410,10 @@ func (s SQLBackupVerificationStore) VerifyAndRecord(ctx context.Context, storage
 }
 
 func (s SQLBackupVerificationStore) Latest(ctx context.Context, artifactRef string) (Backup, bool, error) {
-	row := s.DB.QueryRowContext(ctx, `SELECT v.id, v.status, a.artifact_ref, a.schema_version, a.config_set_id, coalesce(v.failure_report_json,'{}'), coalesce(v.verified_at, timestamp '0001-01-01'), v.created_at FROM backup_verifications v JOIN backup_artifacts a ON a.id=v.artifact_id WHERE a.artifact_ref=$1 ORDER BY v.created_at DESC, v.id DESC LIMIT 1`, artifactRef)
+	row := s.DB.QueryRowContext(ctx, `SELECT v.id, v.status, a.artifact_ref, a.schema_version, a.config_set_id, v.isolated_restore_ref, coalesce(v.failure_report_json,'{}'), coalesce(v.verified_at, timestamp '0001-01-01'), v.created_at FROM backup_verifications v JOIN backup_artifacts a ON a.id=v.artifact_id WHERE a.artifact_ref=$1 ORDER BY v.created_at DESC, v.id DESC LIMIT 1`, artifactRef)
 	var b Backup
 	var failure string
-	if err := row.Scan(&b.ID, &b.Status, &b.ArtifactRef, &b.SchemaVersion, &b.ConfigSetID, &failure, &b.VerifiedAt, &b.CreatedAt); err != nil {
+	if err := row.Scan(&b.ID, &b.Status, &b.ArtifactRef, &b.SchemaVersion, &b.ConfigSetID, &b.IsolatedRestoreRef, &failure, &b.VerifiedAt, &b.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Backup{}, false, nil
 		}

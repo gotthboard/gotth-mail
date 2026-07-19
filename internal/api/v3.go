@@ -159,7 +159,7 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 			ref = in.ArtifactRef
 		}
 		if s.AuditDB != nil {
-			b, err := (ops.SQLBackupVerificationStore{DB: s.AuditDB}).VerifyAndRecord(r.Context(), rt.BackupStore, ref, "configured-backup", "api-verify", time.Now())
+			b, err := (ops.SQLBackupVerificationStore{DB: s.AuditDB}).VerifyAndRecordWithRestore(r.Context(), rt.BackupStore, ref, "configured-backup", "", rt.RestoreEngine, time.Now())
 			if err != nil {
 				http.Error(w, err.Error(), 500)
 				return
@@ -174,6 +174,15 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 			return
 		}
 		if _, ok := requireAdmin(w, r); !ok {
+			return
+		}
+		if s.AuditDB != nil {
+			out, err := (ops.SQLSnapshotStore{DB: s.AuditDB}).List(r.Context())
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			writeJSON(w, out)
 			return
 		}
 		out := []ops.SnapshotView{}
@@ -192,12 +201,32 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/snapshots/")
 		if strings.HasSuffix(rest, "/diff") {
 			id := strings.TrimSuffix(rest, "/diff")
-			a, ok := rt.Snapshots[id]
-			if !ok {
-				http.NotFound(w, r)
-				return
+			var a, b ops.SnapshotView
+			var ok bool
+			if s.AuditDB != nil {
+				var err error
+				a, ok, err = (ops.SQLSnapshotStore{DB: s.AuditDB}).Get(r.Context(), id)
+				if err != nil {
+					http.Error(w, err.Error(), 500)
+					return
+				}
+				if !ok {
+					http.NotFound(w, r)
+					return
+				}
+				b, ok, err = (ops.SQLSnapshotStore{DB: s.AuditDB}).Get(r.Context(), r.URL.Query().Get("against"))
+				if err != nil {
+					http.Error(w, err.Error(), 500)
+					return
+				}
+			} else {
+				a, ok = rt.Snapshots[id]
+				if !ok {
+					http.NotFound(w, r)
+					return
+				}
+				b, ok = rt.Snapshots[r.URL.Query().Get("against")]
 			}
-			b, ok := rt.Snapshots[r.URL.Query().Get("against")]
 			if !ok {
 				http.NotFound(w, r)
 				return
@@ -205,7 +234,18 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 			writeJSON(w, map[string]any{"changed": ops.SnapshotDiff(a, b)})
 			return
 		}
-		snap, ok := rt.Snapshots[rest]
+		var snap ops.SnapshotView
+		var ok bool
+		if s.AuditDB != nil {
+			var err error
+			snap, ok, err = (ops.SQLSnapshotStore{DB: s.AuditDB}).Get(r.Context(), rest)
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+		} else {
+			snap, ok = rt.Snapshots[rest]
+		}
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -238,7 +278,13 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 			ID string `json:"id"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
-		if err := rt.ImportStore.Apply(r.Context(), auditLog, reqActor, in.ID, r.URL.Query().Get("hash"), r.URL.Query().Get("source_fingerprint"), time.Now(), s.Daemon); err != nil {
+		var err error
+		if s.AuditDB != nil {
+			err = (ops.SQLImportStore{DB: s.AuditDB}).Apply(r.Context(), audit.SQLWriter{DB: s.AuditDB}, rt.ImportStore, reqActor, in.ID, r.URL.Query().Get("hash"), r.URL.Query().Get("source_fingerprint"), time.Now())
+		} else {
+			err = rt.ImportStore.Apply(r.Context(), auditLog, reqActor, in.ID, r.URL.Query().Get("hash"), r.URL.Query().Get("source_fingerprint"), time.Now(), s.Daemon)
+		}
+		if err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
@@ -343,7 +389,13 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 				ID string `json:"id"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&in)
-			res, err := rt.BulkStore.Apply(r.Context(), auditLog, reqActor, op, in.ID, r.URL.Query().Get("confirm"), r.URL.Query().Get("hash"), time.Now())
+			var res []ops.BulkResult
+			var err error
+			if s.AuditDB != nil {
+				res, err = (ops.SQLBulkStore{DB: s.AuditDB}).Apply(r.Context(), audit.SQLWriter{DB: s.AuditDB}, rt.BulkStore, reqActor, op, in.ID, r.URL.Query().Get("confirm"), r.URL.Query().Get("hash"), time.Now())
+			} else {
+				res, err = rt.BulkStore.Apply(r.Context(), auditLog, reqActor, op, in.ID, r.URL.Query().Get("confirm"), r.URL.Query().Get("hash"), time.Now())
+			}
 			if err != nil {
 				http.Error(w, err.Error(), 400)
 				return
