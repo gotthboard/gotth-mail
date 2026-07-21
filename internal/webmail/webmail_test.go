@@ -186,6 +186,52 @@ func TestAttachmentContentAndFilenameSafety(t *testing.T) {
 	}
 }
 
+func TestBuildMIMECanonicalizesTextBodyToCRLF(t *testing.T) {
+	m, err := BuildMIME(Draft{From: "u@example.test", To: "r@example.test", Subject: "s", Body: "one\ntwo\rthree\r\nfour", MessageID: "<canonical@example.test>", Date: time.Unix(1700000000, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, b := range m {
+		if b == '\n' && (i == 0 || m[i-1] != '\r') {
+			t.Fatalf("bare LF at byte %d in MIME", i)
+		}
+	}
+	if !strings.Contains(string(m), "one\r\ntwo\r\nthree\r\nfour") {
+		t.Fatalf("body was not canonicalized: %q", m)
+	}
+}
+
+func TestBuildMIMEEncodesUnicodeForSevenBitSMTP(t *testing.T) {
+	m, err := BuildMIME(Draft{From: "u@example.test", To: "r@example.test", Subject: "café failed", Body: "résumé ⚠", MessageID: "<unicode@example.test>", Date: time.Unix(1700000000, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, b := range m {
+		if b > 0x7f {
+			t.Fatalf("raw 8-bit byte %#x at offset %d in seven-bit MIME", b, i)
+		}
+	}
+	s := string(m)
+	if !strings.Contains(s, "Subject: =?utf-8?q?") || !strings.Contains(s, "Content-Transfer-Encoding: quoted-printable") || !strings.Contains(s, "r=C3=A9sum=C3=A9 =E2=9A=A0") {
+		t.Fatalf("unicode MIME was not encoded for seven-bit SMTP:\n%s", s)
+	}
+}
+
+func TestBuildMIMERejectsInvalidUTF8AndControlBytes(t *testing.T) {
+	for _, draft := range []Draft{
+		{From: "u@example.test", To: "r@example.test", Subject: string([]byte{0xff}), Body: "body"},
+		{From: "u@example.test", To: "r@example.test", Subject: "ok", Body: string([]byte{0xff})},
+		{From: "u@example.test", To: "r@example.test", Subject: "bad\x00subject", Body: "body"},
+		{From: "u@example.test", To: "r@example.test", Subject: "ok", Body: "bad\x00body"},
+		{From: "tést@example.test", To: "r@example.test", Subject: "ok", Body: "body"},
+		{From: "u@example.test", To: "tést@example.test", Subject: "ok", Body: "body"},
+	} {
+		if _, err := BuildMIME(draft); err == nil {
+			t.Fatalf("invalid draft accepted: %#v", draft)
+		}
+	}
+}
+
 func TestOpenPGPMIMEStructureRequired(t *testing.T) {
 	if err := ValidateOpenPGPMIME([]byte("not signed")); err == nil {
 		t.Fatal("accepted non OpenPGP/MIME")

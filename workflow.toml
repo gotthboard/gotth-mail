@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GopherMailForge"
 profile = "medium"
-active_feature = "v4.webmail.production-webmail"
+active_feature = "v5.notifications.openpgp-signed-email"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -10,7 +10,7 @@ changelog = "docs/CHANGELOG.md"
 main_branch = "main"
 remote = "origin"
 canonical_remote_url = "forgejo:linus/GopherMailForge.git"
-worktree_root = "/tmp/gophermailforge-worktrees"
+worktree_root = "/tank/development/linus/gophermailforge-worktrees"
 source_root = "."
 workflow_root = "workflow"
 
@@ -31,7 +31,7 @@ implementation_spec = "docs/implementation/v0-foundation.md"
 path = "workflow/features/v0.foundation"
 source_path = "."
 branch = "workflow/root/v0.foundation"
-worktree = "/tmp/gophermailforge-worktrees/v0.foundation"
+worktree = "/tank/development/linus/gophermailforge-worktrees/v0.foundation"
 dependencies = []
 required_verification = ["git diff --check", "go test ./..."]
 
@@ -45,7 +45,7 @@ implementation_spec = "docs/implementation/v1-mail-core.md"
 path = "workflow/features/v1.mail-core"
 source_path = "."
 branch = "workflow/root/v1.mail-core"
-worktree = "/tmp/gophermailforge-worktrees/v1.mail-core"
+worktree = "/tank/development/linus/gophermailforge-worktrees/v1.mail-core"
 dependencies = ["v0.foundation"]
 required_verification = ["git diff --check", "go test ./...", "reference compose smoke test"]
 
@@ -59,7 +59,7 @@ implementation_spec = "docs/implementation/v2-identity-provisioning.md"
 path = "workflow/features/v2.identity-provisioning"
 source_path = "."
 branch = "workflow/root/v2.identity-provisioning"
-worktree = "/tmp/gophermailforge-worktrees/v2.identity-provisioning"
+worktree = "/tank/development/linus/gophermailforge-worktrees/v2.identity-provisioning"
 dependencies = ["v1.mail-core"]
 required_verification = ["git diff --check", "go test ./...", "OIDC/SCIM/app-password/password-hash compatibility contract tests"]
 
@@ -73,7 +73,7 @@ implementation_spec = "docs/implementation/v3-ops-import-admin.md"
 path = "workflow/features/v3.ops-import-admin"
 source_path = "."
 branch = "workflow/root/v3.ops-import-admin"
-worktree = "/tmp/gophermailforge-worktrees/v3.ops-import-admin"
+worktree = "/tank/development/linus/gophermailforge-worktrees/v3.ops-import-admin"
 dependencies = ["v2.identity-provisioning"]
 required_verification = ["git diff --check", "go test ./...", "backup/import/bulk-operation contract tests"]
 
@@ -87,21 +87,21 @@ implementation_spec = "docs/implementation/v4-webmail.md"
 path = "workflow/features/v4.webmail"
 source_path = "."
 branch = "workflow/root/v4.webmail"
-worktree = "/tmp/gophermailforge-worktrees/v4.webmail"
+worktree = "/tank/development/linus/gophermailforge-worktrees/v4.webmail"
 dependencies = ["v3.ops-import-admin"]
 required_verification = ["git diff --check", "go test ./...", "IMAP/SMTP/MIME/XSS webmail tests"]
 
 [[root_features]]
 id = "v5.notifications"
 title = "v5 Notifications"
-state = "planned"
+state = "in_progress"
 prd = "docs/prd/PRD-v5-notifications.md"
 architecture = "docs/architecture/v5-notifications.md"
 implementation_spec = "docs/implementation/v5-notifications.md"
 path = "workflow/features/v5.notifications"
 source_path = "."
 branch = "workflow/root/v5.notifications"
-worktree = "/tmp/gophermailforge-worktrees/v5.notifications"
+worktree = "/tank/development/linus/gophermailforge-worktrees/v5.notifications"
 dependencies = ["v3.ops-import-admin"]
 required_verification = ["git diff --check", "go test ./...", "notification plugin/approval binding tests", "OpenPGP/MIME signed outbound email tests"]
 
@@ -410,11 +410,11 @@ verification = ["separate container/gRPC tests", "authenticated/unauthenticated 
 id = "v5.notifications.openpgp-signed-email"
 root = "v5.notifications"
 title = "Mandatory OpenPGP signing for every outbound email"
-state = "planned"
+state = "in_progress"
 path = "workflow/features/v5.notifications/openpgp-signed-email"
-source_path = "internal/notification"
+source_path = "."
 branch = "workflow/feature/v5.notifications.openpgp-signed-email"
-dependencies = ["v5.notifications.telegram-plugin-alerts", "v2.identity-provisioning.app-passwords"]
+dependencies = ["v5.notifications.telegram-plugin-alerts", "v2.identity-provisioning.app-passwords-ui"]
 implementation_spec_sections = ["Mandatory OpenPGP signing for email notifications", "OpenPGP email signing contract"]
 verification = ["OpenPGP/MIME signed email tests", "missing/revoked/expired key blocks send tests", "exact signer identity binding tests", "no unsigned fallback tests", "audit fingerprint/signature-status tests", "go test ./...", "git diff --check"]
 
@@ -422,7 +422,7 @@ verification = ["OpenPGP/MIME signed email tests", "missing/revoked/expired key 
 id = "v5.notifications.commands-approvals"
 root = "v5.notifications"
 title = "Read-only commands, actor mapping, approval bindings"
-state = "planned"
+state = "in_progress"
 path = "workflow/features/v5.notifications/commands-approvals"
 source_path = "internal/notification"
 branch = "workflow/feature/v5.notifications.commands-approvals"

@@ -21,9 +21,88 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-07-18 CDT — Add narrow approved notification mutation executor
+### 2026-07-19 06:55 CDT — Add configured system-identity signed-email notification slice
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/notifyruntime/email_backend.go`
+- `internal/notifyruntime/email_backend_test.go`
+- `internal/notifyruntime/email_config.go`
+- `internal/notifyruntime/email_config_test.go`
+- `cmd/gmf-plugin/main.go`
+- `cmd/gmf-plugin/main_test.go`
+- `compose/reference/docker-compose.yml`
+- `internal/plugin/first.go`
+- `internal/plugin/first_test.go`
+- `internal/plugin/notification.go`
+- `internal/plugin/notification_test.go`
+- `internal/notification/notification.go`
+- `internal/notification/notification_test.go`
+- `internal/notification/sql.go`
+- `internal/notification/sql_test.go`
+- `internal/api/api_test.go`
+- `internal/store/sql.go`
+- `internal/store/sql_test.go`
+- `internal/store/store.go`
+- `internal/store/evidence_migration_test.go`
+- `internal/store/migration_parity_test.go`
+- `migrations/0002_notification_delivery_evidence.sql`
+- `internal/ops/v3.go`
+- `internal/ops/v3_sql_test.go`
+- `internal/webmail/openpgp.go`
+- `internal/webmail/openpgp_test.go`
+- `internal/webmail/smtp.go`
+- `internal/webmail/smtp_test.go`
+- `internal/webmail/webmail.go`
+- `internal/webmail/webmail_test.go`
+- `proto/gophermailforge/plugin/v1/plugin.proto`
+- `proto/gophermailforge/plugin/v1/plugin.pb.go`
+- `scripts/containerized-notification-plugin-smoke.sh`
+- `test/contract/v1_plugins_contract_test.go`
+- `test/contract/signed_email_plugin_contract_test.go`
+- `docs/architecture/v5-notifications.md`
+- `docs/implementation/v5-notifications.md`
+- `workflow/COVERAGE.md`
+- `workflow/README.md`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/features/v5.notifications/README.md`
+- `workflow/features/v5.notifications/telegram-plugin-alerts/README.md`
+- `workflow/features/v5.notifications/commands-approvals/README.md`
+- `workflow/features/v5.notifications/openpgp-signed-email/README.md`
+- `workflow/features/v5.notifications/openpgp-signed-email/evidence/2026-07-19-signed-email-notification-runtime.md`
+- `README.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added a distinct opt-in standalone signed-email notification plugin adapter and wired it through explicit process configuration and an opt-in Compose profile. The adapter reloads exactly one active configured system-sender/private-key binding for each delivery, sanitizes alerts with whole-field redaction for JSON/multiword/Unicode-whitespace credential markers and real `PGP PRIVATE KEY BLOCK` armor, builds RFC 2047/quoted-printable seven-bit MIME with a stable Message-ID, signs with OpenPGP/MIME, requires one canonical headerless detached-signature armor block containing exactly one SHA-256 signature packet as advertised by `micalg=pgp-sha256`, cryptographically verifies that same hash plus the exact raw signed entity and authoritative headers, and only then submits the verified bytes through a trusted local SMTP relay. Missing/revoked/expired/ambiguous/disabled/mismatched/unusable or replaced keys, key types whose maintained signing path cannot emit SHA-256, noncanonical or multi-packet signatures, duplicate security-bearing headers, forged signatures, invalid configuration, and unsafe payloads fail closed before SMTP. Unsupported signing hashes are permanent admission failures and never call SMTP.
+
+Alert sanitization now rejects secret markers in IDs, classes, correlation IDs, and resource types before those identifiers can be bounded. It checks the complete normalized detail key before truncation, redacts secret-marked keys deterministically even when bounded keys collide, and validates each typed delivery-evidence field before memory, SQL, or gRPC persistence. Sink-supplied gRPC descriptions and details are discarded for both alert and prompt calls and rebuilt as fixed server-owned status text; the intentional prompt-only `Unimplemented` contract retains its code with a fixed description.
+
+A typed protobuf evidence field carries bounded exact-sender metadata over gRPC. The additive SQL migration preserves the immutable `d432e5b` baseline, validates the entire ledger before applying a missing known upgrade, and rejects missing, dirty, checksum-mismatched, or unknown/future ledger rows as well as a pre-existing wrong column shape. Migration and isolated-restore transactions pin `search_path` to `public, pg_catalog`; hostile caller search paths cannot redirect DDL, restored data, or readback into a shadow schema. Fresh and upgraded databases use the same registered migration definition/checksum, and isolated restore still requires `public` to contain no user relations. SMTP rejection, pre-acceptance outage, and ambiguous DATA acceptance have distinct retry semantics; successful DATA is not retried because QUIT failed. The notification smoke uses noninteractive sudo fallback and a unique Compose project so unattended verification cannot stall on a password prompt or tear down another run. The control-plane alert dispatcher still uses the default registry and does not select this adapter or compose its result with the SQL recorder; that is an explicit blocker, not hidden behind the child-process integration.
+
+The Telegram default registry and behavior remain unchanged. The signed-email plugin has no prompt/mutation capability, no signing key is committed, and no external email was sent during verification. The active checkout was relocated from volatile `/tmp` storage to its manifest-recorded durable v5 worktree. The feature remains `in_progress` because the v5 root prerequisite, manifest dependencies, control-plane routing/selection and recorder composition, per-user/role/delegation identity selection, public-key discovery, full lifecycle policy, and production key custody are unresolved.
+
+Workflow state was reconciled rather than hidden: the v5 root and signed-email slice moved to `in_progress` for this active work, the commands/approvals feature moved from stale `planned` to `in_progress` because its existing read-only-command, approval-binding, and narrow mutation seams are implemented but unfinished, and the Telegram README now matches its already-`in_progress` manifest state. None of these features is represented as `done`.
+
+Verification:
+
+- repeated focused/adversarial package tests passed for `cmd/gmf-plugin`, `internal/notification`, `internal/plugin`, `internal/notifyruntime`, `internal/ops`, `internal/store`, and `internal/webmail`, including canonical armor/single-packet admission, unsupported-key permanent classification, raw-entity/header mutation, lifecycle transitions, pre-bound secret rejection, typed evidence filtering, fixed-text alert/prompt gRPC failures, complete migration lineage, hostile search paths, wrong schema shape, and isolated-restore rejection;
+- `go test -race -count=1 ./cmd/gmf-plugin ./internal/api ./internal/notification ./internal/plugin ./internal/notifyruntime ./internal/store ./internal/ops ./internal/webmail` passed;
+- `go test -count=1 ./...` passed;
+- `go vet ./...`, `git diff --check -- .`, and `sh -n` for every repository shell script passed;
+- pinned protobuf regeneration matched the checked-in Go bindings byte-for-byte;
+- the old-schema PostgreSQL migration, idempotent rerun, baseline dirty/checksum rejection, wrong-column-shape rejection, fresh/upgraded ledger equivalence, file/runtime SQL parity, and empty-only isolated-restore regressions passed;
+- the `signed-email-notification` Compose profile rendered the dedicated internal plugin service;
+- `scripts/containerized-notification-plugin-smoke.sh` completed under project `gmf-notification-plugin-smoke-final-20260719-6` with exit `0`, printed `containerized notification plugin gRPC/backend smoke passed`, named the real-process gRPC-to-SMTP exact-sender integration test as passed, and left zero project containers, networks, or volumes;
+- `scripts/containerized-webmail-smtp-smoke.sh` completed under project `gmf-webmail-smtp-smoke-final-20260719-3` with exit `0`, printed `containerized webmail SMTP smoke passed`, exercised the shared SMTP/OpenPGP path, and left zero project containers, networks, or volumes.
+
+### 2026-07-18 CDT — Add narrow approved notification mutation executor
+
+Commit: `d432e5b`
 
 Affected files:
 
@@ -48,7 +127,7 @@ Verification:
 
 ### 2026-07-18 CDT — Add Telegram update receiver core
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -73,7 +152,7 @@ Verification:
 
 ### 2026-07-18 CDT — Add runtime notification command summaries
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -98,7 +177,7 @@ Verification:
 
 ### 2026-07-18 CDT — Add real OpenPGP/MIME exact-sender signing
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -127,7 +206,7 @@ Verification:
 
 ### 2026-07-18 CDT — Add containerized custom webmail UI shell smoke
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -151,7 +230,7 @@ Verification:
 
 ### 2026-07-18 CDT — Add notification backend gRPC seam
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -180,7 +259,7 @@ Verification:
 
 ### 2026-07-18 CDT — Add notification read-only command core
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -202,7 +281,7 @@ Verification:
 
 ### 2026-07-18 CDT — Add SQL notification actor mapping and approval binding
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -227,7 +306,7 @@ Verification:
 
 ### 2026-07-18 CDT — Expose SQL notification delivery status
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -254,7 +333,7 @@ Verification:
 
 ### 2026-07-18 CDT — Add bounded raw MIME parser and text-only rendering decision
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -280,7 +359,7 @@ Verification:
 
 ### 2026-07-18 CDT — Persist SQL webmail draft metadata
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -307,7 +386,7 @@ Verification:
 
 ### 2026-07-18 CDT — Add containerized webmail IMAP smoke
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -336,7 +415,7 @@ Verification:
 
 ### 2026-07-18 CDT — Add containerized notification plugin gRPC smoke
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -365,7 +444,7 @@ Verification:
 
 ### 2026-07-18 CDT — Add containerized webmail SMTP transport smoke
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 
@@ -392,7 +471,7 @@ Verification:
 
 ### 2026-07-18 CDT — Add containerized Mailu import smoke fixture
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `d432e5b`
 
 Affected files:
 

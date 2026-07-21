@@ -173,9 +173,21 @@ Required tests:
 
 ## Mandatory OpenPGP signing for email notifications
 
-Implementation must conform to [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md). Notification identity history, downgrade detection, key-rotation continuity, and forensic export behavior must conform to [Operational Identity History and Audit Indexing for Exact Sender Binding](../reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md) where implemented.
+The target implementation contract is [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md). This configured system-notification adapter is a bounded subset with exact signing/verification and local structured delivery evidence; it does not claim profile conformance. Recorded public-key discovery, complete rotation/deletion/recovery policy, per-user/role/delegation identity mapping, and message-context authorization remain unimplemented. Notification identity history, downgrade detection, key-rotation continuity, and forensic export behavior must conform to [Operational Identity History and Audit Indexing for Exact Sender Binding](../reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md) where implemented.
 
-Any email notification backend introduced in v5 must OpenPGP-sign every outbound email notification with the responsible user or system notification identity before delivery. Telegram/webhook transports may use their own authenticated transport semantics, but email output is never exempt from the global OpenPGP signing invariant.
+Any email notification backend introduced in v5 must OpenPGP-sign every outbound email notification with the responsible user or system notification identity before delivery. Telegram/webhook transports may use their own authenticated transport semantics, but email output is never exempt from the global OpenPGP signing invariant. `notifyruntime.SignedEmailBackend` implements the configured system-identity adapter. It sanitizes the alert, reloads and resolves exact sender lifecycle state for each delivery, constructs RFC 2047/quoted-printable seven-bit MIME with a stable alert-derived Message-ID, signs through `webmail.OpenPGPMIMESigner`, requires one canonical headerless detached-signature armor block containing exactly one SHA-256 packet as advertised by `micalg=pgp-sha256`, cryptographically verifies that hash over the exact raw signed entity through `webmail.OpenPGPMIMEVerifier`, and passes only those verified bytes to a trusted local SMTP relay. Parser shape or a generic cryptographic-validity result alone is not an admission check. Key types whose maintained signing path cannot emit SHA-256 are rejected during configuration and remain permanent fail-closed delivery errors after runtime reload.
+
+`gmf-plugin` exposes this adapter only as the distinct `signed-email-notification-sink` mechanism. The Telegram mechanism retains its existing behavior. The signed-email process requires these settings together:
+
+- `GMF_NOTIFICATION_EMAIL_FROM`
+- `GMF_NOTIFICATION_EMAIL_TO`
+- `GMF_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT`
+- `GMF_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE`
+- `GMF_NOTIFICATION_EMAIL_SMTP_ADDR` as `host:port`
+
+Startup validates complete configuration. Startup and every delivery load a bounded regular private-key file that is not group/world accessible and require exactly one matching entity, exactly one matching sender user ID, usable unencrypted private signing material, and non-revoked/non-expired identity and key state. Invalid or partial configuration aborts startup; later lifecycle/key-file drift blocks that delivery. `GMF_NOTIFICATION_EMAIL_SMTP_ADDR` is limited to loopback/private IPs or a single-label local service name because the transport has no remote TLS/authentication policy. Literal public IPs and dotted hostnames are rejected; a single-label name delegates trust to the deployment's local/container resolver. This first configured adapter intentionally has no prompt capability.
+
+The adapter is not yet selected by the control-plane application. `cmd/gophermailforge` still builds the default first-mechanism registry, which excludes signed email, and no core alert dispatcher routes to the explicit registration. That routing/selection work remains a feature blocker; the child-process integration proves the standalone plugin adapter, not an end-to-end application notification path.
 
 Required behavior:
 
@@ -194,7 +206,13 @@ Email notification signing contract:
 Identity binding requirement: verification must resolve the OpenPGP signing key fingerprint to exactly one configured active user or system notification identity, then confirm that identity is allowed to assert the message `From`/`Sender`. Ambiguous, shared, revoked, expired, disabled, or unmapped keys fail closed.
 
 ```text
-build bounded notification MIME -> resolve signing identity -> verify key usable -> OpenPGP/MIME sign -> hand to mail transport -> audit fingerprint/signature status
+sanitize and bound alert
+  -> resolve signing identity and usable lifecycle state
+  -> build seven-bit transport-safe MIME with stable Message-ID
+  -> OpenPGP/MIME sign with a packet hash verified as SHA-256
+  -> verify pgp-sha256 over the exact raw entity plus sender/From/Message-ID/Date/Subject binding
+  -> hand verified bytes to a trusted local SMTP relay
+  -> return typed evidence for gRPC and core/SQL persistence
 ```
 
 Failure states:
@@ -202,10 +220,21 @@ Failure states:
 - `signing_key_missing`
 - `signing_key_revoked`
 - `signing_key_expired`
+- `signing_identity_disabled`
+- `signing_identity_ambiguous`
+- `signing_identity_unmapped`
 - `signing_identity_mismatch`
 - `openpgp_sign_failed`
+- `openpgp_verification_failed`
+- `smtp_rejected`
+- `smtp_unavailable`
+- `smtp_delivery_ambiguous`
 
-All failure states block delivery and surface in core status. The email backend must not send unsigned mail to preserve alert delivery convenience. That would be security theater.
+All failure states block delivery and surface as bounded delivery results; dependency error strings and sink-supplied gRPC descriptions/details are not returned through the plugin seam. Both alert and prompt RPC failures are mapped to an allowed gRPC code with fixed server-owned text. Secret markers in alert text cause whole-field redaction before MIME construction rather than partial value substitution. Secret-bearing IDs, classes, correlation IDs, and resource types are rejected before bounding. Detail keys are checked in their complete normalized form before truncation, and a bounded-key collision cannot replace an existing redaction. Successful typed evidence contains transport, Message-ID, generation time, From/Sender, signing fingerprint, sender identity ID/class, policy version, lifecycle reference, `valid_exact_sender`, and workflow. Every evidence field is independently grammar- and secret-checked before memory, SQL, or gRPC use. The adapter carries that type over gRPC, and the SQL recorder separately persists it; control-plane composition remains unfinished. The email backend must not send unsigned mail to preserve alert delivery convenience. That would be security theater.
+
+The additive evidence migration does not rewrite the baseline schema. Runtime admission validates every recorded migration before applying a missing known upgrade: baseline rows must exist, all known rows must be clean with exact checksums, and unknown/future versions are rejected. The immutable `d432e5b` baseline checksum fixture prevents accidental history edits, while the canonical `0002_notification_delivery_evidence` SQL file is parity-checked against the registered runtime SQL, identifier, and checksum. A pre-existing wrong-shaped evidence column fails rather than being certified by `IF NOT EXISTS`. Migration and isolated-restore transactions execute with `SET LOCAL search_path = public, pg_catalog`; restore readback uses explicit `public` relations. `MigrateEmptySQL` rejects any existing user relation in `public` before DDL, so a hostile caller search path or shadow schema cannot redirect the restore target.
+
+The configured adapter represents one system notification identity. Core routing/selection, per-user/role/delegation identity mapping, message-context authorization, recorded public-key discovery, complete rotation/deletion/recovery policy, and production key custody remain explicit work. The adapter and feature do not yet claim application integration or full profile conformance.
 
 
 The signature requirement is not merely provenance for a domain or server. Verification must answer exactly which configured user identity signed the message. If the signer cannot be mapped to the asserted From/Sender identity and active user/key binding, the message is treated as unsigned/invalid.

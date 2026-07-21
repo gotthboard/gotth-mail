@@ -93,10 +93,43 @@ func TestReferenceComposeIncludesContainerizedNotificationPluginSmoke(t *testing
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"notification-plugin", "GMF_LIVE_PLUGIN_ENDPOINT=notification-plugin:9443", "GMF_LIVE_PLUGIN_NAME=telegram-notification-sink", "GMF_LIVE_PLUGIN_TOKEN=dev-plugin-token", "TestLivePluginControlOverGRPC", "TestLiveNotificationBackendOverGRPC", "TestRuntimeCommandProvider", "TestTelegramReceiver", "TestApprovalExecutor", "containerized notification plugin gRPC/backend smoke passed"} {
+	for _, want := range []string{"notification-plugin", "GMF_LIVE_PLUGIN_ENDPOINT=notification-plugin:9443", "GMF_LIVE_PLUGIN_NAME=telegram-notification-sink", "GMF_LIVE_PLUGIN_TOKEN=dev-plugin-token", "TestLivePluginControlOverGRPC", "TestLiveNotificationBackendOverGRPC", "TestRuntimeCommandProvider", "TestTelegramReceiver", "TestApprovalExecutor", `go test -list "^TestSignedEmailBackend"`, `grep -qx "TestSignedEmailBackendSendsOnlyOpenPGPMIMESignedAlert"`, `grep -qx "TestSignedEmailBackendFailsClosedWithoutSignerOrMatchingIdentity"`, `go test -list "^TestSignedEmailNotificationSinkGRPC"`, `grep -qx "TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAndRejectsPrompt"`, "TestSignedEmailBackend.*", "TestSignedEmailNotificationSinkGRPC.*", "go test -v -count=1", "containerized notification plugin gRPC/backend smoke passed"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("containerized notification plugin smoke missing %q", want)
 		}
+	}
+	build := `$DOCKER compose -p "$PROJECT" -f "$COMPOSE" build test-runner`
+	loop := `for i in $(seq 1 90); do`
+	probe := `$DOCKER compose -p "$PROJECT" -f "$COMPOSE" run --rm -T --no-deps test-runner sh -lc 'nc -z notification-plugin 9443'`
+	listTests := `go test -list "^TestSignedEmailBackend"`
+	grepSend := `grep -qx "TestSignedEmailBackendSendsOnlyOpenPGPMIMESignedAlert"`
+	grepFailClosed := `grep -qx "TestSignedEmailBackendFailsClosedWithoutSignerOrMatchingIdentity"`
+	listRuntime := `go test -list "^TestSignedEmailNotificationSinkGRPC"`
+	grepRuntime := `grep -qx "TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAndRejectsPrompt"`
+	runTests := "go test -v -count=1"
+	buildAt, loopAt, probeAt := strings.Index(s, build), strings.Index(s, loop), strings.Index(s, probe)
+	listAt, grepSendAt, grepFailClosedAt, listRuntimeAt, grepRuntimeAt, runAt := strings.Index(s, listTests), strings.Index(s, grepSend), strings.Index(s, grepFailClosed), strings.Index(s, listRuntime), strings.Index(s, grepRuntime), strings.Index(s, runTests)
+	if strings.Count(s, build) != 1 || strings.Count(s, "\n"+build+"\n") != 1 || buildAt < 0 || loopAt < 0 || probeAt < 0 || !(buildAt < loopAt && loopAt < probeAt) {
+		t.Fatalf("test-runner build must be one standalone fatal command before readiness loop: build=%d loop=%d probe=%d", buildAt, loopAt, probeAt)
+	}
+	loopEnd := strings.Index(s[loopAt:], "\ndone\n")
+	if loopEnd < 0 {
+		t.Fatal("notification smoke readiness loop missing done")
+	}
+	if strings.Contains(s[loopAt:loopAt+loopEnd], "build test-runner") {
+		t.Fatal("test-runner build must not execute inside readiness loop")
+	}
+	if !strings.Contains(s, `PROJECT=${GMF_NOTIFICATION_PLUGIN_SMOKE_PROJECT:-gmf-notification-plugin-smoke-$(date +%s)-$$}`) {
+		t.Fatal("notification smoke must use a unique default Compose project")
+	}
+	finalCleanup := `$DOCKER compose -p "$PROJECT" -f "$COMPOSE" down -v --remove-orphans`
+	cleanupAt := strings.LastIndex(s, finalCleanup)
+	markerAt := strings.LastIndex(s, `echo "containerized notification plugin gRPC/backend smoke passed"`)
+	if cleanupAt < 0 || markerAt < 0 || cleanupAt >= markerAt || strings.Contains(s[cleanupAt:markerAt], "|| true") {
+		t.Fatalf("notification smoke must prove final cleanup before its success marker: cleanup=%d marker=%d", cleanupAt, markerAt)
+	}
+	if listAt < 0 || grepSendAt < 0 || grepFailClosedAt < 0 || listRuntimeAt < 0 || grepRuntimeAt < 0 || runAt < 0 || !(listAt < grepSendAt && grepSendAt < runAt && listAt < grepFailClosedAt && grepFailClosedAt < runAt && listRuntimeAt < grepRuntimeAt && grepRuntimeAt < runAt) {
+		t.Fatalf("signed-email test discovery and exact-name checks must precede verbose focused tests: backend-list=%d send=%d fail-closed=%d runtime-list=%d runtime=%d run=%d", listAt, grepSendAt, grepFailClosedAt, listRuntimeAt, grepRuntimeAt, runAt)
 	}
 }
 

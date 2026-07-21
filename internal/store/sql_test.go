@@ -14,8 +14,9 @@ func TestMigrateSQLOnPostgres(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != len(InitialSchema) {
-		t.Fatalf("schema_migrations=%d want %d", count, len(InitialSchema))
+	wantMigrations := len(InitialSchema) + len(upgradeMigrations)
+	if count != wantMigrations {
+		t.Fatalf("schema_migrations=%d want %d", count, wantMigrations)
 	}
 	if _, err := db.Exec(`INSERT INTO domains(id, name, created_at, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, "00000000-0000-0000-0000-000000000001", "example.test"); err != nil {
 		t.Fatal(err)

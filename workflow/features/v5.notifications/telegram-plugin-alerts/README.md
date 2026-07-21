@@ -2,6 +2,6 @@
 
 ID: `v5.notifications.telegram-plugin-alerts`
 
-State: `planned`
+State: `in_progress`
 
 Canonical state lives in `workflow.toml`. This folder holds scoped evidence, review notes, and postmortems only.

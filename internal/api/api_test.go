@@ -826,7 +826,7 @@ func TestNotificationDeliveryStatusAPIUsesSQLRecorderWhenConfigured(t *testing.T
 	if err := rec.RecordPending(context.Background(), notification.Alert{ID: "alert-1", Class: "backup.failure", Severity: notification.SeverityCritical, Title: "Backup failed", Summary: "password=hunter2 failed", Resource: notification.ResourceRef{Type: "backup", ID: "artifact-1"}}, time.Unix(1, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := rec.RecordFinal(context.Background(), "alert-1", notification.StatusFailedPermanent, "plugin rejected", time.Unix(2, 0)); err != nil {
+	if err := rec.RecordFinal(context.Background(), "alert-1", notification.StatusFailedPermanent, "plugin_rejected", notification.DeliveryEvidence{}, time.Unix(2, 0)); err != nil {
 		t.Fatal(err)
 	}
 	h := Server{AuditDB: db, Identity: ids}.Handler()
@@ -847,7 +847,7 @@ func TestNotificationDeliveryStatusAPIUsesSQLRecorderWhenConfigured(t *testing.T
 	req.Header.Set("Authorization", "Bearer notify-secret")
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "plugin rejected") || !strings.Contains(rr.Body.String(), "backup.failure") {
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "plugin_rejected") || !strings.Contains(rr.Body.String(), "backup.failure") {
 		t.Fatalf("detail status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }

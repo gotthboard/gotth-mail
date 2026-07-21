@@ -178,7 +178,7 @@ func (e SQLIsolatedRestoreEngine) RestoreBackup(ctx context.Context, art BackupA
 	if e.DB == nil {
 		return RestoredBackup{}, errors.New("isolated_restore_db_required")
 	}
-	if err := store.MigrateSQL(ctx, e.DB); err != nil {
+	if err := store.MigrateEmptySQL(ctx, e.DB); err != nil {
 		return RestoredBackup{}, err
 	}
 	if err := restoreArtifactToSQL(ctx, e.DB, art); err != nil {
@@ -217,6 +217,9 @@ func restoreArtifactToSQL(ctx context.Context, db *sql.DB, art BackupArtifact) e
 		return err
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `SET LOCAL search_path = public, pg_catalog`); err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	domainIDs := map[string]string{}
 	ensureDomain := func(domain string, enabled bool) (string, error) {
@@ -292,7 +295,7 @@ func restoreArtifactToSQL(ctx context.Context, db *sql.DB, art BackupArtifact) e
 
 func loadDaemonServiceFromSQL(ctx context.Context, db *sql.DB) (daemon.Service, error) {
 	svc := daemon.Service{Domains: map[string]daemon.Domain{}, Mailboxes: map[string]daemon.Mailbox{}, Aliases: map[string]daemon.Alias{}}
-	rows, err := db.QueryContext(ctx, `SELECT name, enabled FROM domains`)
+	rows, err := db.QueryContext(ctx, `SELECT name, enabled FROM public.domains`)
 	if err != nil {
 		return svc, err
 	}
@@ -307,7 +310,7 @@ func loadDaemonServiceFromSQL(ctx context.Context, db *sql.DB) (daemon.Service, 
 	if err := rows.Err(); err != nil {
 		return svc, err
 	}
-	rows, err = db.QueryContext(ctx, `SELECT d.name, m.local_part, m.enabled, COALESCE(m.verifier,''), COALESCE(m.quota_bytes,0) FROM mailboxes m JOIN domains d ON d.id=m.domain_id`)
+	rows, err = db.QueryContext(ctx, `SELECT d.name, m.local_part, m.enabled, COALESCE(m.verifier,''), COALESCE(m.quota_bytes,0) FROM public.mailboxes m JOIN public.domains d ON d.id=m.domain_id`)
 	if err != nil {
 		return svc, err
 	}
@@ -324,7 +327,7 @@ func loadDaemonServiceFromSQL(ctx context.Context, db *sql.DB) (daemon.Service, 
 	if err := rows.Err(); err != nil {
 		return svc, err
 	}
-	rows, err = db.QueryContext(ctx, `SELECT d.name, a.local_part, a.enabled, a.targets_json FROM aliases a JOIN domains d ON d.id=a.domain_id`)
+	rows, err = db.QueryContext(ctx, `SELECT d.name, a.local_part, a.enabled, a.targets_json FROM public.aliases a JOIN public.domains d ON d.id=a.domain_id`)
 	if err != nil {
 		return svc, err
 	}

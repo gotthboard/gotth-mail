@@ -3,11 +3,14 @@ package notification
 import (
 	"context"
 	"errors"
+	"net/mail"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 type Severity string
@@ -37,14 +40,31 @@ type Alert struct {
 }
 
 type DeliveryResult struct {
-	Status DeliveryStatus
-	Reason string
+	Status   DeliveryStatus
+	Reason   string
+	Evidence DeliveryEvidence
+}
+
+type DeliveryEvidence struct {
+	Transport           string    `json:"transport,omitempty"`
+	MessageID           string    `json:"message_id,omitempty"`
+	GeneratedAt         time.Time `json:"generated_at,omitzero"`
+	From                string    `json:"from,omitempty"`
+	Sender              string    `json:"sender,omitempty"`
+	SigningFingerprint  string    `json:"signing_fingerprint,omitempty"`
+	SenderIdentityID    string    `json:"sender_identity_id,omitempty"`
+	SenderIdentityClass string    `json:"sender_identity_class,omitempty"`
+	PolicyVersion       string    `json:"policy_version,omitempty"`
+	IdentityStateRef    string    `json:"identity_state_ref,omitempty"`
+	VerificationResult  string    `json:"verification_result,omitempty"`
+	Workflow            string    `json:"workflow,omitempty"`
 }
 
 type DeliveryRecord struct {
 	Alert     Alert
 	Status    DeliveryStatus
 	Reason    string
+	Evidence  DeliveryEvidence `json:",omitzero"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -55,7 +75,7 @@ type Backend interface {
 
 type Recorder interface {
 	RecordPending(context.Context, Alert, time.Time) error
-	RecordFinal(context.Context, string, DeliveryStatus, string, time.Time) error
+	RecordFinal(context.Context, string, DeliveryStatus, string, DeliveryEvidence, time.Time) error
 	Get(context.Context, string) (DeliveryRecord, bool, error)
 	List(context.Context) ([]DeliveryRecord, error)
 }
@@ -94,11 +114,12 @@ func (s Service) SendAlert(ctx context.Context, alert Alert) (DeliveryRecord, er
 	if status != StatusDelivered && status != StatusFailedRetryable && status != StatusFailedPermanent {
 		status = StatusFailedRetryable
 	}
-	reason := bound(result.Reason, 256)
+	reason := SanitizeDeliveryReason(result.Reason)
 	if reason == "" && sendErr != nil {
-		reason = bound(sendErr.Error(), 256)
+		reason = SanitizeDeliveryReason(sendErr.Error())
 	}
-	if err := recorder.RecordFinal(ctx, clean.ID, status, reason, s.now()); err != nil {
+	evidence := SanitizeDeliveryEvidence(result.Evidence)
+	if err := recorder.RecordFinal(ctx, clean.ID, status, reason, evidence, s.now()); err != nil {
 		return DeliveryRecord{}, err
 	}
 	rec, ok, err := recorder.Get(ctx, clean.ID)
@@ -122,6 +143,21 @@ func (s Service) now() time.Time {
 }
 
 func SanitizeAlert(a Alert) (Alert, error) {
+	for _, value := range []string{a.ID, a.Class, a.Title, a.Summary, a.CorrelationID, a.Resource.Type, a.Resource.ID} {
+		if !utf8.ValidString(value) {
+			return Alert{}, errors.New("alert text must be valid UTF-8")
+		}
+	}
+	for key, value := range a.Details {
+		if !utf8.ValidString(key) || !utf8.ValidString(value) {
+			return Alert{}, errors.New("alert detail text must be valid UTF-8")
+		}
+	}
+	for _, value := range []string{a.ID, a.Class, a.CorrelationID, a.Resource.Type} {
+		if hasSecretIdentifier(value) {
+			return Alert{}, errors.New("alert identifiers must not contain secret markers")
+		}
+	}
 	a.ID = strings.TrimSpace(a.ID)
 	if a.ID == "" {
 		return Alert{}, errors.New("alert id required")
@@ -149,13 +185,19 @@ func SanitizeAlert(a Alert) (Alert, error) {
 		return Alert{}, errors.New("alert details too large")
 	}
 	clean := map[string]string{}
+	redactedKeys := map[string]bool{}
 	for k, v := range a.Details {
-		key := boundToken(k, 64)
+		normalizedKey := normalizeToken(k)
+		key := bound(normalizedKey, 64)
 		if key == "" {
 			return Alert{}, errors.New("alert detail key required")
 		}
-		if secretKey.MatchString(key) {
+		if hasSecretIdentifier(normalizedKey) {
 			clean[key] = "[REDACTED]"
+			redactedKeys[key] = true
+			continue
+		}
+		if redactedKeys[key] {
 			continue
 		}
 		if strings.Count(v, "\n") > 3 || len(v) > 2048 {
@@ -167,30 +209,142 @@ func SanitizeAlert(a Alert) (Alert, error) {
 	return a, nil
 }
 
-var secretValue = regexp.MustCompile(`(?i)(password\s*[=:]\s*\S+|token\s*[=:]\s*\S+|secret\s*[=:]\s*\S+|-----BEGIN [A-Z ]*PRIVATE KEY-----)`) // broad by design
-var secretKey = regexp.MustCompile(`(?i)(password|token|secret|private[_-]?key)`)
+var privateKeyMarker = regexp.MustCompile(`(?i)-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----`)
+var secretAssignment = regexp.MustCompile(`(?i)(?:^|[^A-Z0-9_])"?(?:password|token|secret|authorization|apikey|api[ _-]*key|private[ _-]*key|(?:[A-Z0-9]+(?:[_.-][A-Z0-9]+)*)[_.-](?:password|token|secret))"?\s*[=:]`)
+var bearerValue = regexp.MustCompile(`(?i)\bbearer\s+\S+`)
+var secretKey = regexp.MustCompile(`(?i)^"?(?:password|token|secret|authorization|apikey|api[_-]?key|private[_-]?key|(?:[A-Z0-9]+(?:[_.-][A-Z0-9]+)*)[_.-](?:password|token|secret))"?$`)
+var deliveryReason = regexp.MustCompile(`^[A-Za-z0-9._:@;=<>-]+$`)
+var evidenceTransport = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._-]*$`)
+var evidenceMessageID = regexp.MustCompile(`^<[A-Za-z0-9][A-Za-z0-9._+/-]*@[A-Za-z0-9][A-Za-z0-9.-]*>$`)
+var evidenceFingerprint = regexp.MustCompile(`^(?:[A-Fa-f0-9]{40}|[A-Fa-f0-9]{64})$`)
+var evidenceIdentityID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@+/-]*$`)
+var evidenceClass = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._-]*$`)
+var evidencePolicyVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var evidenceStateRef = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._:+/-]*$`)
+var evidenceVerification = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._-]*$`)
+var evidenceWorkflow = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._-]*$`)
 
-func redact(v string) string { return secretValue.ReplaceAllString(v, "[REDACTED]") }
+func redact(v string) string {
+	if hasSecretMarker(v) {
+		return "[REDACTED]"
+	}
+	return v
+}
+
+func hasSecretMarker(v string) bool {
+	scan := normalizeSecretWhitespace(v)
+	return privateKeyMarker.MatchString(scan) || secretAssignment.MatchString(scan) || bearerValue.MatchString(scan)
+}
+
+func hasSecretIdentifier(v string) bool {
+	return hasSecretMarker(v) || secretKey.MatchString(normalizeToken(v))
+}
+
+func normalizeSecretWhitespace(v string) string {
+	for _, r := range v {
+		if r != ' ' && unicode.IsSpace(r) {
+			return strings.Map(func(r rune) rune {
+				if unicode.IsSpace(r) {
+					return ' '
+				}
+				return r
+			}, v)
+		}
+	}
+	return v
+}
+
+// SanitizeDeliveryReason enforces the narrow machine-readable reason grammar
+// shared by persistence and the plugin boundary. Human prose and dependency
+// errors do not belong in this field.
+func SanitizeDeliveryReason(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	redacted := redact(v)
+	if redacted != v || len(v) > 256 || !utf8.ValidString(v) || !deliveryReason.MatchString(v) {
+		return "delivery_reason_redacted"
+	}
+	return v
+}
+
+func SanitizeDeliveryEvidence(in DeliveryEvidence) DeliveryEvidence {
+	out := DeliveryEvidence{
+		Transport:           safeEvidencePattern(in.Transport, 32, evidenceTransport),
+		MessageID:           safeEvidencePattern(in.MessageID, 255, evidenceMessageID),
+		From:                safeEvidenceAddress(in.From),
+		Sender:              safeEvidenceAddress(in.Sender),
+		SigningFingerprint:  safeEvidencePattern(in.SigningFingerprint, 64, evidenceFingerprint),
+		SenderIdentityID:    safeEvidencePattern(in.SenderIdentityID, 320, evidenceIdentityID),
+		SenderIdentityClass: safeEvidencePattern(in.SenderIdentityClass, 32, evidenceClass),
+		PolicyVersion:       safeEvidencePattern(in.PolicyVersion, 64, evidencePolicyVersion),
+		IdentityStateRef:    safeEvidencePattern(in.IdentityStateRef, 160, evidenceStateRef),
+		VerificationResult:  safeEvidencePattern(in.VerificationResult, 64, evidenceVerification),
+		Workflow:            safeEvidencePattern(in.Workflow, 64, evidenceWorkflow),
+	}
+	if !in.GeneratedAt.IsZero() {
+		out.GeneratedAt = in.GeneratedAt.UTC()
+	}
+	return out
+}
+
+func safeEvidencePattern(v string, n int, pattern *regexp.Regexp) string {
+	v = strings.TrimSpace(v)
+	if v == "" || len(v) > n || !utf8.ValidString(v) || hasSecretIdentifier(v) || !pattern.MatchString(v) {
+		return ""
+	}
+	return v
+}
+
+func safeEvidenceAddress(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if len(v) > 320 || !utf8.ValidString(v) || hasSecretIdentifier(v) || strings.ContainsAny(v, "\r\n") {
+		return ""
+	}
+	address, err := mail.ParseAddress(v)
+	if err != nil || address.Address != v {
+		return ""
+	}
+	return v
+}
+
 func bound(v string, n int) string {
 	v = strings.TrimSpace(v)
 	if len(v) <= n {
 		return v
 	}
-	if n <= 1 {
-		return v[:n]
+	if n <= 0 {
+		return ""
 	}
-	return v[:n-1] + "."
+	if n == 1 {
+		return "."
+	}
+	cut := n - 1
+	for cut > 0 && !utf8.RuneStart(v[cut]) {
+		cut--
+	}
+	return v[:cut] + "."
 }
 func boundLine(v string, n int) string {
 	v = strings.Join(strings.Fields(v), " ")
 	return bound(v, n)
 }
 func boundToken(v string, n int) string {
+	return bound(normalizeToken(v), n)
+}
+
+func normalizeToken(v string) string {
 	v = strings.ToLower(strings.TrimSpace(v))
-	if strings.ContainsAny(v, " \r\n\t") {
-		v = strings.ReplaceAll(v, " ", "-")
-	}
-	return bound(v, n)
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return '-'
+		}
+		return r
+	}, v)
 }
 
 type MemoryRecorder struct {
@@ -214,7 +368,7 @@ func (m *MemoryRecorder) RecordPending(ctx context.Context, a Alert, now time.Ti
 	m.records[a.ID] = DeliveryRecord{Alert: a, Status: StatusPending, CreatedAt: now, UpdatedAt: now}
 	return nil
 }
-func (m *MemoryRecorder) RecordFinal(ctx context.Context, id string, status DeliveryStatus, reason string, now time.Time) error {
+func (m *MemoryRecorder) RecordFinal(ctx context.Context, id string, status DeliveryStatus, reason string, evidence DeliveryEvidence, now time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -224,7 +378,7 @@ func (m *MemoryRecorder) RecordFinal(ctx context.Context, id string, status Deli
 	if !ok {
 		return errors.New("delivery record not found")
 	}
-	r.Status, r.Reason, r.UpdatedAt = status, reason, now
+	r.Status, r.Reason, r.Evidence, r.UpdatedAt = status, reason, SanitizeDeliveryEvidence(evidence), now
 	m.records[id] = r
 	return nil
 }

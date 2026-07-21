@@ -4,7 +4,7 @@
 
 Folders under `workflow/features/` hold evidence, review notes, and postmortems. They do not redefine state, active feature, dependencies, or done status.
 
-Worktrees are created under `/tmp/gophermailforge-worktrees` and recorded in `workflow.toml`.
+Canonical worktree locations must be under the durable path recorded by `repository.worktree_root` in `workflow.toml`. `/tmp` may contain compatibility symlinks, but must not hold the only copy of uncommitted work.
 
 ## Changelog discipline
 

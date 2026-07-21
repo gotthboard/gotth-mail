@@ -10,12 +10,14 @@ import (
 	"html"
 	"mime"
 	"mime/multipart"
+	"mime/quotedprintable"
 	"net/mail"
 	"net/textproto"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"forgejo/linus/gophermailforge/internal/audit"
 )
@@ -52,6 +54,9 @@ type SMTPSubmitter interface {
 }
 type OpenPGPSigner interface {
 	SignMIME(context.Context, Identity, []byte) ([]byte, SignatureStatus, error)
+}
+type ExactSenderVerifier interface {
+	VerifyExactSender(context.Context, []byte, Identity) (SignatureStatus, error)
 }
 type SenderIdentityResolver interface {
 	ResolveSender(context.Context, string, string, string) (Identity, error)
@@ -152,6 +157,8 @@ type Draft struct {
 	State                       string
 	ReplyTo, ForwardOf          string
 	SigningFingerprint          string
+	MessageID                   string
+	Date                        time.Time
 }
 type DraftStore interface {
 	PutDraft(context.Context, Draft) error
@@ -379,6 +386,9 @@ func BuildMIME(d Draft) ([]byte, error) {
 	if err := validHeaderValue(d.Subject); err != nil {
 		return nil, err
 	}
+	if err := validMIMEText(d.Body); err != nil {
+		return nil, err
+	}
 	from, err := mail.ParseAddress(d.From)
 	if err != nil {
 		return nil, errors.New("invalid from")
@@ -387,13 +397,33 @@ func BuildMIME(d Draft) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("invalid recipient")
 	}
-	var body strings.Builder
-	mw := multipart.NewWriter(&body)
-	part, err := mw.CreatePart(textproto.MIMEHeader{"Content-Type": {"text/plain; charset=utf-8"}})
+	if !asciiAddress(from.Address) || !asciiAddress(to.Address) {
+		return nil, errors.New("SMTPUTF8 addresses are not supported")
+	}
+	messageID, err := messageID(d.MessageID, from.Address)
 	if err != nil {
 		return nil, err
 	}
-	_, _ = part.Write([]byte(d.Body))
+	date := d.Date.UTC()
+	if d.Date.IsZero() {
+		date = time.Now().UTC()
+	}
+	var body strings.Builder
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreatePart(textproto.MIMEHeader{
+		"Content-Type":              {"text/plain; charset=utf-8"},
+		"Content-Transfer-Encoding": {"quoted-printable"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	qp := quotedprintable.NewWriter(part)
+	if _, err := qp.Write([]byte(d.Body)); err != nil {
+		return nil, err
+	}
+	if err := qp.Close(); err != nil {
+		return nil, err
+	}
 	for _, a := range d.Attachments {
 		a = SafeAttachment(a)
 		ct := safeContentType(a.ContentType)
@@ -409,12 +439,32 @@ func BuildMIME(d Draft) ([]byte, error) {
 	var b strings.Builder
 	b.WriteString("From: " + from.String() + "\r\n")
 	b.WriteString("To: " + to.String() + "\r\n")
-	b.WriteString("Date: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n")
-	b.WriteString("Subject: " + d.Subject + "\r\n")
+	b.WriteString("Date: " + date.Format(time.RFC1123Z) + "\r\n")
+	b.WriteString("Message-ID: " + messageID + "\r\n")
+	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", d.Subject) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: multipart/mixed; boundary=\"" + mw.Boundary() + "\"\r\n\r\n")
 	b.WriteString(body.String())
 	return []byte(b.String()), nil
+}
+
+func messageID(v, from string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		domain := "localhost"
+		if _, d, ok := strings.Cut(from, "@"); ok && d != "" {
+			domain = strings.ToLower(d)
+		}
+		v = "<gmf-" + safeToken(18) + "@" + domain + ">"
+	}
+	if strings.ContainsAny(v, "\r\n") || len(v) > 255 || !strings.HasPrefix(v, "<") || !strings.HasSuffix(v, ">") {
+		return "", errors.New("invalid message id")
+	}
+	inner := strings.TrimSuffix(strings.TrimPrefix(v, "<"), ">")
+	if strings.Count(inner, "@") != 1 || strings.ContainsAny(inner, " <>\t") {
+		return "", errors.New("invalid message id")
+	}
+	return v, nil
 }
 
 func SanitizeHTML(in string) string {
@@ -445,10 +495,39 @@ func safeToken(n int) string {
 }
 
 func validHeaderValue(v string) error {
-	if strings.ContainsAny(v, "\r\n") {
+	if !utf8.ValidString(v) || strings.ContainsAny(v, "\r\n") {
 		return errors.New("header injection rejected")
 	}
+	for _, r := range v {
+		if r < 0x20 || r == 0x7f {
+			return errors.New("header control character rejected")
+		}
+	}
 	return nil
+}
+
+func validMIMEText(v string) error {
+	if !utf8.ValidString(v) {
+		return errors.New("message body must be valid UTF-8")
+	}
+	for _, r := range v {
+		if (r < 0x20 && r != '\r' && r != '\n' && r != '\t') || r == 0x7f {
+			return errors.New("message body control character rejected")
+		}
+	}
+	return nil
+}
+
+func asciiAddress(v string) bool {
+	if v == "" {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] > 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func safeContentType(v string) string {

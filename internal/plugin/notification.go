@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"strings"
+	"time"
 
 	"forgejo/linus/gophermailforge/internal/notification"
 	pluginv1 "forgejo/linus/gophermailforge/proto/gophermailforge/plugin/v1"
@@ -52,10 +53,59 @@ func (s NotificationServer) SendAlert(ctx context.Context, in *pluginv1.SendAler
 		sink = LocalNotificationSink{}
 	}
 	result, err := sink.SendAlert(ctx, protoAlert(in.GetAlert()))
+	reason := notification.SanitizeDeliveryReason(result.Reason)
+	evidence := protoDeliveryEvidence(result.Evidence)
 	if err != nil {
-		return nil, err
+		if (result.Status == notification.StatusFailedPermanent || result.Status == notification.StatusFailedRetryable) && reason != "" {
+			return &pluginv1.DeliveryResponse{Status: string(result.Status), Reason: reason, Evidence: evidence}, nil
+		}
+		return nil, notificationSinkError(err)
 	}
-	return &pluginv1.DeliveryResponse{Status: string(result.Status), Reason: result.Reason}, nil
+	return &pluginv1.DeliveryResponse{Status: string(result.Status), Reason: reason, Evidence: evidence}, nil
+}
+
+func notificationSinkError(err error) error {
+	switch status.Code(err) {
+	case codes.Canceled:
+		return status.Error(codes.Canceled, "notification delivery canceled")
+	case codes.InvalidArgument:
+		return status.Error(codes.InvalidArgument, "invalid notification alert")
+	case codes.DeadlineExceeded:
+		return status.Error(codes.DeadlineExceeded, "notification delivery deadline exceeded")
+	case codes.ResourceExhausted:
+		return status.Error(codes.ResourceExhausted, "notification delivery resource exhausted")
+	case codes.Unavailable:
+		return status.Error(codes.Unavailable, "notification delivery unavailable")
+	case codes.Unimplemented:
+		return status.Error(codes.Unimplemented, "notification prompts are not supported")
+	default:
+		return status.Error(codes.Unavailable, "notification delivery failed")
+	}
+}
+
+func protoDeliveryEvidence(in notification.DeliveryEvidence) *pluginv1.DeliveryEvidence {
+	e := notification.SanitizeDeliveryEvidence(in)
+	if e == (notification.DeliveryEvidence{}) {
+		return nil
+	}
+	generatedAt := ""
+	if !e.GeneratedAt.IsZero() {
+		generatedAt = e.GeneratedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return &pluginv1.DeliveryEvidence{
+		Transport:           e.Transport,
+		MessageId:           e.MessageID,
+		GeneratedAt:         generatedAt,
+		From:                e.From,
+		Sender:              e.Sender,
+		SigningFingerprint:  e.SigningFingerprint,
+		SenderIdentityId:    e.SenderIdentityID,
+		SenderIdentityClass: e.SenderIdentityClass,
+		PolicyVersion:       e.PolicyVersion,
+		IdentityStateRef:    e.IdentityStateRef,
+		VerificationResult:  e.VerificationResult,
+		Workflow:            e.Workflow,
+	}
 }
 
 func (s NotificationServer) SendPrompt(ctx context.Context, in *pluginv1.SendPromptRequest) (*pluginv1.PromptResponse, error) {
@@ -68,7 +118,7 @@ func (s NotificationServer) SendPrompt(ctx context.Context, in *pluginv1.SendPro
 	}
 	result, err := sink.SendPrompt(ctx, NotificationPrompt{ID: in.GetId(), CorrelationID: in.GetCorrelationId(), Transport: in.GetTransport(), ExternalActorID: in.GetExternalActorId(), ActorType: in.GetActorType(), ActorID: in.GetActorId(), Action: in.GetAction(), ResourceType: in.GetResourceType(), ResourceID: in.GetResourceId(), RequestHash: in.GetRequestHash(), ExpiresAt: in.GetExpiresAt(), Title: in.GetTitle(), Summary: in.GetSummary()})
 	if err != nil {
-		return nil, err
+		return nil, notificationSinkError(err)
 	}
 	return &pluginv1.PromptResponse{Accepted: result.Accepted, Message: result.Message}, nil
 }

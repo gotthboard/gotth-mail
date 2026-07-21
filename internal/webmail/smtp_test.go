@@ -3,12 +3,48 @@ package webmail
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
+	"net/textproto"
 	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestSMTPFailureClassificationPreservesAcceptanceBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		err       error
+		ambiguous bool
+		want      SMTPFailureClass
+	}{
+		{"five hundred", &textproto.Error{Code: 550, Msg: "rejected"}, false, SMTPFailurePermanent},
+		{"four hundred", &textproto.Error{Code: 451, Msg: "retry"}, false, SMTPFailureRetryable},
+		{"transport before acceptance", errors.New("eof"), false, SMTPFailureRetryable},
+		{"transport at acceptance", errors.New("eof"), true, SMTPFailureAmbiguous},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got *SMTPDeliveryError
+			if !errors.As(classifySMTPFailure("test", tc.err, tc.ambiguous), &got) || got.Class != tc.want {
+				t.Fatalf("got %#v want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNetSMTPSubmitterDoesNotRetryAcceptedMailWhenQUITFails(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go fakeSMTPAcceptThenClose(t, ln)
+	s := NetSMTPSubmitter{Addr: ln.Addr().String(), Timeout: 5 * time.Second}
+	if err := s.Submit(context.Background(), Envelope{From: "sender@example.test", To: []string{"rcpt@example.test"}}, []byte("Subject: accepted\r\n\r\nbody")); err != nil {
+		t.Fatalf("accepted DATA was turned into a retry: %v", err)
+	}
+}
 
 func TestNetSMTPSubmitterTalksSMTPAndRejectsInvalidEnvelope(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -106,6 +142,43 @@ func fakeSMTPServer(t *testing.T, ln net.Listener, got chan<- []string) {
 			write("221 bye\r\n")
 			got <- lines
 			return
+		default:
+			write("250 ok\r\n")
+		}
+	}
+}
+
+func fakeSMTPAcceptThenClose(t *testing.T, ln net.Listener) {
+	t.Helper()
+	conn, err := ln.Accept()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	r := bufio.NewReader(conn)
+	write := func(s string) { _, _ = conn.Write([]byte(s)) }
+	write("220 fake.example.test ESMTP\r\n")
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return
+		}
+		switch upper := strings.ToUpper(strings.TrimRight(line, "\r\n")); {
+		case strings.HasPrefix(upper, "HELO"), strings.HasPrefix(upper, "EHLO"), strings.HasPrefix(upper, "MAIL FROM:"), strings.HasPrefix(upper, "RCPT TO:"):
+			write("250 ok\r\n")
+		case upper == "DATA":
+			write("354 end with dot\r\n")
+			for {
+				data, err := r.ReadString('\n')
+				if err != nil {
+					return
+				}
+				if strings.TrimRight(data, "\r\n") == "." {
+					write("250 queued\r\n")
+					return
+				}
+			}
 		default:
 			write("250 ok\r\n")
 		}

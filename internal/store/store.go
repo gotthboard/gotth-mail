@@ -38,6 +38,19 @@ var InitialSchema = []string{
 	`CREATE TABLE plugin_registrations (id uuid primary key, name text not null unique, seam text not null check (seam in ('webmail','dns','acme','backup','notification','import')), image text not null, endpoint text not null, service_identity_token_id uuid references tokens(id), enabled boolean not null default true, created_at timestamp not null, updated_at timestamp not null, check (enabled = false or service_identity_token_id is not null));`,
 }
 
+const notificationDeliveryEvidenceMigrationVersion = "0002_notification_delivery_evidence"
+const notificationDeliveryEvidenceMigrationSQL = `ALTER TABLE notification_deliveries
+    ADD COLUMN evidence_json text NOT NULL DEFAULT '{}';`
+
+var upgradeMigrations = []Migration{
+	newMigration(notificationDeliveryEvidenceMigrationVersion, notificationDeliveryEvidenceMigrationSQL),
+}
+
+func newMigration(version, sql string) Migration {
+	sum := sha256.Sum256([]byte(sql))
+	return Migration{Version: version, SQL: sql, Checksum: hex.EncodeToString(sum[:])}
+}
+
 func (r *Runner) MigrateEmpty() error {
 	if len(r.Applied) != 0 {
 		return errors.New("database not empty")

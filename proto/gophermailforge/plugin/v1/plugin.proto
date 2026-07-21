@@ -34,7 +34,25 @@ message AlertMessage {
   map<string, string> details = 8;
 }
 message SendAlertRequest { AlertMessage alert = 1; }
-message DeliveryResponse { string status = 1; string reason = 2; }
+message DeliveryEvidence {
+  string transport = 1;
+  string message_id = 2;
+  string generated_at = 3;
+  string from = 4;
+  string sender = 5;
+  string signing_fingerprint = 6;
+  string sender_identity_id = 7;
+  string sender_identity_class = 8;
+  string policy_version = 9;
+  string identity_state_ref = 10;
+  string verification_result = 11;
+  string workflow = 12;
+}
+message DeliveryResponse {
+  string status = 1;
+  string reason = 2;
+  DeliveryEvidence evidence = 3;
+}
 
 message SendPromptRequest {
   string id = 1;

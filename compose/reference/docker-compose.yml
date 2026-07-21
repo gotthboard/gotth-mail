@@ -214,6 +214,27 @@ services:
     environment:
       GMF_PLUGIN_NAME: telegram-notification-sink
       GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+  signed-email-notification-plugin:
+    profiles: ["signed-email-notification"]
+    build:
+      context: ../..
+    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    environment:
+      GMF_PLUGIN_NAME: signed-email-notification-sink
+      GMF_PLUGIN_SERVICE_TOKEN: ${GMF_SIGNED_EMAIL_PLUGIN_SERVICE_TOKEN:-dev-plugin-token}
+      GMF_NOTIFICATION_EMAIL_FROM: ${GMF_NOTIFICATION_EMAIL_FROM:-}
+      GMF_NOTIFICATION_EMAIL_TO: ${GMF_NOTIFICATION_EMAIL_TO:-}
+      GMF_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT: ${GMF_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT:-}
+      GMF_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE: /run/secrets/notification-signing-key.asc
+      # NetSMTPSubmitter is plaintext/no-auth; runtime confines this to a trusted local relay.
+      GMF_NOTIFICATION_EMAIL_SMTP_ADDR: ${GMF_NOTIFICATION_EMAIL_SMTP_ADDR:-postfix:25}
+    volumes:
+      - type: bind
+        source: ${GMF_NOTIFICATION_EMAIL_PRIVATE_KEY_SOURCE:-./secrets/notification-signing-key.asc}
+        target: /run/secrets/notification-signing-key.asc
+        read_only: true
+    depends_on:
+      - postfix
 volumes:
   backup-data:
   maildata:

@@ -33,6 +33,24 @@ func TestFirstMechanismPluginsExposeAuthenticatedCapabilities(t *testing.T) {
 			t.Fatalf("empty caps for %s", name)
 		}
 	}
+	if _, ok := reg.Plugins[FirstEmailName]; ok {
+		t.Fatal("explicit signed email sink leaked into default first-mechanism registry")
+	}
+	email, err := FirstMechanismPlugin(FirstEmailName, "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if email.Endpoint != "signed-email-notification-plugin:9443" || email.Seam != Notification || !email.Enabled || email.ServiceToken != "tok" {
+		t.Fatalf("bad explicit signed email registration: %#v", email)
+	}
+	for _, capability := range email.Capabilities {
+		if capability == "notification.prompt.send" {
+			t.Fatalf("signed email sink advertises unsupported prompt capability: %#v", email.Capabilities)
+		}
+	}
+	if _, err := FirstMechanismPlugin("not-a-plugin", "tok"); err == nil {
+		t.Fatal("unknown first mechanism plugin accepted")
+	}
 }
 
 func TestFirstMechanismPluginGRPCAuth(t *testing.T) {

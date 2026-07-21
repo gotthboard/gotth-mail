@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 
+	"forgejo/linus/gophermailforge/internal/notification"
+	"forgejo/linus/gophermailforge/internal/notifyruntime"
 	"forgejo/linus/gophermailforge/internal/plugin"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func main() {
@@ -33,6 +38,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	var sink plugin.NotificationSink
+	if reg.Seam == plugin.Notification {
+		sink, err = notificationSinkFor(reg.Name, os.Getenv)
+		if err != nil {
+			return err
+		}
+	}
 	lis, err := net.Listen("tcp", listen)
 	if err != nil {
 		return err
@@ -41,7 +53,40 @@ func run() error {
 	registry := plugin.Registry{Plugins: map[string]plugin.Registration{reg.Name: reg}}
 	plugin.RegisterControlServer(srv, plugin.ControlServer{Name: reg.Name, Registry: registry})
 	if reg.Seam == plugin.Notification {
-		plugin.RegisterNotificationServer(srv, plugin.NotificationServer{Name: reg.Name, Registry: registry})
+		plugin.RegisterNotificationServer(srv, plugin.NotificationServer{Name: reg.Name, Registry: registry, Sink: sink})
 	}
 	return srv.Serve(lis)
+}
+
+func notificationSinkFor(name string, getenv func(string) string) (plugin.NotificationSink, error) {
+	switch name {
+	case plugin.FirstNotifyName:
+		return plugin.LocalNotificationSink{}, nil
+	case plugin.FirstEmailName:
+		backend, err := notifyruntime.NewSignedEmailBackend(notifyruntime.EmailConfig{
+			From:               getenv("GMF_NOTIFICATION_EMAIL_FROM"),
+			To:                 getenv("GMF_NOTIFICATION_EMAIL_TO"),
+			SigningFingerprint: getenv("GMF_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT"),
+			PrivateKeyFile:     getenv("GMF_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE"),
+			SMTPAddr:           getenv("GMF_NOTIFICATION_EMAIL_SMTP_ADDR"),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("configure %s: %w", plugin.FirstEmailName, err)
+		}
+		return signedEmailNotificationSink{backend: backend}, nil
+	default:
+		return nil, fmt.Errorf("notification sink %q is not wired", name)
+	}
+}
+
+type signedEmailNotificationSink struct {
+	backend notifyruntime.SignedEmailBackend
+}
+
+func (s signedEmailNotificationSink) SendAlert(ctx context.Context, alert notification.Alert) (notification.DeliveryResult, error) {
+	return s.backend.SendAlert(ctx, alert)
+}
+
+func (signedEmailNotificationSink) SendPrompt(context.Context, plugin.NotificationPrompt) (plugin.PromptResult, error) {
+	return plugin.PromptResult{}, status.Error(codes.Unimplemented, "signed email notification sink does not support prompts")
 }

@@ -109,6 +109,49 @@ func TestSQLIsolatedRestoreEngineRejectsNonEmptyRestoreDatabase(t *testing.T) {
 	}
 }
 
+func TestSQLIsolatedRestoreEnginePinsPublicUnderHostileSearchPath(t *testing.T) {
+	restoreDB := testpg.DB(t, nil)
+	restoreDB.SetMaxOpenConns(1)
+	restoreDB.SetMaxIdleConns(1)
+	if _, err := restoreDB.Exec(`CREATE SCHEMA shadow; CREATE TABLE shadow.sentinel (id integer primary key, value text NOT NULL); INSERT INTO shadow.sentinel(id, value) VALUES (1, 'untouched'); SET search_path = shadow, public`); err != nil {
+		t.Fatal(err)
+	}
+	artifact := BackupArtifact{
+		SchemaVersion: "schema_migrations",
+		ConfigSetID:   "cfg",
+		Domains: map[string]daemon.Domain{
+			"example.test": {Name: "example.test", Enabled: true},
+		},
+		Mailboxes: map[string]daemon.Mailbox{
+			"user@example.test": {Address: "user@example.test", Enabled: true},
+		},
+	}
+	restored, err := (SQLIsolatedRestoreEngine{DB: restoreDB, Ref: "public-restore"}).RestoreBackup(context.Background(), artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Ref != "public-restore" || !restored.Service.Mailboxes["user@example.test"].Enabled {
+		t.Fatalf("restore readback escaped public schema: %#v", restored)
+	}
+	var publicLedgerCount, shadowLedgerCount, publicMailboxCount int
+	if err := restoreDB.QueryRow(`SELECT
+		(SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='schema_migrations'),
+		(SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='shadow' AND c.relname='schema_migrations'),
+		(SELECT count(*) FROM public.mailboxes)`).Scan(&publicLedgerCount, &shadowLedgerCount, &publicMailboxCount); err != nil {
+		t.Fatal(err)
+	}
+	if publicLedgerCount != 1 || shadowLedgerCount != 0 || publicMailboxCount != 1 {
+		t.Fatalf("restore targeted wrong schema: public ledger=%d shadow ledger=%d public mailboxes=%d", publicLedgerCount, shadowLedgerCount, publicMailboxCount)
+	}
+	var sentinel string
+	if err := restoreDB.QueryRow(`SELECT value FROM shadow.sentinel WHERE id=1`).Scan(&sentinel); err != nil {
+		t.Fatal(err)
+	}
+	if sentinel != "untouched" {
+		t.Fatalf("shadow sentinel changed: %q", sentinel)
+	}
+}
+
 func TestSQLBackupVerificationStoreRecordsIsolatedRestoreRef(t *testing.T) {
 	recordDB := testpg.DB(t, store.MigrateSQL)
 	restoreDB := testpg.DB(t, nil)

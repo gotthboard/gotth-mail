@@ -497,17 +497,150 @@ func (x *SendAlertRequest) GetAlert() *AlertMessage {
 	return nil
 }
 
+type DeliveryEvidence struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Transport           string                 `protobuf:"bytes,1,opt,name=transport,proto3" json:"transport,omitempty"`
+	MessageId           string                 `protobuf:"bytes,2,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	GeneratedAt         string                 `protobuf:"bytes,3,opt,name=generated_at,json=generatedAt,proto3" json:"generated_at,omitempty"`
+	From                string                 `protobuf:"bytes,4,opt,name=from,proto3" json:"from,omitempty"`
+	Sender              string                 `protobuf:"bytes,5,opt,name=sender,proto3" json:"sender,omitempty"`
+	SigningFingerprint  string                 `protobuf:"bytes,6,opt,name=signing_fingerprint,json=signingFingerprint,proto3" json:"signing_fingerprint,omitempty"`
+	SenderIdentityId    string                 `protobuf:"bytes,7,opt,name=sender_identity_id,json=senderIdentityId,proto3" json:"sender_identity_id,omitempty"`
+	SenderIdentityClass string                 `protobuf:"bytes,8,opt,name=sender_identity_class,json=senderIdentityClass,proto3" json:"sender_identity_class,omitempty"`
+	PolicyVersion       string                 `protobuf:"bytes,9,opt,name=policy_version,json=policyVersion,proto3" json:"policy_version,omitempty"`
+	IdentityStateRef    string                 `protobuf:"bytes,10,opt,name=identity_state_ref,json=identityStateRef,proto3" json:"identity_state_ref,omitempty"`
+	VerificationResult  string                 `protobuf:"bytes,11,opt,name=verification_result,json=verificationResult,proto3" json:"verification_result,omitempty"`
+	Workflow            string                 `protobuf:"bytes,12,opt,name=workflow,proto3" json:"workflow,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *DeliveryEvidence) Reset() {
+	*x = DeliveryEvidence{}
+	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeliveryEvidence) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeliveryEvidence) ProtoMessage() {}
+
+func (x *DeliveryEvidence) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeliveryEvidence.ProtoReflect.Descriptor instead.
+func (*DeliveryEvidence) Descriptor() ([]byte, []int) {
+	return file_proto_gophermailforge_plugin_v1_plugin_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *DeliveryEvidence) GetTransport() string {
+	if x != nil {
+		return x.Transport
+	}
+	return ""
+}
+
+func (x *DeliveryEvidence) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+func (x *DeliveryEvidence) GetGeneratedAt() string {
+	if x != nil {
+		return x.GeneratedAt
+	}
+	return ""
+}
+
+func (x *DeliveryEvidence) GetFrom() string {
+	if x != nil {
+		return x.From
+	}
+	return ""
+}
+
+func (x *DeliveryEvidence) GetSender() string {
+	if x != nil {
+		return x.Sender
+	}
+	return ""
+}
+
+func (x *DeliveryEvidence) GetSigningFingerprint() string {
+	if x != nil {
+		return x.SigningFingerprint
+	}
+	return ""
+}
+
+func (x *DeliveryEvidence) GetSenderIdentityId() string {
+	if x != nil {
+		return x.SenderIdentityId
+	}
+	return ""
+}
+
+func (x *DeliveryEvidence) GetSenderIdentityClass() string {
+	if x != nil {
+		return x.SenderIdentityClass
+	}
+	return ""
+}
+
+func (x *DeliveryEvidence) GetPolicyVersion() string {
+	if x != nil {
+		return x.PolicyVersion
+	}
+	return ""
+}
+
+func (x *DeliveryEvidence) GetIdentityStateRef() string {
+	if x != nil {
+		return x.IdentityStateRef
+	}
+	return ""
+}
+
+func (x *DeliveryEvidence) GetVerificationResult() string {
+	if x != nil {
+		return x.VerificationResult
+	}
+	return ""
+}
+
+func (x *DeliveryEvidence) GetWorkflow() string {
+	if x != nil {
+		return x.Workflow
+	}
+	return ""
+}
+
 type DeliveryResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	Evidence      *DeliveryEvidence      `protobuf:"bytes,3,opt,name=evidence,proto3" json:"evidence,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DeliveryResponse) Reset() {
 	*x = DeliveryResponse{}
-	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[9]
+	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -519,7 +652,7 @@ func (x *DeliveryResponse) String() string {
 func (*DeliveryResponse) ProtoMessage() {}
 
 func (x *DeliveryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[9]
+	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -532,7 +665,7 @@ func (x *DeliveryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeliveryResponse.ProtoReflect.Descriptor instead.
 func (*DeliveryResponse) Descriptor() ([]byte, []int) {
-	return file_proto_gophermailforge_plugin_v1_plugin_proto_rawDescGZIP(), []int{9}
+	return file_proto_gophermailforge_plugin_v1_plugin_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DeliveryResponse) GetStatus() string {
@@ -547,6 +680,13 @@ func (x *DeliveryResponse) GetReason() string {
 		return x.Reason
 	}
 	return ""
+}
+
+func (x *DeliveryResponse) GetEvidence() *DeliveryEvidence {
+	if x != nil {
+		return x.Evidence
+	}
+	return nil
 }
 
 type SendPromptRequest struct {
@@ -570,7 +710,7 @@ type SendPromptRequest struct {
 
 func (x *SendPromptRequest) Reset() {
 	*x = SendPromptRequest{}
-	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[10]
+	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -582,7 +722,7 @@ func (x *SendPromptRequest) String() string {
 func (*SendPromptRequest) ProtoMessage() {}
 
 func (x *SendPromptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[10]
+	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -595,7 +735,7 @@ func (x *SendPromptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendPromptRequest.ProtoReflect.Descriptor instead.
 func (*SendPromptRequest) Descriptor() ([]byte, []int) {
-	return file_proto_gophermailforge_plugin_v1_plugin_proto_rawDescGZIP(), []int{10}
+	return file_proto_gophermailforge_plugin_v1_plugin_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SendPromptRequest) GetId() string {
@@ -699,7 +839,7 @@ type PromptResponse struct {
 
 func (x *PromptResponse) Reset() {
 	*x = PromptResponse{}
-	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[11]
+	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -711,7 +851,7 @@ func (x *PromptResponse) String() string {
 func (*PromptResponse) ProtoMessage() {}
 
 func (x *PromptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[11]
+	mi := &file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -724,7 +864,7 @@ func (x *PromptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PromptResponse.ProtoReflect.Descriptor instead.
 func (*PromptResponse) Descriptor() ([]byte, []int) {
-	return file_proto_gophermailforge_plugin_v1_plugin_proto_rawDescGZIP(), []int{11}
+	return file_proto_gophermailforge_plugin_v1_plugin_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *PromptResponse) GetAccepted() bool {
@@ -776,10 +916,26 @@ const file_proto_gophermailforge_plugin_v1_plugin_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Q\n" +
 	"\x10SendAlertRequest\x12=\n" +
-	"\x05alert\x18\x01 \x01(\v2'.gophermailforge.plugin.v1.AlertMessageR\x05alert\"B\n" +
+	"\x05alert\x18\x01 \x01(\v2'.gophermailforge.plugin.v1.AlertMessageR\x05alert\"\xd3\x03\n" +
+	"\x10DeliveryEvidence\x12\x1c\n" +
+	"\ttransport\x18\x01 \x01(\tR\ttransport\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\x02 \x01(\tR\tmessageId\x12!\n" +
+	"\fgenerated_at\x18\x03 \x01(\tR\vgeneratedAt\x12\x12\n" +
+	"\x04from\x18\x04 \x01(\tR\x04from\x12\x16\n" +
+	"\x06sender\x18\x05 \x01(\tR\x06sender\x12/\n" +
+	"\x13signing_fingerprint\x18\x06 \x01(\tR\x12signingFingerprint\x12,\n" +
+	"\x12sender_identity_id\x18\a \x01(\tR\x10senderIdentityId\x122\n" +
+	"\x15sender_identity_class\x18\b \x01(\tR\x13senderIdentityClass\x12%\n" +
+	"\x0epolicy_version\x18\t \x01(\tR\rpolicyVersion\x12,\n" +
+	"\x12identity_state_ref\x18\n" +
+	" \x01(\tR\x10identityStateRef\x12/\n" +
+	"\x13verification_result\x18\v \x01(\tR\x12verificationResult\x12\x1a\n" +
+	"\bworkflow\x18\f \x01(\tR\bworkflow\"\x8b\x01\n" +
 	"\x10DeliveryResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x9e\x03\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x12G\n" +
+	"\bevidence\x18\x03 \x01(\v2+.gophermailforge.plugin.v1.DeliveryEvidenceR\bevidence\"\x9e\x03\n" +
 	"\x11SendPromptRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12%\n" +
 	"\x0ecorrelation_id\x18\x02 \x01(\tR\rcorrelationId\x12\x1c\n" +
@@ -822,7 +978,7 @@ func file_proto_gophermailforge_plugin_v1_plugin_proto_rawDescGZIP() []byte {
 	return file_proto_gophermailforge_plugin_v1_plugin_proto_rawDescData
 }
 
-var file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_proto_gophermailforge_plugin_v1_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_proto_gophermailforge_plugin_v1_plugin_proto_goTypes = []any{
 	(*HealthRequest)(nil),        // 0: gophermailforge.plugin.v1.HealthRequest
 	(*HealthResponse)(nil),       // 1: gophermailforge.plugin.v1.HealthResponse
@@ -833,30 +989,32 @@ var file_proto_gophermailforge_plugin_v1_plugin_proto_goTypes = []any{
 	(*AlertResource)(nil),        // 6: gophermailforge.plugin.v1.AlertResource
 	(*AlertMessage)(nil),         // 7: gophermailforge.plugin.v1.AlertMessage
 	(*SendAlertRequest)(nil),     // 8: gophermailforge.plugin.v1.SendAlertRequest
-	(*DeliveryResponse)(nil),     // 9: gophermailforge.plugin.v1.DeliveryResponse
-	(*SendPromptRequest)(nil),    // 10: gophermailforge.plugin.v1.SendPromptRequest
-	(*PromptResponse)(nil),       // 11: gophermailforge.plugin.v1.PromptResponse
-	nil,                          // 12: gophermailforge.plugin.v1.AlertMessage.DetailsEntry
+	(*DeliveryEvidence)(nil),     // 9: gophermailforge.plugin.v1.DeliveryEvidence
+	(*DeliveryResponse)(nil),     // 10: gophermailforge.plugin.v1.DeliveryResponse
+	(*SendPromptRequest)(nil),    // 11: gophermailforge.plugin.v1.SendPromptRequest
+	(*PromptResponse)(nil),       // 12: gophermailforge.plugin.v1.PromptResponse
+	nil,                          // 13: gophermailforge.plugin.v1.AlertMessage.DetailsEntry
 }
 var file_proto_gophermailforge_plugin_v1_plugin_proto_depIdxs = []int32{
 	6,  // 0: gophermailforge.plugin.v1.AlertMessage.resource:type_name -> gophermailforge.plugin.v1.AlertResource
-	12, // 1: gophermailforge.plugin.v1.AlertMessage.details:type_name -> gophermailforge.plugin.v1.AlertMessage.DetailsEntry
+	13, // 1: gophermailforge.plugin.v1.AlertMessage.details:type_name -> gophermailforge.plugin.v1.AlertMessage.DetailsEntry
 	7,  // 2: gophermailforge.plugin.v1.SendAlertRequest.alert:type_name -> gophermailforge.plugin.v1.AlertMessage
-	0,  // 3: gophermailforge.plugin.v1.PluginControl.Health:input_type -> gophermailforge.plugin.v1.HealthRequest
-	2,  // 4: gophermailforge.plugin.v1.PluginControl.Version:input_type -> gophermailforge.plugin.v1.VersionRequest
-	4,  // 5: gophermailforge.plugin.v1.PluginControl.Capabilities:input_type -> gophermailforge.plugin.v1.CapabilitiesRequest
-	8,  // 6: gophermailforge.plugin.v1.NotificationBackend.SendAlert:input_type -> gophermailforge.plugin.v1.SendAlertRequest
-	10, // 7: gophermailforge.plugin.v1.NotificationBackend.SendPrompt:input_type -> gophermailforge.plugin.v1.SendPromptRequest
-	1,  // 8: gophermailforge.plugin.v1.PluginControl.Health:output_type -> gophermailforge.plugin.v1.HealthResponse
-	3,  // 9: gophermailforge.plugin.v1.PluginControl.Version:output_type -> gophermailforge.plugin.v1.VersionResponse
-	5,  // 10: gophermailforge.plugin.v1.PluginControl.Capabilities:output_type -> gophermailforge.plugin.v1.CapabilitiesResponse
-	9,  // 11: gophermailforge.plugin.v1.NotificationBackend.SendAlert:output_type -> gophermailforge.plugin.v1.DeliveryResponse
-	11, // 12: gophermailforge.plugin.v1.NotificationBackend.SendPrompt:output_type -> gophermailforge.plugin.v1.PromptResponse
-	8,  // [8:13] is the sub-list for method output_type
-	3,  // [3:8] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	9,  // 3: gophermailforge.plugin.v1.DeliveryResponse.evidence:type_name -> gophermailforge.plugin.v1.DeliveryEvidence
+	0,  // 4: gophermailforge.plugin.v1.PluginControl.Health:input_type -> gophermailforge.plugin.v1.HealthRequest
+	2,  // 5: gophermailforge.plugin.v1.PluginControl.Version:input_type -> gophermailforge.plugin.v1.VersionRequest
+	4,  // 6: gophermailforge.plugin.v1.PluginControl.Capabilities:input_type -> gophermailforge.plugin.v1.CapabilitiesRequest
+	8,  // 7: gophermailforge.plugin.v1.NotificationBackend.SendAlert:input_type -> gophermailforge.plugin.v1.SendAlertRequest
+	11, // 8: gophermailforge.plugin.v1.NotificationBackend.SendPrompt:input_type -> gophermailforge.plugin.v1.SendPromptRequest
+	1,  // 9: gophermailforge.plugin.v1.PluginControl.Health:output_type -> gophermailforge.plugin.v1.HealthResponse
+	3,  // 10: gophermailforge.plugin.v1.PluginControl.Version:output_type -> gophermailforge.plugin.v1.VersionResponse
+	5,  // 11: gophermailforge.plugin.v1.PluginControl.Capabilities:output_type -> gophermailforge.plugin.v1.CapabilitiesResponse
+	10, // 12: gophermailforge.plugin.v1.NotificationBackend.SendAlert:output_type -> gophermailforge.plugin.v1.DeliveryResponse
+	12, // 13: gophermailforge.plugin.v1.NotificationBackend.SendPrompt:output_type -> gophermailforge.plugin.v1.PromptResponse
+	9,  // [9:14] is the sub-list for method output_type
+	4,  // [4:9] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_proto_gophermailforge_plugin_v1_plugin_proto_init() }
@@ -870,7 +1028,7 @@ func file_proto_gophermailforge_plugin_v1_plugin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_gophermailforge_plugin_v1_plugin_proto_rawDesc), len(file_proto_gophermailforge_plugin_v1_plugin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

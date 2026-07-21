@@ -8,6 +8,7 @@ const (
 	FirstCertName    = "manual-letsencrypt-cert"
 	FirstBackupName  = "local-filesystem-backup"
 	FirstNotifyName  = "telegram-notification-sink"
+	FirstEmailName   = "signed-email-notification-sink"
 )
 
 func FirstMechanismPlugins(serviceToken string) Registry {
@@ -21,6 +22,9 @@ func FirstMechanismPlugins(serviceToken string) Registry {
 }
 
 func FirstMechanismPlugin(name, serviceToken string) (Registration, error) {
+	if name == FirstEmailName {
+		return Registration{Name: FirstEmailName, Seam: Notification, Endpoint: "signed-email-notification-plugin:9443", Enabled: true, ServiceToken: serviceToken, Capabilities: []string{"notification.alert.sink", "notification.alert.send", "notification.alert.email.openpgp", "notification.delivery.status"}}, nil
+	}
 	p, ok := FirstMechanismPlugins(serviceToken).Plugins[name]
 	if !ok {
 		return Registration{}, fmt.Errorf("unknown first mechanism plugin %q", name)
