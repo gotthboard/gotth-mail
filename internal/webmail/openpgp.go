@@ -71,16 +71,16 @@ func (s OpenPGPMIMESigner) SignMIME(ctx context.Context, identity Identity, msg 
 	}
 	var entity bytes.Buffer
 	entity.WriteString("Content-Type: " + ct + "\r\n")
-	entity.WriteString("X-GOTTH Mail-Signed-From: " + identity.Address + "\r\n")
-	entity.WriteString("X-GOTTH Mail-Signing-Fingerprint: " + fingerprint + "\r\n")
-	entity.WriteString("X-GOTTH Mail-Signed-Message-ID: " + binding.MessageID + "\r\n")
-	entity.WriteString("X-GOTTH Mail-Signed-Date: " + binding.Date.UTC().Format(time.RFC3339Nano) + "\r\n")
-	entity.WriteString("X-GOTTH Mail-Signed-Subject-SHA256: " + binding.SubjectSHA256 + "\r\n")
+	entity.WriteString("X-GOTTH-Mail-Signed-From: " + identity.Address + "\r\n")
+	entity.WriteString("X-GOTTH-Mail-Signing-Fingerprint: " + fingerprint + "\r\n")
+	entity.WriteString("X-GOTTH-Mail-Signed-Message-ID: " + binding.MessageID + "\r\n")
+	entity.WriteString("X-GOTTH-Mail-Signed-Date: " + binding.Date.UTC().Format(time.RFC3339Nano) + "\r\n")
+	entity.WriteString("X-GOTTH-Mail-Signed-Subject-SHA256: " + binding.SubjectSHA256 + "\r\n")
 	if binding.Sender != "" {
-		entity.WriteString("X-GOTTH Mail-Signed-Sender: " + binding.Sender + "\r\n")
+		entity.WriteString("X-GOTTH-Mail-Signed-Sender: " + binding.Sender + "\r\n")
 	}
 	if binding.ReplyTo != "" {
-		entity.WriteString("X-GOTTH Mail-Signed-Reply-To: " + binding.ReplyTo + "\r\n")
+		entity.WriteString("X-GOTTH-Mail-Signed-Reply-To: " + binding.ReplyTo + "\r\n")
 	}
 	entity.WriteString("\r\n")
 	entity.Write(body)
@@ -468,19 +468,19 @@ func validateSignedEntityHeaders(h mail.Header) error {
 	}
 	for _, field := range []string{
 		"Content-Type",
-		"X-GOTTH Mail-Signed-From",
-		"X-GOTTH Mail-Signing-Fingerprint",
-		"X-GOTTH Mail-Signed-Message-ID",
-		"X-GOTTH Mail-Signed-Date",
-		"X-GOTTH Mail-Signed-Subject-SHA256",
+		"X-GOTTH-Mail-Signed-From",
+		"X-GOTTH-Mail-Signing-Fingerprint",
+		"X-GOTTH-Mail-Signed-Message-ID",
+		"X-GOTTH-Mail-Signed-Date",
+		"X-GOTTH-Mail-Signed-Subject-SHA256",
 	} {
 		if _, err := uniqueHeaderValue(h, field, true); err != nil {
 			return err
 		}
 	}
 	return rejectAmbiguousHeaders(h,
-		"X-GOTTH Mail-Signed-Sender",
-		"X-GOTTH Mail-Signed-Reply-To",
+		"X-GOTTH-Mail-Signed-Sender",
+		"X-GOTTH-Mail-Signed-Reply-To",
 	)
 }
 
@@ -530,31 +530,31 @@ func signedEntityAssertions(entity []byte) (authoritativeBinding, error) {
 	if err := validateSignedEntityHeaders(m.Header); err != nil {
 		return authoritativeBinding{}, err
 	}
-	from, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signed-From", true)
+	from, err := uniqueHeaderValue(m.Header, "X-GOTTH-Mail-Signed-From", true)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}
-	fingerprint, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signing-Fingerprint", true)
+	fingerprint, err := uniqueHeaderValue(m.Header, "X-GOTTH-Mail-Signing-Fingerprint", true)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}
-	messageID, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signed-Message-ID", true)
+	messageID, err := uniqueHeaderValue(m.Header, "X-GOTTH-Mail-Signed-Message-ID", true)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}
-	dateValue, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signed-Date", true)
+	dateValue, err := uniqueHeaderValue(m.Header, "X-GOTTH-Mail-Signed-Date", true)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}
-	subjectSHA256, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signed-Subject-SHA256", true)
+	subjectSHA256, err := uniqueHeaderValue(m.Header, "X-GOTTH-Mail-Signed-Subject-SHA256", true)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}
-	sender, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signed-Sender", false)
+	sender, err := uniqueHeaderValue(m.Header, "X-GOTTH-Mail-Signed-Sender", false)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}
-	replyTo, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signed-Reply-To", false)
+	replyTo, err := uniqueHeaderValue(m.Header, "X-GOTTH-Mail-Signed-Reply-To", false)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}

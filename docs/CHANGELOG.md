@@ -21,6 +21,35 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 13:44 CDT — Correct renamed exact-sender header tokens
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/webmail/openpgp.go`
+- `internal/webmail/openpgp_test.go`
+- `internal/webmail/webmail_test.go`
+- `internal/api/api_test.go`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+The first rename pass incorrectly rendered the exact-sender extension header
+prefix as `X-GOTTH Mail-`, which contains a space and is not a valid RFC field
+name. The full development-host suite caught the damage in the duplicate
+signed-header rejection test. The canonical machine prefix is
+`X-GOTTH-Mail-`; the signer, verifier, fixtures, and adversarial tests now use
+that token consistently. No mail or external notification was sent.
+
+Verification:
+
+- `git diff --check` passed;
+- `go test -p=1 ./internal/webmail ./internal/api` passed with
+  `GOMAXPROCS=2`;
+- the failed duplicate-header regression now rejects the renamed extension
+  header rather than accepting it through invalid-header parsing.
+
 ### 2026-09-13 13:39 CDT — Rename the project to GOTTH Mail
 
 Commit: current commit; hash assigned by Git after commit

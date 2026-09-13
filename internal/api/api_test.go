@@ -635,7 +635,7 @@ func (f *apiFakeSMTP) Submit(context.Context, webmail.Envelope, []byte) error {
 type apiFakeSigner struct{}
 
 func (apiFakeSigner) SignMIME(ctx context.Context, id webmail.Identity, b []byte) ([]byte, webmail.SignatureStatus, error) {
-	return append([]byte("From: "+id.Address+"\r\nMIME-Version: 1.0\r\nContent-Type: multipart/signed; protocol=\"application/pgp-signature\"; micalg=pgp-sha256; boundary=\"sig\"\r\n\r\n--sig\r\nContent-Type: multipart/mixed; boundary=\"fake\"\r\nX-GOTTH Mail-Signed-From: "+id.Address+"\r\nX-GOTTH Mail-Signing-Fingerprint: "+id.Fingerprint+"\r\n\r\n"), append(b, []byte("\r\n--sig\r\nContent-Type: application/pgp-signature\r\n\r\n-----BEGIN PGP SIGNATURE-----\r\n\r\nfake-signature\r\n-----END PGP SIGNATURE-----\r\n--sig--\r\n")...)...), webmail.SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
+	return append([]byte("From: "+id.Address+"\r\nMIME-Version: 1.0\r\nContent-Type: multipart/signed; protocol=\"application/pgp-signature\"; micalg=pgp-sha256; boundary=\"sig\"\r\n\r\n--sig\r\nContent-Type: multipart/mixed; boundary=\"fake\"\r\nX-GOTTH-Mail-Signed-From: "+id.Address+"\r\nX-GOTTH-Mail-Signing-Fingerprint: "+id.Fingerprint+"\r\n\r\n"), append(b, []byte("\r\n--sig\r\nContent-Type: application/pgp-signature\r\n\r\n-----BEGIN PGP SIGNATURE-----\r\n\r\nfake-signature\r\n-----END PGP SIGNATURE-----\r\n--sig--\r\n")...)...), webmail.SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
 }
 
 type apiFakeResolver struct{}

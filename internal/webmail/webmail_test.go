@@ -86,7 +86,7 @@ func (f fakeSigner) SignMIME(ctx context.Context, id Identity, b []byte) ([]byte
 	if f.fail {
 		return nil, SignatureStatus{}, errors.New("sign fail")
 	}
-	return append([]byte("From: "+id.Address+"\r\nMIME-Version: 1.0\r\nContent-Type: multipart/signed; protocol=\"application/pgp-signature\"; micalg=pgp-sha256; boundary=\"sig\"\r\n\r\n--sig\r\nContent-Type: multipart/mixed; boundary=\"fake\"\r\nX-GOTTH Mail-Signed-From: "+id.Address+"\r\nX-GOTTH Mail-Signing-Fingerprint: "+id.Fingerprint+"\r\n\r\n"), append(b, []byte("\r\n--sig\r\nContent-Type: application/pgp-signature\r\n\r\n-----BEGIN PGP SIGNATURE-----\r\n\r\nfake-signature\r\n-----END PGP SIGNATURE-----\r\n--sig--\r\n")...)...), SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
+	return append([]byte("From: "+id.Address+"\r\nMIME-Version: 1.0\r\nContent-Type: multipart/signed; protocol=\"application/pgp-signature\"; micalg=pgp-sha256; boundary=\"sig\"\r\n\r\n--sig\r\nContent-Type: multipart/mixed; boundary=\"fake\"\r\nX-GOTTH-Mail-Signed-From: "+id.Address+"\r\nX-GOTTH-Mail-Signing-Fingerprint: "+id.Fingerprint+"\r\n\r\n"), append(b, []byte("\r\n--sig\r\nContent-Type: application/pgp-signature\r\n\r\n-----BEGIN PGP SIGNATURE-----\r\n\r\nfake-signature\r\n-----END PGP SIGNATURE-----\r\n--sig--\r\n")...)...), SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
 }
 
 func fixtureClient() (*Client, *fakeIMAP) {
