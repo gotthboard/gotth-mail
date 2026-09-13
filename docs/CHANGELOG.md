@@ -40,10 +40,17 @@ version alive. All executable entry points now reject invalid linked release
 identity, and the status API, CLI, and plugin RPC report the same development,
 alpha, beta, or stable build identity.
 
+The release workflow now also exposes the identity libraries' unresolved
+license decisions as a blocking feature. Compatibility pins are not a license
+decision and do not justify fabricated library tags.
+
 Verification:
 
-- focused version, API, plugin, and command tests pass before the final full
-  development-host rerun.
+- focused version, API, plugin, and command tests passed;
+- full and race test suites, vet, all command builds, linked version checks,
+  invalid-version startup rejection, shell syntax, reference Compose
+  rendering, workflow manifest/path checks, exact dependency provenance, and
+  Forgejo/GitHub library ref parity passed on the development host.
 
 ### 2026-09-13 15:08 CDT — Define the 1.0 release line and pin GOTTH identity libraries
 

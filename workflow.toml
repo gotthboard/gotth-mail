@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "release.1-0.identity-libraries"
+active_feature = "v5.notifications.openpgp-signed-email"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -161,7 +161,7 @@ verification = ["git diff --check", "go test ./...", "renamed command builds", "
 id = "release.1-0.contract"
 root = "release.1-0"
 title = "Define the alpha/beta/stable 1.0 release contract"
-state = "in_progress"
+state = "done"
 path = "workflow/features/release.1-0/contract"
 source_path = "docs"
 branch = "workflow/feature/project.release-contract"
@@ -173,7 +173,7 @@ verification = ["version grammar tests", "cross-document release-state audit", "
 id = "release.1-0.identity-libraries"
 root = "release.1-0"
 title = "Pin and prove GOTTH OIDC/SCIM consumer compatibility"
-state = "in_progress"
+state = "done"
 path = "workflow/features/release.1-0/identity-libraries"
 source_path = "test/contract"
 branch = "workflow/feature/project.release-contract"
@@ -189,9 +189,21 @@ state = "planned"
 path = "workflow/features/release.1-0/alpha-integration"
 source_path = "."
 branch = "workflow/feature/release.1-0.alpha-integration"
-dependencies = ["project.identity", "v0.foundation", "v1.mail-core", "v2.identity-provisioning", "v3.ops-import-admin", "v4.webmail", "v5.notifications", "release.1-0.identity-libraries"]
+dependencies = ["project.identity", "v0.foundation", "v1.mail-core", "v2.identity-provisioning", "v3.ops-import-admin", "v4.webmail", "v5.notifications", "release.1-0.identity-libraries", "release.1-0.identity-library-releases"]
 implementation_spec_sections = ["Release verification"]
 verification = ["complete workstream traceability", "reproducible alpha artifact", "upgrade/backup/restore/rollback proof", "full/race/vet/build/container gates"]
+
+[[features]]
+id = "release.1-0.identity-library-releases"
+root = "release.1-0"
+title = "Admit licensed OIDC/SCIM consumer releases"
+state = "blocked"
+path = "workflow/features/release.1-0/identity-library-releases"
+source_path = "go.mod"
+branch = "workflow/feature/release.1-0.identity-library-releases"
+dependencies = ["release.1-0.identity-libraries"]
+implementation_spec_sections = ["OIDC adoption", "SCIM adoption", "Release verification"]
+verification = ["owner license decision", "consumer adapter acceptance", "immutable library tags", "Forgejo/GitHub tag parity", "exact dependency pin"]
 
 [[features]]
 id = "release.1-0.beta-acceptance"
