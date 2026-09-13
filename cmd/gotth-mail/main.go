@@ -76,7 +76,7 @@ func runtimeMux(server api.Server) http.Handler {
 	mux.Handle("/readyz", serverHandler)
 	mux.Handle("/webmail", serverHandler)
 	sessions, _ := server.OIDCStore.(authn.IdentitySessionStore)
-	mux.Handle("/", httpui.HandlerWithAdminIdentityAndSessions(referenceAdminStore(), server.Identity, server.Authz, sessions, nil))
+	mux.Handle("/", httpui.HandlerWithAdminIdentityAndSessions(referenceAdminStore(), server.Identity, server.Authz, sessions, server.OIDCNow))
 	return mux
 }
 

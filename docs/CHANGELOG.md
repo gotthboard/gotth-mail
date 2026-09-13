@@ -21,9 +21,33 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 18:14 CDT — Close identity transaction failure paths
+### 2026-09-13 18:25 CDT — Remove unavailable self-service link
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- runtime/UI session composition
+- administrator-page availability rendering and regressions
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Cold review found that an unconfigured runtime advertised a link whose handler
+was intentionally absent. The page now renders the link only when a durable
+identity-session resolver is actually wired and otherwise retains an explicit
+unavailable state. The UI also receives the runtime's configured clock so its
+session decision cannot drift from the API during deterministic operation or
+tests.
+
+Verification:
+
+- constrained focused HTTP UI and command tests pending
+- `git diff --check`
+
+### 2026-09-13 18:14 CDT — Close identity transaction failure paths
+
+Commit: `a86e26ce8a51d1d9d1d8f2adf244068fb1d861c1`
 
 Affected files:
 

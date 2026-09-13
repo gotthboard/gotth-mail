@@ -113,7 +113,7 @@ func TestIdentityUIFailsClosedUntilOIDCSubjectBindingExists(t *testing.T) {
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	body, _ := io.ReadAll(w.Result().Body)
 	text := string(body)
-	if w.Code != http.StatusOK || !strings.Contains(text, "Browser self-service requires a verified gotth-oidc session") || !strings.Contains(text, "gotth-scim service endpoint") {
+	if w.Code != http.StatusOK || !strings.Contains(text, "Browser self-service is unavailable") || !strings.Contains(text, "gotth-scim service endpoint") {
 		t.Fatalf("status=%d body=%s", w.Code, text)
 	}
 	for _, forbidden := range []string{"private-account@example.test", "private-phone-label", created.ID, created.SecretOnce, `action="/identity/scim-test"`, `action="/identity/app-passwords"`} {

@@ -68,6 +68,9 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 	importStore := ops.NewImportStore()
 	bulkStore := ops.NewBulkStore()
 	mux := http.NewServeMux()
+	render := func(w http.ResponseWriter, msg, simulation string) {
+		renderPage(w, store, ids, sessions != nil, msg, simulation)
+	}
 	if sessions != nil {
 		mux.HandleFunc("/identity/app-passwords", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet && r.Method != http.MethodPost {
@@ -110,7 +113,7 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 			http.NotFound(w, r)
 			return
 		}
-		renderPage(w, store, ids, "", "")
+		render(w, "", "")
 	})
 	mux.HandleFunc("/admin/domains", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -122,9 +125,9 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 			if err == nil {
 				err = store.UpsertDomain(admin.Domain{Name: r.Form.Get("name"), Enabled: r.Form.Get("enabled") == "on", MailHost: r.Form.Get("mail_host"), DKIMSelector: r.Form.Get("dkim_selector")})
 			}
-			renderPage(w, store, ids, message(err, "domain saved"), "")
+			render(w, message(err, "domain saved"), "")
 		case http.MethodGet:
-			renderPage(w, store, ids, "", "")
+			render(w, "", "")
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
@@ -139,7 +142,7 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 			return
 		}
 		_ = store.DeleteDomain(r.Form.Get("name"))
-		renderPage(w, store, ids, "domain deleted", "")
+		render(w, "domain deleted", "")
 	})
 	mux.HandleFunc("/admin/users", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -150,9 +153,9 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 			}
 			q, _ := strconv.Atoi(r.Form.Get("quota_mb"))
 			err := store.UpsertUser(admin.User{Address: r.Form.Get("address"), Enabled: r.Form.Get("enabled") == "on", QuotaMB: q})
-			renderPage(w, store, ids, message(err, "user saved"), "")
+			render(w, message(err, "user saved"), "")
 		case http.MethodGet:
-			renderPage(w, store, ids, "", "")
+			render(w, "", "")
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
@@ -167,7 +170,7 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 			return
 		}
 		_ = store.DeleteUser(r.Form.Get("address"))
-		renderPage(w, store, ids, "user deleted", "")
+		render(w, "user deleted", "")
 	})
 	mux.HandleFunc("/admin/aliases", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -178,9 +181,9 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 			}
 			targets := splitTargets(r.Form.Get("targets"))
 			err := store.UpsertAlias(admin.Alias{Address: r.Form.Get("address"), Enabled: r.Form.Get("enabled") == "on", Targets: targets})
-			renderPage(w, store, ids, message(err, "alias saved"), "")
+			render(w, message(err, "alias saved"), "")
 		case http.MethodGet:
-			renderPage(w, store, ids, "", "")
+			render(w, "", "")
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
@@ -195,7 +198,7 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 			return
 		}
 		_ = store.DeleteAlias(r.Form.Get("address"))
-		renderPage(w, store, ids, "alias deleted", "")
+		render(w, "alias deleted", "")
 	})
 
 	mux.HandleFunc("/ops/backup-verify", func(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +210,7 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 		if _, ok := requireUIAuditActor(w, r, ids, az, "ops:admin", authz.Resource{Type: "ops", ID: "backup"}); !ok {
 			return
 		}
-		renderPage(w, store, ids, "backup verification unavailable: no configured backup storage", "")
+		render(w, "backup verification unavailable: no configured backup storage", "")
 	})
 	mux.HandleFunc("/ops/mailu-preview", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -220,7 +223,7 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 			return
 		}
 		p := importStore.Preview(r.Form.Get("source"), actor, time.Now())
-		renderPage(w, store, ids, "mailu preview created: "+p.ID+" hash="+p.Hash+" source_fingerprint="+p.SourceFingerprint, "")
+		render(w, "mailu preview created: "+p.ID+" hash="+p.Hash+" source_fingerprint="+p.SourceFingerprint, "")
 	})
 	mux.HandleFunc("/ops/bulk-preview", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -233,7 +236,7 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 			return
 		}
 		p, err := bulkStore.Preview(r.Form.Get("operation"), splitTargets(r.Form.Get("items")), actor, time.Now())
-		renderPage(w, store, ids, message(err, "bulk preview created: "+p.ID+" hash="+p.Hash), "")
+		render(w, message(err, "bulk preview created: "+p.ID+" hash="+p.Hash), "")
 	})
 
 	mux.HandleFunc("/ops/mailu-apply", func(w http.ResponseWriter, r *http.Request) {
@@ -248,7 +251,7 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 		}
 		verify := daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}}
 		err := importStore.Apply(r.Context(), ids.Audit, actor, r.Form.Get("id"), r.Form.Get("hash"), r.Form.Get("source_fingerprint"), time.Now(), verify)
-		renderPage(w, store, ids, message(err, "mailu import applied"), "")
+		render(w, message(err, "mailu import applied"), "")
 	})
 	mux.HandleFunc("/ops/bulk-apply", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -261,7 +264,7 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 			return
 		}
 		_, err := bulkStore.Apply(r.Context(), ids.Audit, actor, r.Form.Get("operation"), r.Form.Get("id"), r.Form.Get("confirm"), r.Form.Get("hash"), time.Now())
-		renderPage(w, store, ids, message(err, "bulk operation applied"), "")
+		render(w, message(err, "bulk operation applied"), "")
 	})
 	mux.HandleFunc("/identity/simulator", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -270,7 +273,7 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 		}
 		_ = r.ParseForm()
 		ex, _ := az.Explain(r.Context(), authz.Actor{Type: r.Form.Get("actor_type"), ID: r.Form.Get("actor_id")}, authz.Action(r.Form.Get("action")), authz.Resource{Type: r.Form.Get("resource_type"), ID: r.Form.Get("resource_id")})
-		renderPage(w, store, ids, "permission simulated", ex.Decision.Reason)
+		render(w, "permission simulated", ex.Decision.Reason)
 	})
 	return mux
 }
@@ -345,10 +348,10 @@ func splitTargets(raw string) []string {
 	return out
 }
 
-func renderPage(w http.ResponseWriter, store *admin.Store, ids *identity.Service, msg, simulation string) {
+func renderPage(w http.ResponseWriter, store *admin.Store, ids *identity.Service, appPasswordSelfService bool, msg, simulation string) {
 	domains, users, aliases := store.Lists()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = page.Execute(w, map[string]any{"Message": msg, "Simulation": simulation, "Domains": domains, "Users": users, "Aliases": aliases})
+	_ = page.Execute(w, map[string]any{"Message": msg, "Simulation": simulation, "Domains": domains, "Users": users, "Aliases": aliases, "AppPasswordSelfService": appPasswordSelfService})
 }
 
 var page = template.Must(template.New("page").Parse(`<!doctype html><html><body><main id="app">
@@ -359,7 +362,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html><html><body>
 <section id="identity-status"><h3>OIDC/Auth status</h3><p>OIDC login uses browser-bound authorization-code state, nonce, redirect URI, issuer, audience, azp, and token-signature validation.</p></section>
 <section id="authentik-role-mapping"><h3>Authentik role/group mapping</h3><p>Mappings assign global admin, domain manager, and scoped domain access through Authentik groups. Local manual role edits are not the expected path.</p></section>
 <section id="scim-status"><h3>SCIM capability/status</h3><p>Provisioning uses the authenticated <a href="/scim/v2/ServiceProviderConfig">gotth-scim service endpoint</a>. Browser test provisioning is unavailable because it would bypass the canonical SCIM protocol and transaction.</p></section>
-<section id="app-passwords"><h3>App passwords</h3><p>Browser self-service requires a verified gotth-oidc session durably bound to active gotth-scim mailbox state. When configured, manage the signed-in mailbox at <a href="/identity/app-passwords">/identity/app-passwords</a>. Authorized automation may use the scoped <code>/api/v1/mailboxes/{id}/app-passwords</code> API.</p></section>
+<section id="app-passwords"><h3>App passwords</h3>{{if .AppPasswordSelfService}}<p>Browser self-service uses the verified gotth-oidc session durably bound to active gotth-scim mailbox state. Manage the signed-in mailbox at <a href="/identity/app-passwords">/identity/app-passwords</a>.</p>{{else}}<p>Browser self-service is unavailable until the runtime has durable gotth-oidc and gotth-scim identity binding.</p>{{end}}<p>Authorized automation may use the scoped <code>/api/v1/mailboxes/{id}/app-passwords</code> API.</p></section>
 <section id="permission-simulator"><h3>Permission simulator UI</h3><form method="post" action="/identity/simulator"><input name="actor_type" value="local_admin"><input name="actor_id" value="ui"><input name="action" value="status:read"><input name="resource_type" value="system"><input name="resource_id" value="self"><button>Explain permission</button></form>{{if .Simulation}}<pre>{{.Simulation}}</pre>{{end}}</section>
 
 <section id="audit-ui"><h3>Audit UI/search/export</h3><p>Audit viewer supports actor/action/resource/result filtering and redacted export through API routes.</p><a href="/api/v1/audit/export?format=jsonl">Export audit JSONL</a></section>
