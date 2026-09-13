@@ -121,8 +121,9 @@ SCIM exposes:
 - ResourceTypes
 - Schemas
 - Users list/create/read/replace/patch/deprovision
-- Groups only after the OIDC-subject to SCIM-`externalId` binding and product
-  role-mapping semantics are admitted; until then they fail explicitly
+- Groups as non-authoritative provisioning inventory after same-scope opaque
+  User membership is enforced; role authority remains disabled until the
+  Authentik profile and exact product mapping are separately admitted
 
 Mapping:
 
@@ -148,6 +149,15 @@ Deleting or renaming a mailbox never frees or regenerates the SCIM identity.
 The adapter must pass `scim.CheckStore`; that library check is necessary but
 does not replace product restart, concurrency, migration, backup, restore, and
 mailbox/audit projection evidence.
+
+Group resource parsing, schema behavior, ETags, PATCH, discovery, and opaque
+IDs remain `gotth-scim` responsibilities. GOTTH Mail projects normalized
+Group-to-User edges into `scim_group_members` in the same transaction as the
+resource and audit. Every member must be an existing User in the same scope;
+nested Groups are rejected. Foreign keys cascade Group deletion and restrict
+User deletion while referenced. This table is provisioning state, not an
+authorization cache. Until the live Authentik desired-state profile maps exact
+group IDs to durable role bindings, Group membership grants nothing.
 
 Canonical SCIM resources, ordered indexes, immutable index contracts, and
 permanent tombstones live in PostgreSQL. A stable authenticated `scim_client`

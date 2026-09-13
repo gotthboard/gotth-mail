@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "v2.identity-provisioning.legacy-mailbox-adoption"
+active_feature = "v2.identity-provisioning.opaque-scim-groups"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -492,6 +492,18 @@ branch = "workflow/feature/v2.identity-provisioning.live-authentik-persistence"
 dependencies = ["v2.identity-provisioning.scim", "v2.identity-provisioning.live-authentik-persistence"]
 implementation_spec_sections = ["SCIM API", "Session model"]
 verification = ["redacted deterministic preview tests", "stale confirmation rejection", "gotth-scim reconciler opaque-ID proof", "existing mailbox UUID/verifier preservation", "subject/mailbox/tombstone conflict tests", "audit rollback test", "restart proof", "go test ./...", "go test -race ./...", "git diff --check"]
+
+[[features]]
+id = "v2.identity-provisioning.opaque-scim-groups"
+root = "v2.identity-provisioning"
+title = "Non-authoritative SCIM Groups with same-scope opaque User membership"
+state = "in_progress"
+path = "workflow/features/v2.identity-provisioning/opaque-scim-groups"
+source_path = "internal/scimstore"
+branch = "workflow/feature/v2.identity-provisioning.live-authentik-persistence"
+dependencies = ["v2.identity-provisioning.scim", "v2.identity-provisioning.legacy-mailbox-adoption"]
+implementation_spec_sections = ["SCIM API", "Authentik role mapping"]
+verification = ["gotth-scim Group HTTP lifecycle", "same-scope opaque User membership", "missing/cross-scope/nested/duplicate rejection", "referenced User delete restriction", "atomic membership and audit rollback", "no role authority projection", "migration parity", "go test ./...", "go test -race ./...", "git diff --check"]
 
 [[features]]
 id = "v3.ops-import-admin.production-ops"

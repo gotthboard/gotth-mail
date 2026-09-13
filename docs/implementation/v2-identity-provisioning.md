@@ -197,13 +197,25 @@ PUT    /Users/{id}
 PATCH  /Users/{id}
 DELETE /Users/{id}
 GET    /Groups
+POST   /Groups
+GET    /Groups/{id}
+PUT    /Groups/{id}
+PATCH  /Groups/{id}
+DELETE /Groups/{id}
 ```
 
-Groups return explicit unsupported behavior until real group semantics exist.
+Groups use `gotth-scim` protocol behavior. For GOTTH Mail 1.0 every member must
+have `type=User` (or omit type so the library canonicalizes it) and `value`
+must name a live opaque User ID in the same storage scope. Nested Groups,
+missing users, cross-scope users, duplicate members, and deleting a referenced
+User fail closed. `scim_group_members(scope, group_id, user_id)` is replaced
+atomically with Group canonical data and audit. Group deletion cascades its
+edges; User deletion is restricted until membership is removed.
 
-Group support may be enabled only after membership values are bound to opaque
-SCIM User IDs and each User `externalId` is proven to match the corresponding
-Authentik OIDC subject. No ID-token group claim bypasses this mapping.
+This enables provisioning inventory, not authorization. No Group name or
+membership becomes a product role until the admitted Authentik profile maps an
+exact stable Group resource to a durable `role_bindings` policy. No ID-token
+group claim bypasses this mapping.
 
 SCIM requests authenticate as a `scim_client` actor using a verifier-backed bearer/API token. Every create/update/patch/deprovision request runs through core authorization and domain policy before canonical mailbox state is admitted.
 

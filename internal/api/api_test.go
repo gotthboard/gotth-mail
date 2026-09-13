@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -502,8 +503,121 @@ func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
 
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, authed(http.MethodGet, "/scim/v2/Groups", "", "scim-secret-token"))
-	if rr.Code != http.StatusNotImplemented || !strings.Contains(rr.Body.String(), "disabled until opaque membership binding") {
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "ListResponse") {
 		t.Fatalf("groups status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestSCIMGroupsRequireSameScopeOpaqueUsersAndRemainNonAuthoritative(t *testing.T) {
+	db, ids, _, h := scimTestHandler(t, nil)
+	createUser := func(token, externalID, mailbox string) string {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, authed(http.MethodPost, "/scim/v2/Users", fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"externalId":%q,"userName":%q,"active":true}`, externalID, mailbox), token))
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("create user status=%d body=%s", rr.Code, rr.Body.String())
+		}
+		return responseID(t, rr.Body.String())
+	}
+	userID := createUser("scim-secret-token", "subject-group-user", "group-user@example.test")
+	if err := ids.AddToken("scim-other", "scim_client", "other-scim-secret"); err != nil {
+		t.Fatal(err)
+	}
+	otherScopeUserID := createUser("other-scim-secret", "subject-other-scope", "other-scope@example.test")
+
+	createGroup := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, authed(http.MethodPost, "/scim/v2/Groups", body, "scim-secret-token"))
+		return rr
+	}
+	rr := createGroup(fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"externalId":"authentik-group-1","displayName":"Operators","members":[{"value":%q,"type":"User"}]}`, userID))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create group status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	groupID := responseID(t, rr.Body.String())
+	var members, roles, groupAudits int
+	if err := db.QueryRow(`SELECT count(*) FROM scim_group_members WHERE group_id=$1 AND user_id=$2`, groupID, userID).Scan(&members); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM role_bindings`).Scan(&roles); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM audit_events WHERE action='scim.group.create' AND resource_id=$1`, groupID).Scan(&groupAudits); err != nil {
+		t.Fatal(err)
+	}
+	if members != 1 || roles != 0 || groupAudits != 1 {
+		t.Fatalf("members=%d roles=%d groupAudits=%d", members, roles, groupAudits)
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodDelete, "/scim/v2/Users/"+userID, "", "scim-secret-token"))
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("referenced user delete status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var enabled bool
+	if err := db.QueryRow(`SELECT enabled FROM mailboxes WHERE scim_resource_id=$1`, userID).Scan(&enabled); err != nil || !enabled {
+		t.Fatalf("failed delete disabled mailbox enabled=%v err=%v", enabled, err)
+	}
+
+	badGroups := []string{
+		`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Missing","members":[{"value":"missing-user","type":"User"}]}`,
+		fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"CrossScope","members":[{"value":%q,"type":"User"}]}`, otherScopeUserID),
+		fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Nested","members":[{"value":%q,"type":"Group"}]}`, groupID),
+		fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Duplicate","members":[{"value":%q},{"value":%q}]}`, userID, userID),
+	}
+	for _, body := range badGroups {
+		rr = createGroup(body)
+		if rr.Code < 400 {
+			t.Fatalf("invalid group admitted status=%d body=%s", rr.Code, rr.Body.String())
+		}
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodPatch, "/scim/v2/Groups/"+groupID, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"members","value":[]}]}`, "scim-secret-token"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear members status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM scim_group_members WHERE group_id=$1`, groupID).Scan(&members); err != nil || members != 0 {
+		t.Fatalf("members after clear=%d err=%v", members, err)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodDelete, "/scim/v2/Users/"+userID, "", "scim-secret-token"))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("unreferenced user delete status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodDelete, "/scim/v2/Groups/"+groupID, "", "scim-secret-token"))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("group delete status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestSCIMGroupAuditFailureRollsBackResourceAndMembership(t *testing.T) {
+	db, _, _, h := scimTestHandler(t, nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodPost, "/scim/v2/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"externalId":"subject","userName":"audit-user@example.test","active":true}`, "scim-secret-token"))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create user status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	userID := responseID(t, rr.Body.String())
+	if _, err := db.Exec(`CREATE FUNCTION reject_group_audit() RETURNS trigger AS $$ BEGIN IF NEW.action='scim.group.create' THEN RAISE EXCEPTION 'forced group audit failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql; CREATE TRIGGER reject_group_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_group_audit()`); err != nil {
+		t.Fatal(err)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodPost, "/scim/v2/Groups", fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"externalId":"group","displayName":"Operators","members":[{"value":%q}]}`, userID), "scim-secret-token"))
+	if rr.Code < 500 {
+		t.Fatalf("audit failure status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, table := range []string{"scim_group_members", "scim_resources"} {
+		var count int
+		query := `SELECT count(*) FROM ` + table
+		if table == "scim_resources" {
+			query += ` WHERE resource_type='Group'`
+		}
+		if err := db.QueryRow(query).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s count=%d err=%v", table, count, err)
+		}
 	}
 }
 

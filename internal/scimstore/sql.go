@@ -211,7 +211,7 @@ func (tx *transaction) Create(record gotthscim.Record) error {
 	if err := tx.replaceIndexes(record); err != nil {
 		return err
 	}
-	return tx.projectRecord("scim.user.create", gotthscim.Record{}, record)
+	return tx.projectRecord(scimAction(record.ResourceType, "create"), gotthscim.Record{}, record)
 }
 
 func (tx *transaction) Replace(record gotthscim.Record, expectedVersion string) error {
@@ -247,7 +247,7 @@ func (tx *transaction) Replace(record gotthscim.Record, expectedVersion string) 
 	if err := tx.replaceIndexes(record); err != nil {
 		return err
 	}
-	return tx.projectRecord("scim.user.replace", current, record)
+	return tx.projectRecord(scimAction(record.ResourceType, "replace"), current, record)
 }
 
 func (tx *transaction) Delete(scope, resourceType, id, expectedVersion string, tombstone gotthscim.Tombstone) error {
@@ -265,12 +265,12 @@ func (tx *transaction) Delete(scope, resourceType, id, expectedVersion string, t
 		return err
 	}
 	if _, err := tx.tx.ExecContext(tx.ctx, `DELETE FROM scim_resources WHERE scope=$1 AND resource_type=$2 AND id=$3`, scope, resourceType, id); err != nil {
-		return err
+		return mapStoreError(err)
 	}
 	if _, err := tx.tx.ExecContext(tx.ctx, `INSERT INTO scim_tombstones(scope, resource_type, id, external_id, manager, version, deleted_unix_nano) VALUES ($1,$2,$3,$4,$5,$6,$7)`, tombstone.Scope, tombstone.ResourceType, tombstone.ID, tombstone.ExternalID, tombstone.Manager, tombstone.Version, tombstone.DeletedAt.UnixNano()); err != nil {
 		return mapStoreError(err)
 	}
-	return tx.audit("scim.user.delete", current, gotthscim.Record{})
+	return tx.audit(scimAction(resourceType, "delete"), current, gotthscim.Record{})
 }
 
 func (tx *transaction) Tombstones(scope, resourceType string) ([]gotthscim.Tombstone, error) {
@@ -360,6 +360,12 @@ func (tx *transaction) loadIndexesByID(scope, resourceType string, ids []string)
 }
 
 func (tx *transaction) projectRecord(action string, before, after gotthscim.Record) error {
+	if after.ResourceType == "Group" {
+		if err := tx.replaceGroupMembers(after); err != nil {
+			return err
+		}
+		return tx.audit(action, before, after)
+	}
 	if tx.identity == nil || after.ResourceType != "User" {
 		return nil
 	}
@@ -378,6 +384,71 @@ func (tx *transaction) projectRecord(action string, before, after gotthscim.Reco
 	}
 	tx.project = append(tx.project, mailboxProjection{previousEmail: previousEmail, mailbox: mailbox})
 	return tx.audit(action, before, after)
+}
+
+func (tx *transaction) replaceGroupMembers(record gotthscim.Record) error {
+	document, err := gotthscim.DecodeDocument(record.Data)
+	if err != nil {
+		return err
+	}
+	values, exists := document["members"]
+	members := make([]string, 0)
+	seen := make(map[string]struct{})
+	if exists {
+		items, ok := values.([]any)
+		if !ok {
+			return &gotthscim.ProtocolError{Status: 400, SCIMType: "invalidValue", Detail: "Group members are invalid"}
+		}
+		members = make([]string, 0, len(items))
+		for _, item := range items {
+			member, ok := item.(map[string]any)
+			if !ok {
+				return &gotthscim.ProtocolError{Status: 400, SCIMType: "invalidValue", Detail: "Group member is invalid"}
+			}
+			id, ok := member["value"].(string)
+			kind, _ := member["type"].(string)
+			if !ok || id == "" || kind != "" && kind != "User" {
+				return &gotthscim.ProtocolError{Status: 400, SCIMType: "invalidValue", Detail: "Group members must reference Users"}
+			}
+			if _, duplicate := seen[id]; duplicate {
+				return &gotthscim.ProtocolError{Status: 409, SCIMType: "uniqueness", Detail: "Group member is duplicated"}
+			}
+			seen[id] = struct{}{}
+			members = append(members, id)
+		}
+	}
+	if len(members) > 0 {
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT id FROM scim_resources WHERE scope=$1 AND resource_type='User' AND id=ANY($2)`, record.Scope, pq.Array(members))
+		if err != nil {
+			return err
+		}
+		found := make(map[string]struct{}, len(members))
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			found[id] = struct{}{}
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(found) != len(members) {
+			return &gotthscim.ProtocolError{Status: 409, SCIMType: "invalidValue", Detail: "Group member is not a live User in this scope"}
+		}
+	}
+	if _, err := tx.tx.ExecContext(tx.ctx, `DELETE FROM scim_group_members WHERE scope=$1 AND group_id=$2`, record.Scope, record.ID); err != nil {
+		return err
+	}
+	if len(members) == 0 {
+		return nil
+	}
+	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO scim_group_members(scope, group_id, user_id) SELECT $1,$2,unnest($3::text[])`, record.Scope, record.ID, pq.Array(members))
+	return mapStoreError(err)
 }
 
 func (tx *transaction) mailboxFromRecord(record gotthscim.Record) (identity.Mailbox, string, error) {
@@ -578,10 +649,14 @@ func recordPasswordKey(scope, resourceType, id string) string {
 
 func mapStoreError(err error) error {
 	var postgresError *pq.Error
-	if errors.As(err, &postgresError) && postgresError.Code == "23505" {
+	if errors.As(err, &postgresError) && (postgresError.Code == "23505" || postgresError.Code == "23503") {
 		return gotthscim.ErrConflict
 	}
 	return err
+}
+
+func scimAction(resourceType, verb string) string {
+	return "scim." + strings.ToLower(resourceType) + "." + verb
 }
 
 func stableUUID(seed string) string {

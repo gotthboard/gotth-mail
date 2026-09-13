@@ -21,9 +21,39 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 18:52 CDT — Add reviewed legacy mailbox adoption
+### 2026-09-13 18:34 CDT — Enable opaque non-authoritative SCIM Groups
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- identity/provisioning PRD, architecture, implementation, and GOTTH adoption contract
+- workflow manifest and opaque-Groups feature record
+- SCIM HTTP composition and product PostgreSQL projection
+- migration `0007_scim_group_members` and parity checks
+- SCIM Group lifecycle, isolation, conflict, authority, and rollback tests
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Enabled the pinned `gotth-scim` Group protocol surface after adding the
+missing product constraint: every member is a live opaque User ID in the same
+provisioning scope. Normalized membership is replaced atomically with the
+Group resource and audit, Group deletion cascades its edges, and User deletion
+is restricted while referenced. Nested, missing, cross-scope, and duplicate
+members fail closed. Group storage is deliberately non-authoritative; it does
+not create product role bindings or trust OIDC group claims.
+
+Verification:
+
+- constrained store/SCIM/API compilation: pass
+- PostgreSQL lifecycle, migration, rollback, full, race, vet, build, and
+  coverage gates: pending on the development host
+- `git diff --check`: pass
+
+### 2026-09-13 18:25 CDT — Add reviewed legacy mailbox adoption
+
+Commit: `6f7f4703cb6bd1e68c3b54754b220e3db717a363`
 
 Affected files:
 
@@ -60,9 +90,9 @@ Verification:
   `13fde2b740fbec1f8a787400dca7082c2d640368d3837f2bb640958697d5212b`
 - `git diff --check`: pass
 
-### 2026-09-13 18:38 CDT — Reconcile identity evidence and live provider status
+### 2026-09-13 18:02 CDT — Reconcile identity evidence and live provider status
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `5c5f27fea44244145bc91479ba2b8d7523296f76`
 
 Affected files:
 
@@ -86,7 +116,7 @@ Verification:
   discovery responses, and the code-only Graphify artifact
 - `git diff --check`: pass
 
-### 2026-09-13 18:25 CDT — Remove unavailable self-service link
+### 2026-09-13 18:01 CDT — Remove unavailable self-service link
 
 Commit: `846683cdef79b0a4c2ad667492c9486f2f40586d`
 

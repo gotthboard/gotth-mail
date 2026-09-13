@@ -37,10 +37,11 @@ is admitted.
    generates the opaque ID; GOTTH Mail only supplies the exact existing-row
    claim and atomic PostgreSQL projection. IDs and subjects are never derived
    from a mutable address.
-5. Use SCIM Groups for role membership only after the exact binding between an
-   Authentik OIDC subject and a SCIM User `externalId` is specified and proven.
-   OIDC authorization-shaped claims are not trusted merely because a provider
-   placed them in an ID token.
+5. Use `gotth-scim` Groups for non-authoritative provisioning inventory once
+   same-scope opaque User references are enforced. Promote those memberships
+   to roles only after the exact stable Authentik Group-to-product-role mapping
+   is specified and proven. OIDC authorization-shaped claims are never trusted
+   merely because a provider placed them in an ID token.
 6. Use `gotth-authentik` for the real provider/application/enrollment profile
    only after its legal and release gates are satisfied, then run live login,
    provision, role, disable, deprovision, restart, backup, and restore proofs.
@@ -102,10 +103,11 @@ yet because one process cannot update another process's cache. That limitation
 must be removed or made operationally impossible before horizontal runtime
 scaling.
 
-SCIM Groups return explicit `501 Not Implemented` until group members are bound
-to opaque SCIM User IDs and each User `externalId` is proven to be the matching
-Authentik OIDC subject. The same missing binding prevents honest SCIM-driven
-web-session invalidation. No ID-token group claim is trusted as a shortcut.
+SCIM Groups use the pinned library only with product-enforced same-scope opaque
+User membership. Their normalized membership rows are durable provisioning
+inventory but carry no authorization until the live Authentik profile and
+exact role projection are admitted. No ID-token group claim is trusted as a
+shortcut.
 
 Legacy email-keyed mailbox rows are not guessed into SCIM ownership. Adoption
 requires an operator-reviewed mailbox/subject/scope/manager mapping and exact

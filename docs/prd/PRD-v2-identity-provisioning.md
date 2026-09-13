@@ -94,7 +94,11 @@ Requirements:
 - ResourceTypes.
 - Schemas.
 - Users list/create/read/replace/patch/deprovision.
-- Groups explicitly unsupported until real group semantics exist.
+- Groups use the pinned `gotth-scim` protocol surface only after every member
+  value is validated as a live opaque User ID in the same provisioning scope.
+  Nested Groups are rejected for 1.0. Group storage is non-authoritative until
+  the separately admitted Authentik profile maps exact group resources to
+  durable product roles.
 - Map:
   - `userName` to mailbox email
   - `displayName`/`name.formatted` to displayed name
@@ -103,6 +107,9 @@ Requirements:
     GOTTH Mail 1.0 Authentik/Django `pbkdf2_sha256` encoded password format
 - Reject malformed JSON, non-object payloads, invalid scalar identity fields, unsupported patch operations, unknown paths, and bad passwords.
 - SCIM DELETE disables mailbox by default; it does not delete mail data.
+- A User referenced by a live Group cannot be deleted until the manager removes
+  that membership. Group replacement updates its normalized membership index
+  atomically with the SCIM resource and audit.
 - Authentik-compatible provisioning path.
 - Existing email-keyed mailboxes are admitted through an explicit
   preview/confirm adoption operation. The operator supplies the exact mailbox,
@@ -177,6 +184,9 @@ Requirements:
 - Permission simulator explains allow/deny results for identity-backed actors.
 - SCIM provisioning can create, update, list, disable, and patch users through Authentik-compatible flows.
 - SCIM failure paths are tested.
+- SCIM Groups can be created, read, listed, replaced, patched, and deleted with
+  same-scope opaque User membership; missing/cross-scope/User-delete conflicts
+  fail without partial mutation. Group existence alone grants no role.
 - The `gotth-scim` PostgreSQL adapter passes the exported store conformance
   check and product restart/concurrency/migration/backup/restore tests.
 - SCIM resources use opaque persistent IDs; an email address is never the

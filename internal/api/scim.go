@@ -9,7 +9,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"strings"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
@@ -26,7 +25,7 @@ func NewSCIMHandler(externalURL string, db *sql.DB, ids *identity.Service, autho
 	}
 	ids.Authorizer = authorizer
 	definitions := gotthscim.DefaultDefinitions()
-	registry, err := gotthscim.NewRegistry(definitions[:1])
+	registry, err := gotthscim.NewRegistry(definitions)
 	if err != nil {
 		return nil, err
 	}
@@ -69,11 +68,7 @@ func (handler *authenticatedSCIMHandler) ServeHTTP(writer http.ResponseWriter, r
 	ctx = scimstore.WithRequestMetadata(ctx, actor, request.Header.Get("X-Correlation-ID"), sourceIP, request.UserAgent())
 	request = request.WithContext(ctx)
 	status := &statusWriter{ResponseWriter: writer}
-	if request.URL.Path == "/scim/v2/Groups" || strings.HasPrefix(request.URL.Path, "/scim/v2/Groups/") {
-		writeSCIMError(status, http.StatusNotImplemented, "", "SCIM Groups are disabled until opaque membership binding is admitted")
-	} else {
-		handler.next.ServeHTTP(status, request)
-	}
+	handler.next.ServeHTTP(status, request)
 	if isMutation(request.Method) && status.status >= 400 {
 		handler.writeFailure(request, actor, "failure", "request_rejected")
 	}
