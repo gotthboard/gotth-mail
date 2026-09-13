@@ -1,6 +1,8 @@
 package httpui
 
 import (
+	"crypto/subtle"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strconv"
@@ -9,6 +11,7 @@ import (
 
 	"forgejo/gotthboard/gotth-mail/internal/admin"
 	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authn"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/daemon"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
@@ -46,6 +49,10 @@ func requireUIAuditActor(w http.ResponseWriter, r *http.Request, ids *identity.S
 	return audit.ActorRef{Type: actor.Type, ID: actor.ID}, true
 }
 func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az authz.Authorizer) http.Handler {
+	return HandlerWithAdminIdentityAndSessions(store, ids, az, nil, nil)
+}
+
+func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Service, az authz.Authorizer, sessions authn.IdentitySessionStore, now func() time.Time) http.Handler {
 	if store == nil {
 		store = admin.NewStore()
 	}
@@ -61,6 +68,43 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 	importStore := ops.NewImportStore()
 	bulkStore := ops.NewBulkStore()
 	mux := http.NewServeMux()
+	if sessions != nil {
+		mux.HandleFunc("/identity/app-passwords", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet && r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			bound, actor, csrf, ok := boundUIIdentity(w, r, sessions, now)
+			if !ok {
+				return
+			}
+			created := identity.AppPasswordCreated{}
+			message := ""
+			if r.Method == http.MethodPost {
+				r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+				if err := r.ParseForm(); err != nil || !validUIFormCSRF(r.Form.Get("csrf_token"), csrf, bound.Session) {
+					http.Error(w, "CSRF validation failed", http.StatusForbidden)
+					return
+				}
+				var err error
+				switch r.Form.Get("action") {
+				case "create":
+					created, err = ids.CreateAppPassword(r.Context(), actor, bound.Mailbox, r.Form.Get("label"))
+				case "revoke":
+					err = ids.RevokeAppPassword(r.Context(), actor, bound.Mailbox, r.Form.Get("credential_id"))
+				default:
+					err = fmt.Errorf("invalid app-password action")
+				}
+				message = messageForIdentityMutation(err, r.Form.Get("action"))
+			}
+			apps, err := ids.ListAppPasswordsForActor(r.Context(), actor, bound.Mailbox)
+			if err != nil {
+				http.Error(w, "app-password authorization required", http.StatusForbidden)
+				return
+			}
+			renderAppPasswords(w, bound.Mailbox, csrf, apps, created, message)
+		})
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -237,6 +281,60 @@ func message(err error, ok string) string {
 	}
 	return ok
 }
+
+func boundUIIdentity(w http.ResponseWriter, r *http.Request, sessions authn.IdentitySessionStore, now func() time.Time) (authn.BoundSession, authz.Actor, string, bool) {
+	sessionCookie, err := r.Cookie("gotth_mail_session")
+	if err != nil || sessionCookie.Value == "" {
+		http.Error(w, "identity session required", http.StatusUnauthorized)
+		return authn.BoundSession{}, authz.Actor{}, "", false
+	}
+	current := time.Now().UTC()
+	if now != nil {
+		current = now().UTC()
+	}
+	bound, ok := sessions.BoundSession(r.Context(), sessionCookie.Value, current)
+	if !ok {
+		http.Error(w, "identity session is invalid", http.StatusUnauthorized)
+		return authn.BoundSession{}, authz.Actor{}, "", false
+	}
+	csrfCookie, err := r.Cookie("gotth_mail_csrf")
+	if err != nil || !authn.ValidCSRF(bound.Session, csrfCookie.Value) {
+		http.Error(w, "identity CSRF binding is invalid", http.StatusUnauthorized)
+		return authn.BoundSession{}, authz.Actor{}, "", false
+	}
+	actor := authz.Actor{Type: "oidc_subject", ID: bound.IdentityRefID, Mailbox: bound.Mailbox}
+	return bound, actor, csrfCookie.Value, true
+}
+
+func validUIFormCSRF(form, cookie string, session authn.Session) bool {
+	return form != "" && len(form) == len(cookie) && subtle.ConstantTimeCompare([]byte(form), []byte(cookie)) == 1 && authn.ValidCSRF(session, form)
+}
+
+func messageForIdentityMutation(err error, action string) string {
+	if err != nil {
+		return err.Error()
+	}
+	if action == "create" {
+		return "app password created; copy the secret now"
+	}
+	return "app password revoked"
+}
+
+func renderAppPasswords(w http.ResponseWriter, mailbox, csrf string, apps []identity.AppPassword, created identity.AppPasswordCreated, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+	_ = appPasswordsPage.Execute(w, map[string]any{"Mailbox": mailbox, "CSRF": csrf, "AppPasswords": apps, "Created": created, "Message": message})
+}
+
+var appPasswordsPage = template.Must(template.New("app-passwords").Parse(`<!doctype html><html><body><main>
+<h1>App passwords</h1><p>Signed in mailbox: {{.Mailbox}}</p>
+{{if .Message}}<p role="status">{{.Message}}</p>{{end}}
+{{if .Created.SecretOnce}}<section><h2>New secret</h2><p>This value is shown once.</p><code id="created-secret">{{.Created.SecretOnce}}</code></section>{{end}}
+<section><h2>Create</h2><form method="post" action="/identity/app-passwords"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="action" value="create"><label>Label <input name="label" maxlength="128" required></label><button type="submit">Create app password</button></form></section>
+<section><h2>Existing credentials</h2>{{range .AppPasswords}}<article><span>{{.Label}}</span> <code>{{.ID}}</code>{{if .RevokedAt}} <span>revoked</span>{{else}}<form method="post" action="/identity/app-passwords"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input type="hidden" name="action" value="revoke"><input type="hidden" name="credential_id" value="{{.ID}}"><button type="submit">Revoke</button></form>{{end}}</article>{{else}}<p>No app passwords.</p>{{end}}</section>
+</main></body></html>`))
+
 func splitTargets(raw string) []string {
 	var out []string
 	for _, p := range strings.Split(raw, ",") {
@@ -261,7 +359,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html><html><body>
 <section id="identity-status"><h3>OIDC/Auth status</h3><p>OIDC login uses browser-bound authorization-code state, nonce, redirect URI, issuer, audience, azp, and token-signature validation.</p></section>
 <section id="authentik-role-mapping"><h3>Authentik role/group mapping</h3><p>Mappings assign global admin, domain manager, and scoped domain access through Authentik groups. Local manual role edits are not the expected path.</p></section>
 <section id="scim-status"><h3>SCIM capability/status</h3><p>Provisioning uses the authenticated <a href="/scim/v2/ServiceProviderConfig">gotth-scim service endpoint</a>. Browser test provisioning is unavailable because it would bypass the canonical SCIM protocol and transaction.</p></section>
-<section id="app-passwords"><h3>App passwords</h3><p>Browser self-service is unavailable until the verified gotth-oidc session is durably bound to mailbox and role state. Authorized automation may use the scoped <code>/api/v1/mailboxes/{id}/app-passwords</code> API.</p></section>
+<section id="app-passwords"><h3>App passwords</h3><p>Browser self-service requires a verified gotth-oidc session durably bound to active gotth-scim mailbox state. When configured, manage the signed-in mailbox at <a href="/identity/app-passwords">/identity/app-passwords</a>. Authorized automation may use the scoped <code>/api/v1/mailboxes/{id}/app-passwords</code> API.</p></section>
 <section id="permission-simulator"><h3>Permission simulator UI</h3><form method="post" action="/identity/simulator"><input name="actor_type" value="local_admin"><input name="actor_id" value="ui"><input name="action" value="status:read"><input name="resource_type" value="system"><input name="resource_id" value="self"><button>Explain permission</button></form>{{if .Simulation}}<pre>{{.Simulation}}</pre>{{end}}</section>
 
 <section id="audit-ui"><h3>Audit UI/search/export</h3><p>Audit viewer supports actor/action/resource/result filtering and redacted export through API routes.</p><a href="/api/v1/audit/export?format=jsonl">Export audit JSONL</a></section>

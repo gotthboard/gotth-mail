@@ -102,7 +102,7 @@ func TestRuntimeMuxSharesConfiguredIdentityServiceWithUI(t *testing.T) {
 	h := runtimeMux(api.Server{Identity: ids, Authz: authz.StaticAuthorizer{}})
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Browser self-service is unavailable") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Browser self-service requires a verified gotth-oidc session") {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	if strings.Contains(response.Body.String(), "private@example.test") {

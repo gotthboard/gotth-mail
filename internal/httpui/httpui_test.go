@@ -1,17 +1,44 @@
 package httpui
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/admin"
+	"forgejo/gotthboard/gotth-mail/internal/authn"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 )
+
+type uiSessionStore struct {
+	bound authn.BoundSession
+}
+
+func (s uiSessionStore) PutIdentitySession(context.Context, authn.Identity, authn.Session) (authn.Session, error) {
+	return authn.Session{}, nil
+}
+
+func (s uiSessionStore) BoundSession(_ context.Context, id string, now time.Time) (authn.BoundSession, bool) {
+	return s.bound, id == s.bound.ID && now.Before(s.bound.ExpiresAt)
+}
+
+func csrfHash(secret string) string {
+	digest := sha256.Sum256([]byte(secret))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
+func withIdentityCookies(req *http.Request, session, csrf string) {
+	req.AddCookie(&http.Cookie{Name: "gotth_mail_session", Value: session})
+	req.AddCookie(&http.Cookie{Name: "gotth_mail_csrf", Value: csrf})
+}
 
 func uiToken(t *testing.T, ids *identity.Service, secret string, scopes ...string) string {
 	t.Helper()
@@ -86,7 +113,7 @@ func TestIdentityUIFailsClosedUntilOIDCSubjectBindingExists(t *testing.T) {
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	body, _ := io.ReadAll(w.Result().Body)
 	text := string(body)
-	if w.Code != http.StatusOK || !strings.Contains(text, "Browser self-service is unavailable") || !strings.Contains(text, "gotth-scim service endpoint") {
+	if w.Code != http.StatusOK || !strings.Contains(text, "Browser self-service requires a verified gotth-oidc session") || !strings.Contains(text, "gotth-scim service endpoint") {
 		t.Fatalf("status=%d body=%s", w.Code, text)
 	}
 	for _, forbidden := range []string{"private-account@example.test", "private-phone-label", created.ID, created.SecretOnce, `action="/identity/scim-test"`, `action="/identity/app-passwords"`} {
@@ -100,6 +127,69 @@ func TestIdentityUIFailsClosedUntilOIDCSubjectBindingExists(t *testing.T) {
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("legacy identity UI path %s status=%d", path, w.Code)
 		}
+	}
+}
+
+func TestBoundIdentityAppPasswordUIRequiresCSRFAndShowsSecretOnce(t *testing.T) {
+	now := time.Date(2026, 9, 13, 20, 0, 0, 0, time.UTC)
+	ids := identity.NewService("example.test")
+	ids.Now = func() time.Time { return now }
+	ids.Secret = func() (string, error) { return "one-time-ui-secret-value", nil }
+	if _, err := ids.CreateOrReplaceUser(context.Background(), authz.Actor{Type: "local_admin", ID: "seed"}, identity.Mailbox{Email: "user@example.test", Active: true}, "primary-mail-password"); err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "session-bound-to-user"
+	const csrf = "separate-csrf-secret"
+	sessions := uiSessionStore{bound: authn.BoundSession{Session: authn.Session{ID: sessionID, IdentityRefID: "identity-ref", CreatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), CSRFSecretHash: csrfHash(csrf)}, Issuer: "https://auth.example.test/", Subject: "subject-1", Mailbox: "user@example.test"}}
+	h := HandlerWithAdminIdentityAndSessions(admin.NewStore(), ids, authz.StaticAuthorizer{}, sessions, func() time.Time { return now })
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/identity/app-passwords", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("missing session status=%d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	req := formReq(http.MethodPost, "/identity/app-passwords", url.Values{"action": {"create"}, "label": {"phone"}}, "")
+	withIdentityCookies(req, sessionID, csrf)
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("missing form CSRF status=%d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	req = formReq(http.MethodPost, "/identity/app-passwords", url.Values{"action": {"create"}, "label": {"phone"}, "csrf_token": {csrf}}, "")
+	withIdentityCookies(req, sessionID, csrf)
+	h.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(body, "one-time-ui-secret-value") || !strings.Contains(body, "phone") {
+		t.Fatalf("create status=%d body=%s", w.Code, body)
+	}
+	if w.Header().Get("Cache-Control") != "no-store" || !strings.Contains(w.Header().Get("Content-Security-Policy"), "default-src 'none'") {
+		t.Fatalf("missing response hardening headers: %v", w.Header())
+	}
+	apps := ids.ListAppPasswords("user@example.test")
+	if len(apps) != 1 || apps[0].Verifier == "" || strings.Contains(body, apps[0].Verifier) {
+		t.Fatalf("stored credential mismatch or verifier disclosure: %#v", apps)
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/identity/app-passwords", nil)
+	withIdentityCookies(req, sessionID, csrf)
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "one-time-ui-secret-value") {
+		t.Fatalf("secret repeated on later GET: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	req = formReq(http.MethodPost, "/identity/app-passwords", url.Values{"action": {"revoke"}, "credential_id": {apps[0].ID}, "csrf_token": {csrf}}, "")
+	withIdentityCookies(req, sessionID, csrf)
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "app password revoked") {
+		t.Fatalf("revoke status=%d body=%s", w.Code, w.Body.String())
+	}
+	if current := ids.ListAppPasswords("user@example.test"); len(current) != 1 || current[0].RevokedAt == nil {
+		t.Fatalf("credential not revoked: %#v", current)
 	}
 }
 

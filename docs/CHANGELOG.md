@@ -21,9 +21,39 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 17:48 CDT — Bind OIDC sessions to SCIM mailboxes
+### 2026-09-13 18:07 CDT — Expose bound app-password self-service
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- GOTTH Mail runtime HTTP composition
+- session-bound app-password API and browser UI
+- CSRF, one-time-secret, and runtime wiring tests
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Wired the browser app-password surface only when the runtime has the durable
+OIDC/SCIM identity-session store. The page resolves the mailbox from the
+verified bound session rather than user input, requires the separate CSRF
+binding for mutations, emits no-store and restrictive CSP headers, and shows a
+new app-password secret exactly once. The API now reuses the already-resolved
+bound session instead of performing a second database lookup and uses
+constant-time CSRF comparison. A runtime without the durable binding continues
+to leave the mutation route unavailable.
+
+Verification:
+
+- constrained focused API, HTTP UI, authn, authz, and command tests
+- missing-session, missing-CSRF, create, one-time display, verifier redaction,
+  and revoke coverage
+- full PostgreSQL, race, vet, build, module, and final review gates remain
+  pending on the development host
+
+### 2026-09-13 17:48 CDT — Bind OIDC sessions to SCIM mailboxes
+
+Commit: `4dfa56c552413990a8b3137815d6e40c4f0eb168`
 
 Affected files:
 
@@ -51,7 +81,7 @@ Verification:
 
 ### 2026-09-13 17:37 CDT — Reconcile live OIDC/SCIM identity binding
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `df8a7e84c5c490e77d0329a69b5a3f7ba6bc259f`
 
 Affected files:
 
@@ -78,7 +108,7 @@ Verification:
 
 ### 2026-09-13 17:51 CDT — Record app-password repair verification and review
 
-Commit: current commit; hash assigned by Git after commit
+Commit: `bc9bbf385758141e152c9f9ae41ab794c6d00565`
 
 Affected files:
 

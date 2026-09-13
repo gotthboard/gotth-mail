@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -49,13 +50,13 @@ func (s Server) registerIdentityAPI(mux *http.ServeMux, auditLog *audit.MemoryWr
 			return
 		}
 		mailboxID := parts[0]
-		actor, browserSession, ok := s.identityRequestActor(w, r, ids)
+		actor, boundSession, ok := s.identityRequestActor(w, r, ids)
 		if !ok {
-			writeAPIAudit(auditLog, r, "app_password.auth", mailboxID, "denied", "authentication_failed")
+			writeAPIAudit(ids.Audit, r, "app_password.auth", mailboxID, "denied", "authentication_failed")
 			return
 		}
-		if browserSession && (r.Method == http.MethodPost || r.Method == http.MethodDelete) && !s.validSessionCSRF(r) {
-			writeAPIAudit(auditLog, r, "app_password.csrf", mailboxID, "denied", "csrf_failed")
+		if boundSession != nil && (r.Method == http.MethodPost || r.Method == http.MethodDelete) && !validSessionCSRF(r, *boundSession) {
+			writeAPIAudit(ids.Audit, r, "app_password.csrf", mailboxID, "denied", "csrf_failed")
 			http.Error(w, "CSRF validation failed", http.StatusForbidden)
 			return
 		}
@@ -72,7 +73,7 @@ func (s Server) registerIdentityAPI(mux *http.ServeMux, auditLog *audit.MemoryWr
 				Label string `json:"label"`
 			}
 			if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in); err != nil {
-				writeAPIAudit(auditLog, r, "app_password.create", mailboxID, "failure", "bad_request")
+				writeAPIAudit(ids.Audit, r, "app_password.create", mailboxID, "failure", "bad_request")
 				http.Error(w, "bad app password request", http.StatusBadRequest)
 				return
 			}
@@ -94,46 +95,38 @@ func (s Server) registerIdentityAPI(mux *http.ServeMux, auditLog *audit.MemoryWr
 	})
 }
 
-func (s Server) identityRequestActor(w http.ResponseWriter, r *http.Request, ids *identity.Service) (authz.Actor, bool, bool) {
+func (s Server) identityRequestActor(w http.ResponseWriter, r *http.Request, ids *identity.Service) (authz.Actor, *authn.BoundSession, bool) {
 	if r.Header.Get("Authorization") != "" {
 		actor, err := ids.AuthenticateBearer(r.Header.Get("Authorization"), "api_token")
 		if err != nil {
 			http.Error(w, "identity authentication required", http.StatusUnauthorized)
-			return authz.Actor{}, false, false
+			return authz.Actor{}, nil, false
 		}
-		return actor, false, true
+		return actor, nil, true
 	}
 	store, ok := s.OIDCStore.(authn.IdentitySessionStore)
 	if !ok {
 		http.Error(w, "identity authentication required", http.StatusUnauthorized)
-		return authz.Actor{}, false, false
+		return authz.Actor{}, nil, false
 	}
 	cookie, err := r.Cookie("gotth_mail_session")
 	if err != nil || cookie.Value == "" {
 		http.Error(w, "identity authentication required", http.StatusUnauthorized)
-		return authz.Actor{}, false, false
+		return authz.Actor{}, nil, false
 	}
 	bound, ok := store.BoundSession(r.Context(), cookie.Value, s.oidcNow())
 	if !ok {
 		http.Error(w, "identity session is invalid", http.StatusUnauthorized)
-		return authz.Actor{}, false, false
+		return authz.Actor{}, nil, false
 	}
-	return authz.Actor{Type: "oidc_subject", ID: bound.IdentityRefID, Mailbox: bound.Mailbox}, true, true
+	return authz.Actor{Type: "oidc_subject", ID: bound.IdentityRefID, Mailbox: bound.Mailbox}, &bound, true
 }
 
-func (s Server) validSessionCSRF(r *http.Request) bool {
-	store, ok := s.OIDCStore.(authn.IdentitySessionStore)
-	if !ok {
-		return false
-	}
-	sessionCookie, err := r.Cookie("gotth_mail_session")
-	if err != nil || sessionCookie.Value == "" {
-		return false
-	}
+func validSessionCSRF(r *http.Request, bound authn.BoundSession) bool {
 	csrfCookie, err := r.Cookie("gotth_mail_csrf")
-	if err != nil || csrfCookie.Value == "" || r.Header.Get("X-CSRF-Token") != csrfCookie.Value {
+	header := r.Header.Get("X-CSRF-Token")
+	if err != nil || csrfCookie.Value == "" || header == "" || len(header) != len(csrfCookie.Value) || subtle.ConstantTimeCompare([]byte(header), []byte(csrfCookie.Value)) != 1 {
 		return false
 	}
-	bound, ok := store.BoundSession(r.Context(), sessionCookie.Value, s.oidcNow())
-	return ok && authn.ValidCSRF(bound.Session, csrfCookie.Value)
+	return authn.ValidCSRF(bound.Session, csrfCookie.Value)
 }
