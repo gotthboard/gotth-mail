@@ -2,7 +2,7 @@
 
 ID: `v2.identity-provisioning.legacy-mailbox-adoption`
 
-State: `in_progress`
+State: `done`
 
 Admit one existing email-keyed mailbox into manager-owned opaque SCIM state
 through a redacted preview, exact confirmation digest, public

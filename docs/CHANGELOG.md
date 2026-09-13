@@ -48,8 +48,16 @@ the verified `gotth-oidc` callback remains the only binding path.
 Verification:
 
 - constrained package compilation and CLI parser tests: pass
-- PostgreSQL transaction, rollback, restart, full, race, vet, and build gates:
-  pending on the development host
+- repeated PostgreSQL adoption, rollback, and restart tests: pass
+- full repository tests at `7098b7d`: pass
+- final targeted race tests at `1dbda59`: pass
+- full repository race tests at `7098b7d`: pass
+- vet, all command builds, module verification, and diff checks: pass
+- adoption package coverage: 79.8%; changed SQL adoption branches exercised
+  through cross-package PostgreSQL tests (remaining uncovered lines are
+  defensive database/encoder failures, not an accepted functional gap)
+- code-only Graphify extraction: 1,800 nodes / 5,388 edges; SHA-256
+  `13fde2b740fbec1f8a787400dca7082c2d640368d3837f2bb640958697d5212b`
 - `git diff --check`: pass
 
 ### 2026-09-13 18:38 CDT — Reconcile identity evidence and live provider status
