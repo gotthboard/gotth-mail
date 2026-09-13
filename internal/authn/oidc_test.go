@@ -25,7 +25,7 @@ func TestOIDCAuthCodeCallbackValidatesStateTokenAndCreatesSession(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok := signToken(t, key, "kid1", map[string]any{"iss": cfg.Issuer, "sub": "user-123", "aud": []string{cfg.ClientID}, "azp": cfg.ClientID, "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "nbf": now.Add(-time.Second).Unix(), "nonce": start.Nonce, "email": "alice@example.test", "name": "Alice", "groups": []string{"gophermailforge-admins"}})
+	tok := signToken(t, key, "kid1", map[string]any{"iss": cfg.Issuer, "sub": "user-123", "aud": []string{cfg.ClientID}, "azp": cfg.ClientID, "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "nbf": now.Add(-time.Second).Unix(), "nonce": start.Nonce, "email": "alice@example.test", "name": "Alice", "groups": []string{"gotth-mail-admins"}})
 	res, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser-hash", RedirectURI: cfg.RedirectURI, Code: "code-1", JWKS: jwks, Exchanger: fakeExchange{Token: tok}})
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestOIDCAuthCodeCallbackValidatesStateTokenAndCreatesSession(t *testing.T) 
 	if res.Identity.Subject != "user-123" || res.Identity.Email != "alice@example.test" || res.Session.AuthMethod != "oidc" {
 		t.Fatalf("bad result %#v", res)
 	}
-	if len(res.Identity.Groups) != 1 || res.Identity.Groups[0] != "gophermailforge-admins" {
+	if len(res.Identity.Groups) != 1 || res.Identity.Groups[0] != "gotth-mail-admins" {
 		t.Fatalf("groups not preserved %#v", res.Identity.Groups)
 	}
 	if _, ok := store.Session(res.Session.ID); !ok {
@@ -129,7 +129,7 @@ type assertErr string
 func (e assertErr) Error() string { return string(e) }
 
 func testOIDCConfig(now time.Time) OIDCConfig {
-	return OIDCConfig{Issuer: "https://auth.example.test/application/o/gmf/", ClientID: "gmf", RedirectURI: "https://mail.example.test/api/v1/oidc/callback", ClockSkew: time.Minute, Now: func() time.Time { return now }}
+	return OIDCConfig{Issuer: "https://auth.example.test/application/o/gotth-mail/", ClientID: "gotth-mail", RedirectURI: "https://mail.example.test/api/v1/oidc/callback", ClockSkew: time.Minute, Now: func() time.Time { return now }}
 }
 func mapClone(in map[string]any) map[string]any {
 	out := map[string]any{}
@@ -177,7 +177,7 @@ func TestStartLoginURLContainsOIDCParameters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"response_type=code", "client_id=gmf", "state=", "nonce=", "redirect_uri=https%3A%2F%2Fmail.example.test%2Fapi%2Fv1%2Foidc%2Fcallback"} {
+	for _, want := range []string{"response_type=code", "client_id=gotth-mail", "state=", "nonce=", "redirect_uri=https%3A%2F%2Fmail.example.test%2Fapi%2Fv1%2Foidc%2Fcallback"} {
 		if !strings.Contains(st.URL, want) {
 			t.Fatalf("url %q missing %q", st.URL, want)
 		}
@@ -209,9 +209,9 @@ func TestDiscoverProviderFetchesDiscoveryAndJWKS(t *testing.T) {
 	var base string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/application/o/gmf/.well-known/openid-configuration":
-			_ = json.NewEncoder(w).Encode(DiscoveryDocument{Issuer: base + "/application/o/gmf/", AuthorizationEndpoint: base + "/application/o/authorize/", TokenEndpoint: base + "/application/o/token/", JWKSURI: base + "/application/o/gmf/jwks/", ResponseTypes: []string{"code"}, IDTokenAlgs: []string{"RS256"}})
-		case "/application/o/gmf/jwks/":
+		case "/application/o/gotth-mail/.well-known/openid-configuration":
+			_ = json.NewEncoder(w).Encode(DiscoveryDocument{Issuer: base + "/application/o/gotth-mail/", AuthorizationEndpoint: base + "/application/o/authorize/", TokenEndpoint: base + "/application/o/token/", JWKSURI: base + "/application/o/gotth-mail/jwks/", ResponseTypes: []string{"code"}, IDTokenAlgs: []string{"RS256"}})
+		case "/application/o/gotth-mail/jwks/":
 			_ = json.NewEncoder(w).Encode(jwks)
 		default:
 			http.NotFound(w, r)
@@ -219,7 +219,7 @@ func TestDiscoverProviderFetchesDiscoveryAndJWKS(t *testing.T) {
 	}))
 	defer srv.Close()
 	base = srv.URL
-	cfg := OIDCConfig{Issuer: base + "/application/o/gmf/", ClientID: "gmf", RedirectURI: "http://127.0.0.1:18080/api/v1/oidc/callback"}
+	cfg := OIDCConfig{Issuer: base + "/application/o/gotth-mail/", ClientID: "gotth-mail", RedirectURI: "http://127.0.0.1:18080/api/v1/oidc/callback"}
 	d, got, err := DiscoverProvider(context.Background(), srv.Client(), cfg)
 	if err != nil {
 		t.Fatal(err)

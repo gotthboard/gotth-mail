@@ -21,8 +21,8 @@ const (
 )
 
 const (
-	MetadataCorrelationID = "x-gmf-correlation-id"
-	MetadataServiceToken  = "x-gmf-service-token"
+	MetadataCorrelationID = "x-gotth-mail-correlation-id"
+	MetadataServiceToken  = "x-gotth-mail-service-token"
 )
 
 type Registration struct {

@@ -1,7 +1,7 @@
 package render
 
 import (
-	"forgejo/linus/gophermailforge/internal/config"
+	"forgejo/gotthboard/gotth-mail/internal/config"
 	"strings"
 	"testing"
 )
@@ -19,7 +19,7 @@ tls:
 authentik:
   enabled: true
   base_url: "https://auth.example.test"
-  oidc_client_id: "gmf"
+  oidc_client_id: "gotth-mail"
   scim_base_url: "https://auth.example.test/scim"
 roles:
   global_admin_group: "admins"
@@ -58,11 +58,11 @@ func TestDiff(t *testing.T) {
 func TestRenderIncludesDaemonConfigWithSourceHeader(t *testing.T) {
 	s := Render(cfg())
 	want := map[string]bool{
-		"front/nginx.conf":             false,
-		"postfix/gophermailforge.conf": false,
-		"dovecot/gophermailforge.conf": false,
-		"rspamd/gophermailforge.conf":  false,
-		"webmail/provider.conf":        false,
+		"front/nginx.conf":        false,
+		"postfix/gotth-mail.conf": false,
+		"dovecot/gotth-mail.conf": false,
+		"rspamd/gotth-mail.conf":  false,
+		"webmail/provider.conf":   false,
 	}
 	for _, f := range s.Files {
 		if _, ok := want[f.Path]; ok {

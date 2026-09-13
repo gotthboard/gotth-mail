@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/identity"
 )
 
 func writeAPIAudit(w audit.Writer, r *http.Request, action, resource, result, code string) {

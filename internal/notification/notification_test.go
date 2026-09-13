@@ -226,7 +226,7 @@ func TestSanitizeDeliveryEvidenceUsesFieldSpecificValidation(t *testing.T) {
 		From: "alerts@example.test", Sender: "sender@example.test",
 		SigningFingerprint: "0123456789ABCDEF0123456789ABCDEF01234567",
 		SenderIdentityID:   "system:alerts@example.test", SenderIdentityClass: "system",
-		PolicyVersion: "gmf-exact-sender-v1", IdentityStateRef: "openpgp:0123456789ABCDEF0123456789ABCDEF01234567",
+		PolicyVersion: "gotth-mail-exact-sender-v1", IdentityStateRef: "openpgp:0123456789ABCDEF0123456789ABCDEF01234567",
 		VerificationResult: "valid_exact_sender", Workflow: "notification",
 	}
 	if got := SanitizeDeliveryEvidence(valid); got != valid {
@@ -246,7 +246,7 @@ func TestSanitizeDeliveryEvidenceUsesFieldSpecificValidation(t *testing.T) {
 		{name: "fingerprint", value: "not-hex", mutate: func(e *DeliveryEvidence, v string) { e.SigningFingerprint = v }, get: func(e DeliveryEvidence) string { return e.SigningFingerprint }},
 		{name: "identity id", value: "system identity", mutate: func(e *DeliveryEvidence, v string) { e.SenderIdentityID = v }, get: func(e DeliveryEvidence) string { return e.SenderIdentityID }},
 		{name: "identity class", value: "system:admin", mutate: func(e *DeliveryEvidence, v string) { e.SenderIdentityClass = v }, get: func(e DeliveryEvidence) string { return e.SenderIdentityClass }},
-		{name: "policy", value: "gmf=1", mutate: func(e *DeliveryEvidence, v string) { e.PolicyVersion = v }, get: func(e DeliveryEvidence) string { return e.PolicyVersion }},
+		{name: "policy", value: "gotth-mail=1", mutate: func(e *DeliveryEvidence, v string) { e.PolicyVersion = v }, get: func(e DeliveryEvidence) string { return e.PolicyVersion }},
 		{name: "state ref", value: "openpgp=state", mutate: func(e *DeliveryEvidence, v string) { e.IdentityStateRef = v }, get: func(e DeliveryEvidence) string { return e.IdentityStateRef }},
 		{name: "verification", value: "valid;sender", mutate: func(e *DeliveryEvidence, v string) { e.VerificationResult = v }, get: func(e DeliveryEvidence) string { return e.VerificationResult }},
 		{name: "workflow", value: "notification/../../secret", mutate: func(e *DeliveryEvidence, v string) { e.Workflow = v }, get: func(e DeliveryEvidence) string { return e.Workflow }},

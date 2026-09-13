@@ -8,19 +8,19 @@ import (
 	"strings"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/apply"
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/authn"
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/config"
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/diag"
-	"forgejo/linus/gophermailforge/internal/identity"
-	"forgejo/linus/gophermailforge/internal/notification"
-	"forgejo/linus/gophermailforge/internal/ops"
-	"forgejo/linus/gophermailforge/internal/plugin"
-	"forgejo/linus/gophermailforge/internal/render"
-	"forgejo/linus/gophermailforge/internal/webmail"
+	"forgejo/gotthboard/gotth-mail/internal/apply"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authn"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/config"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/diag"
+	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/render"
+	"forgejo/gotthboard/gotth-mail/internal/webmail"
 )
 
 type Server struct {
@@ -79,7 +79,7 @@ func (s Server) Handler() http.Handler {
 			store = authn.NewStore()
 			s.OIDCStore = store
 		}
-		browser := r.Header.Get("X-GMF-Browser-Binding")
+		browser := r.Header.Get("X-GOTTH-Mail-Browser-Binding")
 		redirectMode := r.URL.Query().Get("mode") == "redirect"
 		if browser == "" && redirectMode {
 			var err error
@@ -88,7 +88,7 @@ func (s Server) Handler() http.Handler {
 				http.Error(w, authn.SafeOIDCError(err), http.StatusBadRequest)
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: "gmf_oidc_binding", Value: browser, Path: "/api/v1/oidc", HttpOnly: true, Secure: secureCookieFor(s.OIDCConfig.RedirectURI), SameSite: http.SameSiteLaxMode, Expires: time.Now().Add(10 * time.Minute)})
+			http.SetCookie(w, &http.Cookie{Name: "gotth_mail_oidc_binding", Value: browser, Path: "/api/v1/oidc", HttpOnly: true, Secure: secureCookieFor(s.OIDCConfig.RedirectURI), SameSite: http.SameSiteLaxMode, Expires: time.Now().Add(10 * time.Minute)})
 		}
 		if browser == "" {
 			http.Error(w, "browser binding required", http.StatusBadRequest)
@@ -116,7 +116,7 @@ func (s Server) Handler() http.Handler {
 			Code        string `json:"code"`
 			RedirectURI string `json:"redirect_uri"`
 		}
-		browserBinding := r.Header.Get("X-GMF-Browser-Binding")
+		browserBinding := r.Header.Get("X-GOTTH-Mail-Browser-Binding")
 		browserCallback := r.Method == http.MethodGet
 		switch r.Method {
 		case http.MethodPost:
@@ -125,7 +125,7 @@ func (s Server) Handler() http.Handler {
 				return
 			}
 		case http.MethodGet:
-			c, err := r.Cookie("gmf_oidc_binding")
+			c, err := r.Cookie("gotth_mail_oidc_binding")
 			if err != nil || c.Value == "" {
 				http.Error(w, "oidc browser binding required", http.StatusBadRequest)
 				return
@@ -143,9 +143,9 @@ func (s Server) Handler() http.Handler {
 			http.Error(w, authn.SafeOIDCError(err), http.StatusBadRequest)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: "gmf_session", Value: res.Session.ID, Path: "/", HttpOnly: true, Secure: secureCookieFor(s.OIDCConfig.RedirectURI), SameSite: http.SameSiteStrictMode, Expires: res.Session.ExpiresAt})
+		http.SetCookie(w, &http.Cookie{Name: "gotth_mail_session", Value: res.Session.ID, Path: "/", HttpOnly: true, Secure: secureCookieFor(s.OIDCConfig.RedirectURI), SameSite: http.SameSiteStrictMode, Expires: res.Session.ExpiresAt})
 		if browserCallback {
-			http.SetCookie(w, &http.Cookie{Name: "gmf_oidc_binding", Value: "", Path: "/api/v1/oidc", HttpOnly: true, Secure: secureCookieFor(s.OIDCConfig.RedirectURI), SameSite: http.SameSiteLaxMode, MaxAge: -1})
+			http.SetCookie(w, &http.Cookie{Name: "gotth_mail_oidc_binding", Value: "", Path: "/api/v1/oidc", HttpOnly: true, Secure: secureCookieFor(s.OIDCConfig.RedirectURI), SameSite: http.SameSiteLaxMode, MaxAge: -1})
 			target := res.RedirectAfterLogin
 			if target == "" {
 				target = "/"
@@ -333,7 +333,7 @@ func (s Server) Handler() http.Handler {
 			cert = diag.CertCheck{Status: diag.CertUnknown, Reason: "not_configured"}
 		}
 		webmailOK := s.WebmailOK
-		writeJSON(w, ops.Doctor(r.Context(), ops.DoctorInput{ConfigOK: true, DatabaseOK: true, AuthentikOK: true, WebmailOK: webmailOK, Daemon: s.Daemon, DNSChecks: s.DNSChecks, CertCheck: cert, PluginRegistry: s.Plugins, PluginToken: r.Header.Get("X-GMF-Plugin-Token"), CorrelationID: r.Header.Get("X-Correlation-ID")}))
+		writeJSON(w, ops.Doctor(r.Context(), ops.DoctorInput{ConfigOK: true, DatabaseOK: true, AuthentikOK: true, WebmailOK: webmailOK, Daemon: s.Daemon, DNSChecks: s.DNSChecks, CertCheck: cert, PluginRegistry: s.Plugins, PluginToken: r.Header.Get("X-GOTTH-Mail-Plugin-Token"), CorrelationID: r.Header.Get("X-Correlation-ID")}))
 	})
 	mux.HandleFunc("/api/v1/debug/lookup", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {

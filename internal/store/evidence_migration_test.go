@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/notification"
-	"forgejo/linus/gophermailforge/internal/store"
-	"forgejo/linus/gophermailforge/internal/testpg"
+	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/store"
+	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
 
 func TestMigrateSQLUpgradesRealBaseLedgerAndPersistsEvidence(t *testing.T) {
@@ -56,7 +56,7 @@ func TestMigrateSQLUpgradesRealBaseLedgerAndPersistsEvidence(t *testing.T) {
 		Transport: "email", MessageID: "<migration-alert@example.test>", GeneratedAt: now,
 		From: "alerts@example.test", SigningFingerprint: "0123456789ABCDEF0123456789ABCDEF01234567",
 		SenderIdentityID: "system:alerts@example.test", SenderIdentityClass: "system",
-		PolicyVersion: "gmf-exact-sender-v1", IdentityStateRef: "openpgp:0123456789ABCDEF0123456789ABCDEF01234567",
+		PolicyVersion: "gotth-mail-exact-sender-v1", IdentityStateRef: "openpgp:0123456789ABCDEF0123456789ABCDEF01234567",
 		VerificationResult: "valid_exact_sender", Workflow: "notification",
 	}
 	recorder := notification.SQLRecorder{DB: db}

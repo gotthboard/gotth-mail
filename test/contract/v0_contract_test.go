@@ -8,7 +8,7 @@ import (
 )
 
 func TestV0ArtifactsExist(t *testing.T) {
-	paths := []string{"../../Dockerfile", "../../compose/reference/docker-compose.yml", "../../proto/gophermailforge/plugin/v1/plugin.proto", "../../migrations/0001_initial.sql"}
+	paths := []string{"../../Dockerfile", "../../compose/reference/docker-compose.yml", "../../proto/gotth/mail/plugin/v1/plugin.proto", "../../migrations/0001_initial.sql"}
 	for _, p := range paths {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("missing %s: %v", p, err)
@@ -29,7 +29,7 @@ func TestComposeContainsAuthentikAndNoDockerSocket(t *testing.T) {
 	}
 }
 func TestProtoDefinesPluginControl(t *testing.T) {
-	b, err := os.ReadFile(filepath.Clean("../../proto/gophermailforge/plugin/v1/plugin.proto"))
+	b, err := os.ReadFile(filepath.Clean("../../proto/gotth/mail/plugin/v1/plugin.proto"))
 	if err != nil {
 		t.Fatal(err)
 	}

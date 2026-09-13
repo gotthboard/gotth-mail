@@ -35,7 +35,7 @@ func DB(t *testing.T, migrate func(context.Context, *sql.DB) error) *sql.DB {
 	if err := os.MkdirAll(runtime, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(initdb, "-A", "trust", "-U", "gmf", "-D", data).CombinedOutput(); err != nil {
+	if out, err := exec.Command(initdb, "-A", "trust", "-U", "gotth_mail", "-D", data).CombinedOutput(); err != nil {
 		t.Fatalf("initdb: %v\n%s", err, out)
 	}
 	cmd := exec.Command(postgres, "-D", data, "-h", "127.0.0.1", "-p", fmt.Sprint(port), "-k", runtime)
@@ -43,10 +43,10 @@ func DB(t *testing.T, migrate func(context.Context, *sql.DB) error) *sql.DB {
 		t.Fatalf("postgres start: %v", err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	dsn := fmt.Sprintf("postgres://gmf@127.0.0.1:%d/gophermailforge?sslmode=disable", port)
-	adminDSN := fmt.Sprintf("postgres://gmf@127.0.0.1:%d/postgres?sslmode=disable", port)
+	dsn := fmt.Sprintf("postgres://gotth_mail@127.0.0.1:%d/gotth_mail?sslmode=disable", port)
+	adminDSN := fmt.Sprintf("postgres://gotth_mail@127.0.0.1:%d/postgres?sslmode=disable", port)
 	waitSQL(t, adminDSN)
-	if out, err := exec.Command(createdb, "-h", "127.0.0.1", "-p", fmt.Sprint(port), "-U", "gmf", "gophermailforge").CombinedOutput(); err != nil {
+	if out, err := exec.Command(createdb, "-h", "127.0.0.1", "-p", fmt.Sprint(port), "-U", "gotth_mail", "gotth_mail").CombinedOutput(); err != nil {
 		t.Fatalf("createdb: %v\n%s", err, out)
 	}
 	db, err := sql.Open("postgres", dsn)

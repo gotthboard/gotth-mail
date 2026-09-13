@@ -1,4 +1,4 @@
-# GopherMailForge PRD — v3 Ops + Import + Mature Admin
+# GOTTH Mail PRD — v3 Ops + Import + Mature Admin
 
 ## Goal
 

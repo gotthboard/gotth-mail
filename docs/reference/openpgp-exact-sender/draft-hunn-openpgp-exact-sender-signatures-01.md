@@ -385,4 +385,4 @@ This document has no IANA actions.
 
 # Acknowledgements
 
-This draft was motivated by operational requirements from GopherMailForge: DKIM says where mail came through; exact-user OpenPGP signing says who signed it.
+This draft was motivated by operational requirements from GOTTH Mail: DKIM says where mail came through; exact-user OpenPGP signing says who signed it.

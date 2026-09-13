@@ -71,16 +71,16 @@ func (s OpenPGPMIMESigner) SignMIME(ctx context.Context, identity Identity, msg 
 	}
 	var entity bytes.Buffer
 	entity.WriteString("Content-Type: " + ct + "\r\n")
-	entity.WriteString("X-GopherMailForge-Signed-From: " + identity.Address + "\r\n")
-	entity.WriteString("X-GopherMailForge-Signing-Fingerprint: " + fingerprint + "\r\n")
-	entity.WriteString("X-GopherMailForge-Signed-Message-ID: " + binding.MessageID + "\r\n")
-	entity.WriteString("X-GopherMailForge-Signed-Date: " + binding.Date.UTC().Format(time.RFC3339Nano) + "\r\n")
-	entity.WriteString("X-GopherMailForge-Signed-Subject-SHA256: " + binding.SubjectSHA256 + "\r\n")
+	entity.WriteString("X-GOTTH Mail-Signed-From: " + identity.Address + "\r\n")
+	entity.WriteString("X-GOTTH Mail-Signing-Fingerprint: " + fingerprint + "\r\n")
+	entity.WriteString("X-GOTTH Mail-Signed-Message-ID: " + binding.MessageID + "\r\n")
+	entity.WriteString("X-GOTTH Mail-Signed-Date: " + binding.Date.UTC().Format(time.RFC3339Nano) + "\r\n")
+	entity.WriteString("X-GOTTH Mail-Signed-Subject-SHA256: " + binding.SubjectSHA256 + "\r\n")
 	if binding.Sender != "" {
-		entity.WriteString("X-GopherMailForge-Signed-Sender: " + binding.Sender + "\r\n")
+		entity.WriteString("X-GOTTH Mail-Signed-Sender: " + binding.Sender + "\r\n")
 	}
 	if binding.ReplyTo != "" {
-		entity.WriteString("X-GopherMailForge-Signed-Reply-To: " + binding.ReplyTo + "\r\n")
+		entity.WriteString("X-GOTTH Mail-Signed-Reply-To: " + binding.ReplyTo + "\r\n")
 	}
 	entity.WriteString("\r\n")
 	entity.Write(body)
@@ -92,7 +92,7 @@ func (s OpenPGPMIMESigner) SignMIME(ctx context.Context, identity Identity, msg 
 	if err != nil {
 		return nil, SignatureStatus{Fingerprint: fingerprint, Identity: identity.Address}, err
 	}
-	boundary := "gmf-openpgp-" + safeToken(18)
+	boundary := "gotth-mail-openpgp-" + safeToken(18)
 	var out bytes.Buffer
 	for _, h := range []string{"From", "Sender", "Reply-To", "To", "Date", "Message-ID", "Subject"} {
 		if v := orig.Header.Get(h); v != "" {
@@ -468,26 +468,26 @@ func validateSignedEntityHeaders(h mail.Header) error {
 	}
 	for _, field := range []string{
 		"Content-Type",
-		"X-GopherMailForge-Signed-From",
-		"X-GopherMailForge-Signing-Fingerprint",
-		"X-GopherMailForge-Signed-Message-ID",
-		"X-GopherMailForge-Signed-Date",
-		"X-GopherMailForge-Signed-Subject-SHA256",
+		"X-GOTTH Mail-Signed-From",
+		"X-GOTTH Mail-Signing-Fingerprint",
+		"X-GOTTH Mail-Signed-Message-ID",
+		"X-GOTTH Mail-Signed-Date",
+		"X-GOTTH Mail-Signed-Subject-SHA256",
 	} {
 		if _, err := uniqueHeaderValue(h, field, true); err != nil {
 			return err
 		}
 	}
 	return rejectAmbiguousHeaders(h,
-		"X-GopherMailForge-Signed-Sender",
-		"X-GopherMailForge-Signed-Reply-To",
+		"X-GOTTH Mail-Signed-Sender",
+		"X-GOTTH Mail-Signed-Reply-To",
 	)
 }
 
 func rejectAmbiguousSecurityHeaders(h mail.Header) error {
 	for field, values := range h {
 		lower := strings.ToLower(field)
-		if (strings.HasPrefix(lower, "content-") || strings.HasPrefix(lower, "x-gophermailforge-")) && len(values) != 1 {
+		if (strings.HasPrefix(lower, "content-") || strings.HasPrefix(lower, "x-gotth-mail-")) && len(values) != 1 {
 			return errors.New("ambiguous " + lower + " header")
 		}
 	}
@@ -530,31 +530,31 @@ func signedEntityAssertions(entity []byte) (authoritativeBinding, error) {
 	if err := validateSignedEntityHeaders(m.Header); err != nil {
 		return authoritativeBinding{}, err
 	}
-	from, err := uniqueHeaderValue(m.Header, "X-GopherMailForge-Signed-From", true)
+	from, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signed-From", true)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}
-	fingerprint, err := uniqueHeaderValue(m.Header, "X-GopherMailForge-Signing-Fingerprint", true)
+	fingerprint, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signing-Fingerprint", true)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}
-	messageID, err := uniqueHeaderValue(m.Header, "X-GopherMailForge-Signed-Message-ID", true)
+	messageID, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signed-Message-ID", true)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}
-	dateValue, err := uniqueHeaderValue(m.Header, "X-GopherMailForge-Signed-Date", true)
+	dateValue, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signed-Date", true)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}
-	subjectSHA256, err := uniqueHeaderValue(m.Header, "X-GopherMailForge-Signed-Subject-SHA256", true)
+	subjectSHA256, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signed-Subject-SHA256", true)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}
-	sender, err := uniqueHeaderValue(m.Header, "X-GopherMailForge-Signed-Sender", false)
+	sender, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signed-Sender", false)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}
-	replyTo, err := uniqueHeaderValue(m.Header, "X-GopherMailForge-Signed-Reply-To", false)
+	replyTo, err := uniqueHeaderValue(m.Header, "X-GOTTH Mail-Signed-Reply-To", false)
 	if err != nil {
 		return authoritativeBinding{}, err
 	}

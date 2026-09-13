@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/notification"
-	"forgejo/linus/gophermailforge/internal/notifyruntime"
-	"forgejo/linus/gophermailforge/internal/plugin"
-	"forgejo/linus/gophermailforge/internal/webmail"
-	pluginv1 "forgejo/linus/gophermailforge/proto/gophermailforge/plugin/v1"
+	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/notifyruntime"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/webmail"
+	pluginv1 "forgejo/gotthboard/gotth-mail/proto/gotth/mail/plugin/v1"
 	protonpgp "github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
@@ -55,11 +55,11 @@ func TestNotificationSinkForSignedEmailBuildsWorkingAdapter(t *testing.T) {
 	now := time.Now().UTC()
 	_, keyPath, fingerprint := writePluginSigningKey(t, now)
 	env := map[string]string{
-		"GMF_NOTIFICATION_EMAIL_FROM":                "alerts@example.test",
-		"GMF_NOTIFICATION_EMAIL_TO":                  "ops@example.test",
-		"GMF_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT": fingerprint,
-		"GMF_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE":    keyPath,
-		"GMF_NOTIFICATION_EMAIL_SMTP_ADDR":           "127.0.0.1:2525",
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_FROM":                "alerts@example.test",
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_TO":                  "ops@example.test",
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT": fingerprint,
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE":    keyPath,
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR":           "127.0.0.1:2525",
 	}
 	sink, err := notificationSinkFor(plugin.FirstEmailName, func(name string) string { return env[name] })
 	if err != nil {
@@ -95,21 +95,21 @@ func TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAnd
 	smtpAddr, captures := startPluginCaptureSMTP(t)
 	endpoint := reservePluginEndpoint(t)
 	logPath, stop := startPluginProcess(t, endpoint, map[string]string{
-		"GMF_PLUGIN_NAME":                            plugin.FirstEmailName,
-		"GMF_PLUGIN_SERVICE_TOKEN":                   "tok",
-		"GMF_PLUGIN_LISTEN":                          endpoint,
-		"GMF_NOTIFICATION_EMAIL_FROM":                "alerts@example.test",
-		"GMF_NOTIFICATION_EMAIL_TO":                  "ops@example.test",
-		"GMF_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT": fingerprint,
-		"GMF_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE":    keyPath,
-		"GMF_NOTIFICATION_EMAIL_SMTP_ADDR":           smtpAddr,
+		"GOTTH_MAIL_PLUGIN_NAME":                            plugin.FirstEmailName,
+		"GOTTH_MAIL_PLUGIN_SERVICE_TOKEN":                   "tok",
+		"GOTTH_MAIL_PLUGIN_LISTEN":                          endpoint,
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_FROM":                "alerts@example.test",
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_TO":                  "ops@example.test",
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT": fingerprint,
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE":    keyPath,
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR":           smtpAddr,
 	})
 	defer stop()
 	conn, err := waitForPluginProcess(endpoint, "tok", 10*time.Second)
 	if err != nil {
 		stop()
 		log, _ := os.ReadFile(logPath)
-		t.Fatalf("real gmf-plugin endpoint did not become ready: %v\n%s", err, log)
+		t.Fatalf("real gotth-mail-plugin endpoint did not become ready: %v\n%s", err, log)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	client := pluginv1.NewNotificationBackendClient(conn)
@@ -217,13 +217,13 @@ func reservePluginEndpoint(t *testing.T) string {
 func startPluginProcess(t *testing.T, endpoint string, values map[string]string) (string, func()) {
 	t.Helper()
 	repo := pluginRepoRoot(t)
-	binary := filepath.Join(t.TempDir(), "gmf-plugin")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/gmf-plugin")
+	binary := filepath.Join(t.TempDir(), "gotth-mail-plugin")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/gotth-mail-plugin")
 	build.Dir = repo
 	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build real gmf-plugin: %v\n%s", err, output)
+		t.Fatalf("build real gotth-mail-plugin: %v\n%s", err, output)
 	}
-	logFile, err := os.CreateTemp(t.TempDir(), "gmf-plugin-process-*.log")
+	logFile, err := os.CreateTemp(t.TempDir(), "gotth-mail-plugin-process-*.log")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func cleanPluginProcessEnvironment(values map[string]string) []string {
 	env := make([]string, 0, len(os.Environ())+len(values))
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
-		if strings.HasPrefix(name, "GMF_PLUGIN_") || strings.HasPrefix(name, "GMF_NOTIFICATION_EMAIL_") {
+		if strings.HasPrefix(name, "GOTTH_MAIL_PLUGIN_") || strings.HasPrefix(name, "GOTTH_MAIL_NOTIFICATION_EMAIL_") {
 			continue
 		}
 		env = append(env, entry)

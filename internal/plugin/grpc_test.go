@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	pluginv1 "forgejo/linus/gophermailforge/proto/gophermailforge/plugin/v1"
+	pluginv1 "forgejo/gotthboard/gotth-mail/proto/gotth/mail/plugin/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -17,17 +17,17 @@ import (
 )
 
 func TestLivePluginControlOverGRPC(t *testing.T) {
-	endpoint := os.Getenv("GMF_LIVE_PLUGIN_ENDPOINT")
+	endpoint := os.Getenv("GOTTH_MAIL_LIVE_PLUGIN_ENDPOINT")
 	if endpoint == "" {
-		t.Skip("GMF_LIVE_PLUGIN_ENDPOINT not set")
+		t.Skip("GOTTH_MAIL_LIVE_PLUGIN_ENDPOINT not set")
 	}
-	name := os.Getenv("GMF_LIVE_PLUGIN_NAME")
+	name := os.Getenv("GOTTH_MAIL_LIVE_PLUGIN_NAME")
 	if name == "" {
 		name = FirstNotifyName
 	}
-	token := os.Getenv("GMF_LIVE_PLUGIN_TOKEN")
+	token := os.Getenv("GOTTH_MAIL_LIVE_PLUGIN_TOKEN")
 	if token == "" {
-		t.Fatal("GMF_LIVE_PLUGIN_TOKEN required")
+		t.Fatal("GOTTH_MAIL_LIVE_PLUGIN_TOKEN required")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -70,13 +70,13 @@ func TestLivePluginControlOverGRPC(t *testing.T) {
 }
 
 func TestLiveNotificationBackendOverGRPC(t *testing.T) {
-	endpoint := os.Getenv("GMF_LIVE_PLUGIN_ENDPOINT")
+	endpoint := os.Getenv("GOTTH_MAIL_LIVE_PLUGIN_ENDPOINT")
 	if endpoint == "" {
-		t.Skip("GMF_LIVE_PLUGIN_ENDPOINT not set")
+		t.Skip("GOTTH_MAIL_LIVE_PLUGIN_ENDPOINT not set")
 	}
-	token := os.Getenv("GMF_LIVE_PLUGIN_TOKEN")
+	token := os.Getenv("GOTTH_MAIL_LIVE_PLUGIN_TOKEN")
 	if token == "" {
-		t.Fatal("GMF_LIVE_PLUGIN_TOKEN required")
+		t.Fatal("GOTTH_MAIL_LIVE_PLUGIN_TOKEN required")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

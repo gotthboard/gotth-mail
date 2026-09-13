@@ -54,7 +54,7 @@ func TestNetSMTPSubmitterTalksSMTPAndRejectsInvalidEnvelope(t *testing.T) {
 	defer ln.Close()
 	got := make(chan []string, 1)
 	go fakeSMTPServer(t, ln, got)
-	s := NetSMTPSubmitter{Addr: ln.Addr().String(), HelloName: "gmf.test", Timeout: 5 * time.Second}
+	s := NetSMTPSubmitter{Addr: ln.Addr().String(), HelloName: "gotth-mail.test", Timeout: 5 * time.Second}
 	if err := s.Submit(context.Background(), Envelope{From: "sender@example.test", To: []string{"rcpt@example.test"}}, []byte("Subject: ok\r\n\r\nbody")); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestNetSMTPSubmitterTalksSMTPAndRejectsInvalidEnvelope(t *testing.T) {
 			t.Fatalf("smtp transcript missing %q in\n%s", want, joined)
 		}
 	}
-	if !strings.Contains(joined, "EHLO gmf.test") && !strings.Contains(joined, "HELO gmf.test") {
+	if !strings.Contains(joined, "EHLO gotth-mail.test") && !strings.Contains(joined, "HELO gotth-mail.test") {
 		t.Fatalf("smtp transcript missing HELO/EHLO in\n%s", joined)
 	}
 	if err := s.Submit(context.Background(), Envelope{From: "bad from", To: []string{"rcpt@example.test"}}, []byte("x")); err == nil {
@@ -80,16 +80,16 @@ func TestNetSMTPSubmitterTalksSMTPAndRejectsInvalidEnvelope(t *testing.T) {
 }
 
 func TestNetSMTPSubmitterLiveComposePostfix(t *testing.T) {
-	addr := os.Getenv("GMF_LIVE_SMTP_ADDR")
+	addr := os.Getenv("GOTTH_MAIL_LIVE_SMTP_ADDR")
 	if addr == "" {
-		t.Skip("GMF_LIVE_SMTP_ADDR not set")
+		t.Skip("GOTTH_MAIL_LIVE_SMTP_ADDR not set")
 	}
-	subject := os.Getenv("GMF_LIVE_SMTP_SUBJECT")
+	subject := os.Getenv("GOTTH_MAIL_LIVE_SMTP_SUBJECT")
 	if subject == "" {
-		subject = "GopherMailForge webmail SMTP smoke"
+		subject = "GOTTH Mail webmail SMTP smoke"
 	}
 	msg := []byte("From: smoke@example.test\r\nTo: alias@example.test\r\nSubject: " + subject + "\r\n\r\ncontainerized-webmail-smtp-smoke")
-	s := NetSMTPSubmitter{Addr: addr, HelloName: "gophermailforge-webmail-smoke", Timeout: 20 * time.Second}
+	s := NetSMTPSubmitter{Addr: addr, HelloName: "gotth-mail-webmail-smoke", Timeout: 20 * time.Second}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	if err := s.Submit(ctx, Envelope{From: "smoke@example.test", To: []string{"alias@example.test"}}, msg); err != nil {

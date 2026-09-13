@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/notification"
-	"forgejo/linus/gophermailforge/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/ops"
 )
 
 type ApprovalStore interface {

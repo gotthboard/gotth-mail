@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/webmail"
+	"forgejo/gotthboard/gotth-mail/internal/webmail"
 	protonpgp "github.com/ProtonMail/go-crypto/openpgp"
 )
 
@@ -75,7 +75,7 @@ func NewSignedEmailBackend(c EmailConfig) (SignedEmailBackend, error) {
 	}
 	hello := strings.TrimSpace(c.SMTPHelloName)
 	if hello == "" {
-		hello = "gophermailforge-notification"
+		hello = "gotth-mail-notification"
 	}
 	return SignedEmailBackend{
 		From:               from,

@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/notification"
-	"forgejo/linus/gophermailforge/internal/ops"
-	"forgejo/linus/gophermailforge/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
 )
 
 func TestRuntimeCommandProviderSummarizesRealState(t *testing.T) {
@@ -17,7 +17,7 @@ func TestRuntimeCommandProviderSummarizesRealState(t *testing.T) {
 		Queue:    &ops.Queue{Summary: ops.QueueSummary{Active: 3, Deferred: []string{"a", "b"}}},
 		Daemon:   &daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Enabled: true}, "disabled.test": {}}, Mailboxes: map[string]daemon.Mailbox{"a@example.test": {Enabled: true}, "b@example.test": {}}, Aliases: map[string]daemon.Alias{"alias@example.test": {Enabled: true}}},
 		Backup:   &ops.Backup{Status: "verified", ConfigSetID: "cfg-1", SchemaVersion: "schema-1", IsolatedRestoreRef: "restore-1"},
-		Snapshot: &ops.SnapshotView{ID: "snap-1", GeneratedConfigSetID: "cfg-1", MigrationVersion: "m1", VerifiedRestoreStatus: "verified", ImageVersions: []string{"gmf:1"}, PluginVersions: []string{"dns:1", "backup:1"}},
+		Snapshot: &ops.SnapshotView{ID: "snap-1", GeneratedConfigSetID: "cfg-1", MigrationVersion: "m1", VerifiedRestoreStatus: "verified", ImageVersions: []string{"gotth-mail:1"}, PluginVersions: []string{"dns:1", "backup:1"}},
 		Plugins:  plugin.Registry{Plugins: map[string]plugin.Registration{"dns": {Seam: plugin.DNS, Enabled: true}, "notify": {Seam: plugin.Notification, Enabled: false}}},
 	}
 	cases := map[notification.ReadOnlyCommand][]string{

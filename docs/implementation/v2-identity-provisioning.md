@@ -170,7 +170,7 @@ All other operations or paths fail explicitly. Empty Operations arrays fail expl
 
 SCIM DELETE disables the mailbox by default and does not delete mail data.
 
-Authentik is the first expected SCIM client. Authentik calls GopherMailForge SCIM; GopherMailForge validates, authorizes, writes canonical mailbox state, and audits mutations. Authentik never writes directly to DB or daemon config.
+Authentik is the first expected SCIM client. Authentik calls GOTTH Mail SCIM; GOTTH Mail validates, authorizes, writes canonical mailbox state, and audits mutations. Authentik never writes directly to DB or daemon config.
 
 ## SCIM error contract
 

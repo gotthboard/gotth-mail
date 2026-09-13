@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
 )
 
 func TestAuditFilterExportRetentionPreserveRedaction(t *testing.T) {

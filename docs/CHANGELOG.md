@@ -21,6 +21,64 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 13:39 CDT — Rename the project to GOTTH Mail
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `README.md`, `LICENSE`, `go.mod`, and `Dockerfile`
+- `cmd/gotth-mail`, `cmd/gotth-mailctl`, and `cmd/gotth-mail-plugin`
+- `internal/**`, `compose/reference/**`, `scripts/**`, and `test/**`
+- `proto/gotth/mail/plugin/v1/**`
+- current PRD, architecture, implementation, and reference documents under
+  `docs/`
+- `workflow.toml`, `workflow/COVERAGE.md`, and
+  `workflow/features/project.identity/**`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Renamed the former pre-production GopherMailForge identity to **GOTTH Mail**
+and defined it as part of the canonical GOTTH project series. The canonical
+repository contract is now private Forgejo development at
+`gotthboard/gotth-mail` with one-way public GitHub distribution at the same
+owner/slug. The Go module is `forgejo/gotthboard/gotth-mail`; the daemon, CLI,
+and plugin runner are `gotth-mail`, `gotth-mailctl`, and `gotth-mail-plugin`.
+First-party environment variables, OIDC/group fixtures, cookies, plugin
+metadata, configuration fragments, Compose service names, database fixtures,
+temporary artifact names, OpenPGP identity labels, protobuf source/package
+names, imports, scripts, tests, and current documentation now use that
+identity.
+
+This is a pre-production breaking rename, not a compatibility abstraction.
+There is no admitted production GOTTH Mail deployment to protect with a
+permanent duplicate naming surface. Development OIDC/SCIM objects and browser
+sessions must be reconciled before the next live identity proof. Historical
+commits, tags, old changelog entries, dated evidence, and append-only workflow
+events remain untouched and therefore continue to describe what actually ran
+under the former name. Unfinished v2-v5 functionality remains unfinished; the
+rename does not manufacture release readiness.
+
+Verification completed before this checkpoint:
+
+- `git diff --check` passed;
+- every repository shell script passed `sh -n`;
+- `go test -p=1 ./cmd/... ./test/contract/...` passed with
+  `GOMAXPROCS=2` on the agent host;
+- all three renamed commands built successfully;
+- protobuf Go and gRPC bindings were regenerated with
+  `protoc-gen-go v1.36.11` and `protoc-gen-go-grpc v1.6.2`;
+- the current-name audit found no former-name identifier in current source,
+  tests, configuration, current specifications, workflow state, or current
+  workflow README files. Remaining former-name occurrences are confined to
+  immutable Git metadata or declared historical changelog/evidence/event
+  records.
+
+Full development-host tests, remote admission, Forgejo repository
+rename/transfer, redirect verification, and GitHub distribution status are
+recorded separately when completed.
+
 ### 2026-07-19 06:55 CDT — Add configured system-identity signed-email notification slice
 
 Commit: current commit; hash assigned by Git after commit

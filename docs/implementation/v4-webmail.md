@@ -5,13 +5,13 @@ Source architecture: [architecture/v4-webmail.md](../architecture/v4-webmail.md)
 
 ## Goal
 
-If the v4 cutline is explicitly accepted, implement a custom GopherMailForge webmail provider. Until then, supported external webmail remains required.
+If the v4 cutline is explicitly accepted, implement a custom GOTTH Mail webmail provider. Until then, supported external webmail remains required.
 
 Custom webmail must remain separate from the control-plane product and must not replace Dovecot, SMTP submission, or core policy.
 
 ## Deployment
 
-Custom webmail runs as a containerized webmail provider implementation and now exposes a minimal GopherMailForge-owned `/webmail` shell from the API container for reachability proof. Roundcube remains the external provider reference, not the custom UI. The custom shell may use a plugin seam for provider registration/status, but it must not receive authority over core policy.
+Custom webmail runs as a containerized webmail provider implementation and now exposes a minimal GOTTH Mail-owned `/webmail` shell from the API container for reachability proof. Roundcube remains the external provider reference, not the custom UI. The custom shell may use a plugin seam for provider registration/status, but it must not receive authority over core policy.
 
 Control-plane mutations initiated from webmail must call core service/auth/audit paths.
 

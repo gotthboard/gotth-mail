@@ -256,14 +256,14 @@ func TestOpenPGPMIMEVerifierAuthenticatesRawSignedEntityHeaders(t *testing.T) {
 	entity := testOpenPGPEntity(t, "Smoke Sender", "smoke@example.test")
 	identity := Identity{Address: "smoke@example.test", Fingerprint: entityFingerprint(entity)}
 	signed := signedOpenPGPMIMEForTest(t, entity, identity, false)
-	marker := []byte("X-GopherMailForge-Signed-From: " + identity.Address + "\r\n")
+	marker := []byte("X-GOTTH Mail-Signed-From: " + identity.Address + "\r\n")
 	for _, tc := range []struct {
 		name, insertion string
 	}{
 		{"extra content header", "Content-Description: unsigned injection\r\n"},
 		{"duplicate content header", "Content-Type: text/plain; charset=utf-8\r\n"},
-		{"extra gophermailforge header", "X-GopherMailForge-Unsigned-Assertion: injected\r\n"},
-		{"duplicate gophermailforge header", "X-GopherMailForge-Signed-From: " + identity.Address + "\r\n"},
+		{"extra gotth-mail header", "X-GOTTH Mail-Unsigned-Assertion: injected\r\n"},
+		{"duplicate gotth-mail header", "X-GOTTH Mail-Signed-From: " + identity.Address + "\r\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tampered := bytes.Replace(signed, marker, append([]byte(tc.insertion), marker...), 1)
@@ -318,10 +318,10 @@ func TestOpenPGPMIMEVerifierRejectsCryptographicallyValidDuplicateSignedHeaders(
 	}{
 		{field: "Content-Type"},
 		{field: "Content-Description", insertedValue: "ambiguous"},
-		{field: "X-GopherMailForge-Signed-From"},
-		{field: "X-GopherMailForge-Signed-Sender"},
-		{field: "X-GopherMailForge-Signed-Reply-To"},
-		{field: "X-GopherMailForge-Extension", insertedValue: "ambiguous"},
+		{field: "X-GOTTH Mail-Signed-From"},
+		{field: "X-GOTTH Mail-Signed-Sender"},
+		{field: "X-GOTTH Mail-Signed-Reply-To"},
+		{field: "X-GOTTH Mail-Extension", insertedValue: "ambiguous"},
 	} {
 		t.Run(tc.field, func(t *testing.T) {
 			part, _, err := readCanonicalMIMEEntity(signedPart)
@@ -337,7 +337,7 @@ func TestOpenPGPMIMEVerifierRejectsCryptographicallyValidDuplicateSignedHeaders(
 				line := []byte(tc.field + ": " + value + "\r\n")
 				ambiguous = bytes.Replace(signedPart, line, append(append([]byte(nil), line...), line...), 1)
 			} else {
-				marker := []byte("X-GopherMailForge-Signed-From: " + identity.Address + "\r\n")
+				marker := []byte("X-GOTTH Mail-Signed-From: " + identity.Address + "\r\n")
 				line := []byte(tc.field + ": " + tc.insertedValue + "\r\n")
 				duplicate := append(append([]byte(nil), line...), line...)
 				ambiguous = bytes.Replace(signedPart, marker, append(duplicate, marker...), 1)

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/notification"
-	"forgejo/linus/gophermailforge/internal/webmail"
+	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/webmail"
 )
 
 const (
@@ -34,7 +34,7 @@ const (
 	ReasonCancelled               = "notification_cancelled"
 	ReasonSignedEmailDelivered    = "signed_email_delivered"
 	VerificationValidExactSender  = "valid_exact_sender"
-	SignedEmailPolicyVersion      = "gmf-exact-sender-v1"
+	SignedEmailPolicyVersion      = "gotth-mail-exact-sender-v1"
 	SignedEmailWorkflow           = "notification"
 )
 
@@ -133,7 +133,7 @@ func (b SignedEmailBackend) SendAlert(ctx context.Context, alert notification.Al
 	msg, err := webmail.BuildMIME(webmail.Draft{
 		From:      from,
 		To:        to,
-		Subject:   "GopherMailForge alert: " + clean.Title,
+		Subject:   "GOTTH Mail alert: " + clean.Title,
 		Body:      alertBody(clean),
 		MessageID: messageID,
 		Date:      now,
@@ -267,7 +267,7 @@ func notificationMessageID(alertID, from, to string) string {
 	if _, d, ok := strings.Cut(from, "@"); ok && d != "" {
 		domain = strings.ToLower(d)
 	}
-	return "<gmf-notify-" + hex.EncodeToString(digest[:16]) + "@" + domain + ">"
+	return "<gotth-mail-notify-" + hex.EncodeToString(digest[:16]) + "@" + domain + ">"
 }
 
 func alertBody(a notification.Alert) string {

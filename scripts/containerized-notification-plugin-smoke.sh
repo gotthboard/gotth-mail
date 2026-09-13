@@ -2,7 +2,7 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 COMPOSE="$ROOT/compose/reference/docker-compose.yml"
-PROJECT=${GMF_NOTIFICATION_PLUGIN_SMOKE_PROJECT:-gmf-notification-plugin-smoke-$(date +%s)-$$}
+PROJECT=${GOTTH_MAIL_NOTIFICATION_PLUGIN_SMOKE_PROJECT:-gotth-mail-notification-plugin-smoke-$(date +%s)-$$}
 DOCKER=${DOCKER:-docker}
 if ! $DOCKER ps >/dev/null 2>&1; then
   if command -v sudo >/dev/null 2>&1 && sudo -n docker ps >/dev/null 2>&1; then
@@ -38,16 +38,16 @@ for i in $(seq 1 90); do
   sleep 1
 done
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" run --rm -T --no-deps \
-  -e GMF_LIVE_PLUGIN_ENDPOINT=notification-plugin:9443 \
-  -e GMF_LIVE_PLUGIN_NAME=telegram-notification-sink \
-  -e GMF_LIVE_PLUGIN_TOKEN=dev-plugin-token \
+  -e GOTTH_MAIL_LIVE_PLUGIN_ENDPOINT=notification-plugin:9443 \
+  -e GOTTH_MAIL_LIVE_PLUGIN_NAME=telegram-notification-sink \
+  -e GOTTH_MAIL_LIVE_PLUGIN_TOKEN=dev-plugin-token \
   test-runner sh -eu -c '
 signed_email_tests=$(go test -list "^TestSignedEmailBackend" ./internal/notifyruntime)
 printf "%s\n" "$signed_email_tests" | grep -qx "TestSignedEmailBackendSendsOnlyOpenPGPMIMESignedAlert"
 printf "%s\n" "$signed_email_tests" | grep -qx "TestSignedEmailBackendFailsClosedWithoutSignerOrMatchingIdentity"
-runtime_email_tests=$(go test -list "^TestSignedEmailNotificationSinkGRPC" ./cmd/gmf-plugin)
+runtime_email_tests=$(go test -list "^TestSignedEmailNotificationSinkGRPC" ./cmd/gotth-mail-plugin)
 printf "%s\n" "$runtime_email_tests" | grep -qx "TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAndRejectsPrompt"
-go test -v -count=1 ./cmd/gmf-plugin ./internal/plugin ./internal/notification ./internal/notifyruntime -run "^(TestLivePluginControlOverGRPC|TestLiveNotificationBackendOverGRPC|TestRuntimeCommandProvider|TestTelegramReceiver|TestApprovalExecutor|TestSignedEmailBackend.*|TestSignedEmailNotificationSinkGRPC.*)$"
+go test -v -count=1 ./cmd/gotth-mail-plugin ./internal/plugin ./internal/notification ./internal/notifyruntime -run "^(TestLivePluginControlOverGRPC|TestLiveNotificationBackendOverGRPC|TestRuntimeCommandProvider|TestTelegramReceiver|TestApprovalExecutor|TestSignedEmailBackend.*|TestSignedEmailNotificationSinkGRPC.*)$"
 '
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" down -v --remove-orphans
 trap - EXIT HUP INT TERM

@@ -1,8 +1,8 @@
-# GopherMailForge PRD — v4 Custom Webmail
+# GOTTH Mail PRD — v4 Custom Webmail
 
 ## Goal
 
-If the v4 cutline is explicitly accepted, v4 builds a custom GopherMailForge webmail client after the control plane, daemon contracts, identity, operations, and import workflows are solid. Until then, the product requires a supported external webmail provider.
+If the v4 cutline is explicitly accepted, v4 builds a custom GOTTH Mail webmail client after the control plane, daemon contracts, identity, operations, and import workflows are solid. Until then, the product requires a supported external webmail provider.
 
 Custom webmail must not block the control-plane product.
 
@@ -10,7 +10,7 @@ Custom webmail must not block the control-plane product.
 
 ### v4.1 Webmail provider evolution
 
-- Custom GopherMailForge webmail becomes a webmail provider implementation for the accepted v4 scope.
+- Custom GOTTH Mail webmail becomes a webmail provider implementation for the accepted v4 scope.
 - It remains separate from core mail policy.
 - It is deployed as a containerized service/plugin.
 - It must use the same auth/audit/service boundaries where it mutates state.

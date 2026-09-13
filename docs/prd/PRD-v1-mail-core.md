@@ -1,8 +1,8 @@
-# GopherMailForge PRD — v1 Mail Core
+# GOTTH Mail PRD — v1 Mail Core
 
 ## Goal
 
-v1 makes GopherMailForge a real mail-server control plane. It must provide the Postfix, Dovecot, and Rspamd contracts, generate DNS/TLS guidance, run diagnostics, prove mail flow through smoke tests, and ship the first mechanism-plugin containers needed for a working deployment.
+v1 makes GOTTH Mail a real mail-server control plane. It must provide the Postfix, Dovecot, and Rspamd contracts, generate DNS/TLS guidance, run diagnostics, prove mail flow through smoke tests, and ship the first mechanism-plugin containers needed for a working deployment.
 
 ## Scope
 
@@ -75,7 +75,7 @@ Each plugin container must:
 
 ### v1.6 Diagnostics
 
-- `gophermailforge doctor` for:
+- `gotth-mail doctor` for:
   - DNS
   - ports
   - TLS/certificates
@@ -141,7 +141,7 @@ Each plugin container must:
 
 ## Acceptance criteria
 
-- Postfix, Dovecot, and Rspamd can run against GopherMailForge internal APIs.
+- Postfix, Dovecot, and Rspamd can run against GOTTH Mail internal APIs.
 - Contract tests cover daemon lookup happy paths and failure paths.
 - Generated config can be rendered, diffed, applied, and audited.
 - DNS readiness reports exact missing/mismatched records.

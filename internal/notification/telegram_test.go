@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/store"
-	"forgejo/linus/gophermailforge/internal/testpg"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/store"
+	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
 
 func TestTelegramReceiverRoutesReadOnlyCommandThroughCommandService(t *testing.T) {
@@ -22,7 +22,7 @@ func TestTelegramReceiverRoutesReadOnlyCommandThroughCommandService(t *testing.T
 	}
 	provider := &fakeSummaryProvider{out: "doctor ok password=hunter2"}
 	recv := TelegramReceiver{Commands: CommandService{Mapper: mapper, Authorizer: authz.StaticAuthorizer{}, Provider: provider}}
-	reply, err := recv.Process(context.Background(), telegramUpdate{Message: &telegramMessage{MessageID: 7, From: telegramUser{ID: 99}, Chat: telegramChat{ID: 42}, Text: "/doctor@GopherMailForgeBot"}})
+	reply, err := recv.Process(context.Background(), telegramUpdate{Message: &telegramMessage{MessageID: 7, From: telegramUser{ID: 99}, Chat: telegramChat{ID: 42}, Text: "/doctor@GOTTH MailBot"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,11 +55,11 @@ func TestTelegramReceiverConfirmsApprovalThroughSQLStoreOnce(t *testing.T) {
 		t.Fatalf("create=%#v err=%v", created, err)
 	}
 	recv := TelegramReceiver{Mapper: mapper, Approvals: approvals, Now: func() time.Time { return now.Add(10 * time.Second) }}
-	reply, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-1", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gmf:approve:approval-1"}})
+	reply, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-1", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gotth-mail:approve:approval-1"}})
 	if err != nil || reply.Text != "approval accepted" {
 		t.Fatalf("approval rejected reply=%#v err=%v", reply, err)
 	}
-	if _, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-2", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gmf:approve:approval-1"}}); err == nil || !strings.Contains(err.Error(), "replay") {
+	if _, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-2", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gotth-mail:approve:approval-1"}}); err == nil || !strings.Contains(err.Error(), "replay") {
 		t.Fatalf("approval replay accepted: %v", err)
 	}
 }
@@ -78,7 +78,7 @@ func TestTelegramReceiverRejectsWrongCallbackActor(t *testing.T) {
 		t.Fatal(err)
 	}
 	recv := TelegramReceiver{Mapper: mapper, Approvals: approvals, Now: func() time.Time { return now.Add(10 * time.Second) }}
-	reply, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-1", From: telegramUser{ID: 100}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gmf:approve:approval-1"}})
+	reply, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-1", From: telegramUser{ID: 100}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gotth-mail:approve:approval-1"}})
 	if err == nil || !strings.Contains(err.Error(), "mapping") || !strings.Contains(reply.Text, "unmapped") {
 		t.Fatalf("wrong callback actor accepted reply=%#v err=%v", reply, err)
 	}

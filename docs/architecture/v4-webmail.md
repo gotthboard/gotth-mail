@@ -4,7 +4,7 @@ Source PRD: [PRD-v4-webmail.md](../prd/PRD-v4-webmail.md)
 
 ## Goal
 
-If the v4 cutline is explicitly accepted, v4 builds a custom GopherMailForge webmail client. Until then, supported external webmail remains required.
+If the v4 cutline is explicitly accepted, v4 builds a custom GOTTH Mail webmail client. Until then, supported external webmail remains required.
 
 Custom webmail must not block or contaminate the control-plane product.
 

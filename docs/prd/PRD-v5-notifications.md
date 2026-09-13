@@ -1,4 +1,4 @@
-# GopherMailForge PRD — v5 Notifications
+# GOTTH Mail PRD — v5 Notifications
 
 ## Goal
 

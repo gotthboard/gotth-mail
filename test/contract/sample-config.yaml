@@ -3,7 +3,7 @@ server:
   listen: ":8080"
   environment: "development"
 database:
-  dsn: "postgres://gmf:gmf-dev-only@database/gophermailforge"
+  dsn: "postgres://gotth_mail:gotth-mail-dev-only@database/gotth_mail"
 tls:
   mode: "manual"
   cert_path: "./test/fixtures/mail.crt"
@@ -11,12 +11,12 @@ tls:
 authentik:
   enabled: true
   base_url: "https://auth.example.test"
-  oidc_client_id: "gophermailforge"
-  scim_base_url: "https://auth.example.test/application/scim/gophermailforge"
+  oidc_client_id: "gotth-mail"
+  scim_base_url: "https://auth.example.test/application/scim/gotth-mail"
 roles:
-  global_admin_group: "gmf-admins"
-  domain_manager_group: "gmf-domain-managers"
-  scoped_domain_group_prefix: "gmf-domain-"
+  global_admin_group: "gotth-mail-admins"
+  domain_manager_group: "gotth-mail-domain-managers"
+  scoped_domain_group_prefix: "gotth-mail-domain-"
 render:
   staging_dir: "./var/generated/staged"
   applied_dir: "./var/generated/applied"

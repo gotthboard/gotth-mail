@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/store"
-	"forgejo/linus/gophermailforge/internal/testpg"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/store"
+	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
 
 func TestSQLActorMapperRequiresExplicitMapping(t *testing.T) {

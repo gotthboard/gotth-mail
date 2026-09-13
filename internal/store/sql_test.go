@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/testpg"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
 
 func TestMigrateSQLOnPostgres(t *testing.T) {

@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/notification"
-	"forgejo/linus/gophermailforge/internal/store"
-	"forgejo/linus/gophermailforge/internal/testpg"
-	"forgejo/linus/gophermailforge/internal/webmail"
+	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/store"
+	"forgejo/gotthboard/gotth-mail/internal/testpg"
+	"forgejo/gotthboard/gotth-mail/internal/webmail"
 	protonpgp "github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 )

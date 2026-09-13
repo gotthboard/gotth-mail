@@ -137,10 +137,10 @@ func parseTelegramCommand(text string) (ReadOnlyCommand, bool) {
 
 func parseApprovalCallback(data string) (string, bool) {
 	data = strings.TrimSpace(data)
-	if !strings.HasPrefix(data, "gmf:approve:") {
+	if !strings.HasPrefix(data, "gotth-mail:approve:") {
 		return "", false
 	}
-	id := strings.TrimSpace(strings.TrimPrefix(data, "gmf:approve:"))
+	id := strings.TrimSpace(strings.TrimPrefix(data, "gotth-mail:approve:"))
 	if id == "" || strings.ContainsAny(id, " \t\r\n/") || len(id) > 128 {
 		return "", false
 	}

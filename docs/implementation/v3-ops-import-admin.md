@@ -32,8 +32,8 @@ Export preserves redaction. UI must not expose secrets or unredacted before/afte
 Retention tooling:
 
 ```text
-gmf audit retention preview --policy <policy>
-gmf audit retention apply --policy <policy> --confirm <preview-id>
+gotth-mailctl audit retention preview --policy <policy>
+gotth-mailctl audit retention apply --policy <policy> --confirm <preview-id>
 ```
 
 Retention apply is a mutation and must be audited.
@@ -116,7 +116,7 @@ Import candidate types:
 
 Token/app-password import is allowed only for v2-supported Authentik/Django `pbkdf2_sha256` verifier, non-plaintext records whose hash/verifier algorithm, parameters, scope, and revocation state can be preserved. Anything else is `incompatible` or `manual_action_required`.
 
-Live Mailu user-password import uses Mailu `config-export --secrets --json` data. Mailu Passlib `bcrypt-sha256` password hashes must be preserved as `mailu_bcrypt_sha256$<original-mailu-passlib-hash>` for Authentik custom-hasher migration compatibility. They must not be presented as Django `bcrypt_sha256`, and redacted non-secret exports are rejected for user password preservation. Applying an import may adopt those mailbox records for routing/recipient state, but local Dovecot secret verification remains limited to verifier algorithms implemented by GopherMailForge.
+Live Mailu user-password import uses Mailu `config-export --secrets --json` data. Mailu Passlib `bcrypt-sha256` password hashes must be preserved as `mailu_bcrypt_sha256$<original-mailu-passlib-hash>` for Authentik custom-hasher migration compatibility. They must not be presented as Django `bcrypt_sha256`, and redacted non-secret exports are rejected for user password preservation. Applying an import may adopt those mailbox records for routing/recipient state, but local Dovecot secret verification remains limited to verifier algorithms implemented by GOTTH Mail.
 
 Import report item status:
 

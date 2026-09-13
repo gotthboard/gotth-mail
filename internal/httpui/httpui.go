@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/admin"
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/identity"
-	"forgejo/linus/gophermailforge/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/admin"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/ops"
 )
 
 func Handler() http.Handler { return HandlerWithAdmin(admin.NewStore()) }
@@ -303,7 +303,7 @@ func renderPage(w http.ResponseWriter, store *admin.Store, ids *identity.Service
 }
 
 var page = template.Must(template.New("page").Parse(`<!doctype html><html><body><main id="app">
-<h1>GopherMailForge</h1>
+<h1>GOTTH Mail</h1>
 <nav>Dashboard Config Audit Authentik Identity SCIM App Passwords Permission Simulator Backups Snapshots Import Abuse Bulk Plugins Doctor DNS DKIM Lookup Queue Mail Admin</nav>
 {{if .Message}}<p role="status">{{.Message}}</p>{{end}}
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-issuer="${GMF_AUTHENTIK_ISSUER:-https://auth.dannyhunn.com/application/o/gophermailforge/}"
-client_id="${GMF_AUTHENTIK_CLIENT_ID:?GMF_AUTHENTIK_CLIENT_ID required}"
-redirect_uri="${GMF_AUTHENTIK_REDIRECT_URI:-http://127.0.0.1:18080/api/v1/oidc/callback}"
-state="${GMF_AUTHENTIK_STATE:-gmf-live-smoke-state}"
-nonce="${GMF_AUTHENTIK_NONCE:-gmf-live-smoke-nonce}"
+issuer="${GOTTH_MAIL_AUTHENTIK_ISSUER:-https://auth.dannyhunn.com/application/o/gotth-mail/}"
+client_id="${GOTTH_MAIL_AUTHENTIK_CLIENT_ID:?GOTTH_MAIL_AUTHENTIK_CLIENT_ID required}"
+redirect_uri="${GOTTH_MAIL_AUTHENTIK_REDIRECT_URI:-http://127.0.0.1:18080/api/v1/oidc/callback}"
+state="${GOTTH_MAIL_AUTHENTIK_STATE:-gotth-mail-live-smoke-state}"
+nonce="${GOTTH_MAIL_AUTHENTIK_NONCE:-gotth-mail-live-smoke-nonce}"
 
 issuer="${issuer%/}/"
 discovery_url="${issuer}.well-known/openid-configuration"

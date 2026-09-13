@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"forgejo/linus/gophermailforge/internal/admin"
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/admin"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/identity"
 )
 
 func uiToken(t *testing.T, ids *identity.Service, secret string, scopes ...string) string {

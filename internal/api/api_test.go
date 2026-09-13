@@ -19,18 +19,18 @@ import (
 	"testing"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/authn"
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/config"
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/identity"
-	"forgejo/linus/gophermailforge/internal/notification"
-	"forgejo/linus/gophermailforge/internal/ops"
-	"forgejo/linus/gophermailforge/internal/plugin"
-	"forgejo/linus/gophermailforge/internal/store"
-	"forgejo/linus/gophermailforge/internal/testpg"
-	"forgejo/linus/gophermailforge/internal/webmail"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authn"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/config"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/store"
+	"forgejo/gotthboard/gotth-mail/internal/testpg"
+	"forgejo/gotthboard/gotth-mail/internal/webmail"
 )
 
 func TestV0APIShellRoutes(t *testing.T) {
@@ -47,7 +47,7 @@ tls:
 authentik:
   enabled: true
   base_url: "https://auth.example.test"
-  oidc_client_id: "gmf"
+  oidc_client_id: "gotth-mail"
   scim_base_url: "https://auth.example.test/scim"
 roles:
   global_admin_group: "admins"
@@ -115,7 +115,7 @@ func (f apiOIDCExchange) ExchangeCode(ctx context.Context, req authn.TokenReques
 func TestOIDCBrowserRedirectLoginAndGETCallback(t *testing.T) {
 	key, jwks := apiJWKS(t, "kid1")
 	now := time.Unix(1234, 0).UTC()
-	cfg := authn.OIDCConfig{Issuer: "https://auth.example.test/application/o/gmf/", ClientID: "gmf", RedirectURI: "http://127.0.0.1:18080/api/v1/oidc/callback", TokenEndpoint: "https://auth.example.test/token", ClockSkew: time.Minute, Now: func() time.Time { return now }}
+	cfg := authn.OIDCConfig{Issuer: "https://auth.example.test/application/o/gotth-mail/", ClientID: "gotth-mail", RedirectURI: "http://127.0.0.1:18080/api/v1/oidc/callback", TokenEndpoint: "https://auth.example.test/token", ClockSkew: time.Minute, Now: func() time.Time { return now }}
 	store := authn.NewStore()
 	h := Server{OIDCConfig: cfg, OIDCStore: store, OIDCAuthorizeEndpoint: "https://auth.example.test/application/o/authorize/", OIDCJWKS: jwks}.Handler()
 	rr := httptest.NewRecorder()
@@ -125,7 +125,7 @@ func TestOIDCBrowserRedirectLoginAndGETCallback(t *testing.T) {
 	}
 	binding := ""
 	for _, c := range rr.Result().Cookies() {
-		if c.Name == "gmf_oidc_binding" {
+		if c.Name == "gotth_mail_oidc_binding" {
 			binding = c.Value
 		}
 	}
@@ -145,7 +145,7 @@ func TestOIDCBrowserRedirectLoginAndGETCallback(t *testing.T) {
 	tok := apiSignToken(t, key, "kid1", map[string]any{"iss": cfg.Issuer, "sub": "user-123", "aud": []string{cfg.ClientID}, "azp": cfg.ClientID, "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "nbf": now.Add(-time.Second).Unix(), "nonce": nonce, "email": "alice@example.test", "name": "Alice"})
 	h = Server{OIDCConfig: cfg, OIDCStore: store, OIDCAuthorizeEndpoint: "https://auth.example.test/application/o/authorize/", OIDCJWKS: jwks, OIDCExchanger: apiOIDCExchange{token: tok}}.Handler()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/oidc/callback?state="+url.QueryEscape(state)+"&code=auth-code", nil)
-	req.AddCookie(&http.Cookie{Name: "gmf_oidc_binding", Value: binding})
+	req.AddCookie(&http.Cookie{Name: "gotth_mail_oidc_binding", Value: binding})
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/done" {
@@ -154,10 +154,10 @@ func TestOIDCBrowserRedirectLoginAndGETCallback(t *testing.T) {
 	gotSession := false
 	clearedBinding := false
 	for _, c := range rr.Result().Cookies() {
-		if c.Name == "gmf_session" && c.Value != "" {
+		if c.Name == "gotth_mail_session" && c.Value != "" {
 			gotSession = true
 		}
-		if c.Name == "gmf_oidc_binding" && c.MaxAge < 0 {
+		if c.Name == "gotth_mail_oidc_binding" && c.MaxAge < 0 {
 			clearedBinding = true
 		}
 	}
@@ -635,7 +635,7 @@ func (f *apiFakeSMTP) Submit(context.Context, webmail.Envelope, []byte) error {
 type apiFakeSigner struct{}
 
 func (apiFakeSigner) SignMIME(ctx context.Context, id webmail.Identity, b []byte) ([]byte, webmail.SignatureStatus, error) {
-	return append([]byte("From: "+id.Address+"\r\nMIME-Version: 1.0\r\nContent-Type: multipart/signed; protocol=\"application/pgp-signature\"; micalg=pgp-sha256; boundary=\"sig\"\r\n\r\n--sig\r\nContent-Type: multipart/mixed; boundary=\"fake\"\r\nX-GopherMailForge-Signed-From: "+id.Address+"\r\nX-GopherMailForge-Signing-Fingerprint: "+id.Fingerprint+"\r\n\r\n"), append(b, []byte("\r\n--sig\r\nContent-Type: application/pgp-signature\r\n\r\n-----BEGIN PGP SIGNATURE-----\r\n\r\nfake-signature\r\n-----END PGP SIGNATURE-----\r\n--sig--\r\n")...)...), webmail.SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
+	return append([]byte("From: "+id.Address+"\r\nMIME-Version: 1.0\r\nContent-Type: multipart/signed; protocol=\"application/pgp-signature\"; micalg=pgp-sha256; boundary=\"sig\"\r\n\r\n--sig\r\nContent-Type: multipart/mixed; boundary=\"fake\"\r\nX-GOTTH Mail-Signed-From: "+id.Address+"\r\nX-GOTTH Mail-Signing-Fingerprint: "+id.Fingerprint+"\r\n\r\n"), append(b, []byte("\r\n--sig\r\nContent-Type: application/pgp-signature\r\n\r\n-----BEGIN PGP SIGNATURE-----\r\n\r\nfake-signature\r\n-----END PGP SIGNATURE-----\r\n--sig--\r\n")...)...), webmail.SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
 }
 
 type apiFakeResolver struct{}
@@ -660,7 +660,7 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/webmail", nil))
 	body := rr.Body.String()
-	for _, want := range []string{"GopherMailForge Webmail", "/api/v1/webmail/folders", "/api/v1/webmail/messages", "/api/v1/webmail/drafts", "text-only"} {
+	for _, want := range []string{"GOTTH Mail Webmail", "/api/v1/webmail/folders", "/api/v1/webmail/messages", "/api/v1/webmail/drafts", "text-only"} {
 		if rr.Code != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("webmail shell status=%d missing %q body=%s", rr.Code, want, body)
 		}
@@ -668,9 +668,9 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 }
 
 func TestLiveContainerWebmailShellReachable(t *testing.T) {
-	base := os.Getenv("GMF_LIVE_WEBMAIL_UI_URL")
+	base := os.Getenv("GOTTH_MAIL_LIVE_WEBMAIL_UI_URL")
 	if base == "" {
-		t.Skip("GMF_LIVE_WEBMAIL_UI_URL not set")
+		t.Skip("GOTTH_MAIL_LIVE_WEBMAIL_UI_URL not set")
 	}
 	resp, err := http.Get(strings.TrimRight(base, "/") + "/webmail")
 	if err != nil {
@@ -682,7 +682,7 @@ func TestLiveContainerWebmailShellReachable(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(b)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "GopherMailForge Webmail") || !strings.Contains(body, "Custom webmail shell") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "GOTTH Mail Webmail") || !strings.Contains(body, "Custom webmail shell") {
 		t.Fatalf("webmail UI status=%d body=%s", resp.StatusCode, body)
 	}
 }
@@ -954,10 +954,10 @@ func TestV3SnapshotsReadPersistedSQLLinkage(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("latest ok=%v err=%v", ok, err)
 	}
-	if _, err := (ops.SQLSnapshotStore{DB: db}).Capture(context.Background(), ops.SnapshotView{ID: "00000000-0000-4000-8000-000000000401", MigrationVersion: "schema_migrations", DeploymentPolicyHash: "policy-a", LinkedBackupVerificationID: latest.ID, ImageVersions: []string{"gmf@sha256:1"}}, time.Unix(20, 0)); err != nil {
+	if _, err := (ops.SQLSnapshotStore{DB: db}).Capture(context.Background(), ops.SnapshotView{ID: "00000000-0000-4000-8000-000000000401", MigrationVersion: "schema_migrations", DeploymentPolicyHash: "policy-a", LinkedBackupVerificationID: latest.ID, ImageVersions: []string{"gotth-mail@sha256:1"}}, time.Unix(20, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (ops.SQLSnapshotStore{DB: db}).Capture(context.Background(), ops.SnapshotView{ID: "00000000-0000-4000-8000-000000000402", MigrationVersion: "schema_migrations", DeploymentPolicyHash: "policy-b", ImageVersions: []string{"gmf@sha256:2"}}, time.Unix(30, 0)); err != nil {
+	if _, err := (ops.SQLSnapshotStore{DB: db}).Capture(context.Background(), ops.SnapshotView{ID: "00000000-0000-4000-8000-000000000402", MigrationVersion: "schema_migrations", DeploymentPolicyHash: "policy-b", ImageVersions: []string{"gotth-mail@sha256:2"}}, time.Unix(30, 0)); err != nil {
 		t.Fatal(err)
 	}
 	h := Server{AuditDB: db, Identity: ids}.Handler()

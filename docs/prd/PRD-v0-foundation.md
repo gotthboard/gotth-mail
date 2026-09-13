@@ -1,4 +1,4 @@
-# GopherMailForge PRD — v0 Foundation
+# GOTTH Mail PRD — v0 Foundation
 
 ## Goal
 
@@ -9,7 +9,7 @@ v0 establishes the containerized control-plane foundation. It must ship a testab
 ### v0.1 Repo + project skeleton
 
 - Go module and repository structure.
-- Dockerfile for the GopherMailForge control-plane container.
+- Dockerfile for the GOTTH Mail control-plane container.
 - Docker Compose development/reference skeleton.
 - GOTTH layout: Go handlers, templ components, Tailwind pipeline, HTMX conventions.
 - Service-layer boundaries for config, persistence, auth, audit, permissions, plugins, and rendering.

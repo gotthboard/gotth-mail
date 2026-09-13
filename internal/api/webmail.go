@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/identity"
-	"forgejo/linus/gophermailforge/internal/webmail"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/webmail"
 )
 
 func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
@@ -188,7 +188,7 @@ func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
 	})
 }
 
-const webmailShellHTML = `<!doctype html><html><head><meta charset="utf-8"><title>GopherMailForge Webmail</title></head><body><main id="gmf-webmail"><h1>GopherMailForge Webmail</h1><p id="transport-note">Custom webmail shell backed by the GopherMailForge webmail API, Dovecot IMAP, SMTP submission, durable drafts, and conservative text-only message rendering.</p><section id="folders"><h2>Folders</h2><p>Loads from <code>/api/v1/webmail/folders</code> with a mailbox-scoped bearer token.</p></section><section id="messages"><h2>Messages</h2><p>Lists, searches, and reads via <code>/api/v1/webmail/messages</code>. HTML message bodies are treated as data unless a real sanitizer/browser proof is admitted.</p></section><section id="drafts"><h2>Drafts</h2><p>Saves mailbox-owned drafts through <code>/api/v1/webmail/drafts</code>; submit requires exact sender signing and SMTP submission.</p></section></main></body></html>`
+const webmailShellHTML = `<!doctype html><html><head><meta charset="utf-8"><title>GOTTH Mail Webmail</title></head><body><main id="gotth-mail-webmail"><h1>GOTTH Mail Webmail</h1><p id="transport-note">Custom webmail shell backed by the GOTTH Mail webmail API, Dovecot IMAP, SMTP submission, durable drafts, and conservative text-only message rendering.</p><section id="folders"><h2>Folders</h2><p>Loads from <code>/api/v1/webmail/folders</code> with a mailbox-scoped bearer token.</p></section><section id="messages"><h2>Messages</h2><p>Lists, searches, and reads via <code>/api/v1/webmail/messages</code>. HTML message bodies are treated as data unless a real sanitizer/browser proof is admitted.</p></section><section id="drafts"><h2>Drafts</h2><p>Saves mailbox-owned drafts through <code>/api/v1/webmail/drafts</code>; submit requires exact sender signing and SMTP submission.</p></section></main></body></html>`
 
 func webmailMailboxScope(a authz.Actor) string {
 	for _, scope := range a.Scopes {

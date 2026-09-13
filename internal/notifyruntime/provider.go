@@ -7,10 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/notification"
-	"forgejo/linus/gophermailforge/internal/ops"
-	"forgejo/linus/gophermailforge/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
 )
 
 type RuntimeCommandProvider struct {

@@ -47,19 +47,19 @@ func TestIMAPMailboxNameParsesQuotedAndAtomNames(t *testing.T) {
 }
 
 func TestNetIMAPClientLiveComposeDovecot(t *testing.T) {
-	addr := os.Getenv("GMF_LIVE_IMAP_ADDR")
+	addr := os.Getenv("GOTTH_MAIL_LIVE_IMAP_ADDR")
 	if addr == "" {
-		t.Skip("GMF_LIVE_IMAP_ADDR not set")
+		t.Skip("GOTTH_MAIL_LIVE_IMAP_ADDR not set")
 	}
-	password := os.Getenv("GMF_LIVE_IMAP_PASSWORD")
+	password := os.Getenv("GOTTH_MAIL_LIVE_IMAP_PASSWORD")
 	if password == "" {
-		t.Fatal("GMF_LIVE_IMAP_PASSWORD required")
+		t.Fatal("GOTTH_MAIL_LIVE_IMAP_PASSWORD required")
 	}
-	user := os.Getenv("GMF_LIVE_IMAP_USER")
+	user := os.Getenv("GOTTH_MAIL_LIVE_IMAP_USER")
 	if user == "" {
 		user = "smoke@example.test"
 	}
-	expected := os.Getenv("GMF_LIVE_IMAP_SUBJECT")
+	expected := os.Getenv("GOTTH_MAIL_LIVE_IMAP_SUBJECT")
 	c := NetIMAPClient{Addr: addr, Username: user, Password: password, Timeout: 20 * time.Second}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

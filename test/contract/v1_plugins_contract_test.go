@@ -12,7 +12,7 @@ func TestV1ReferenceComposeIncludesFirstPluginContainers(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"external-webmail-plugin:", "manual-dns-plugin:", "cert-plugin:", "backup-plugin:", "notification-plugin:", "GMF_PLUGIN_NAME: external-webmail", "GMF_PLUGIN_NAME: manual-dns-export", "GMF_PLUGIN_NAME: manual-letsencrypt-cert", "GMF_PLUGIN_NAME: local-filesystem-backup", "GMF_PLUGIN_NAME: telegram-notification-sink"} {
+	for _, want := range []string{"external-webmail-plugin:", "manual-dns-plugin:", "cert-plugin:", "backup-plugin:", "notification-plugin:", "GOTTH_MAIL_PLUGIN_NAME: external-webmail", "GOTTH_MAIL_PLUGIN_NAME: manual-dns-export", "GOTTH_MAIL_PLUGIN_NAME: manual-letsencrypt-cert", "GOTTH_MAIL_PLUGIN_NAME: local-filesystem-backup", "GOTTH_MAIL_PLUGIN_NAME: telegram-notification-sink"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("compose missing %q", want)
 		}
@@ -54,7 +54,7 @@ func TestReferenceComposeIncludesContainerizedWebmailSMTPSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"gophermailforge postfix dovecot rspamd", "GMF_LIVE_SMTP_ADDR=postfix:25", "TestNetSMTPSubmitterLiveComposePostfix", "TestOpenPGPMIMESignerProducesVerifiableExactSenderSignature", "TestOpenPGPMIMEVerifierRejectsTamperedSignedPart", "find /mail/example.test/smoke/new", "containerized webmail SMTP smoke passed"} {
+	for _, want := range []string{"gotth-mail postfix dovecot rspamd", "GOTTH_MAIL_LIVE_SMTP_ADDR=postfix:25", "TestNetSMTPSubmitterLiveComposePostfix", "TestOpenPGPMIMESignerProducesVerifiableExactSenderSignature", "TestOpenPGPMIMEVerifierRejectsTamperedSignedPart", "find /mail/example.test/smoke/new", "containerized webmail SMTP smoke passed"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("containerized webmail SMTP smoke missing %q", want)
 		}
@@ -67,7 +67,7 @@ func TestReferenceComposeIncludesContainerizedWebmailIMAPSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"gophermailforge postfix dovecot rspamd", "GMF_LIVE_IMAP_ADDR=dovecot:143", "GMF_LIVE_IMAP_USER=smoke@example.test", "GMF_LIVE_IMAP_PASSWORD=smoke-secret", "TestNetIMAPClientLiveComposeDovecot", "containerized webmail IMAP smoke passed"} {
+	for _, want := range []string{"gotth-mail postfix dovecot rspamd", "GOTTH_MAIL_LIVE_IMAP_ADDR=dovecot:143", "GOTTH_MAIL_LIVE_IMAP_USER=smoke@example.test", "GOTTH_MAIL_LIVE_IMAP_PASSWORD=smoke-secret", "TestNetIMAPClientLiveComposeDovecot", "containerized webmail IMAP smoke passed"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("containerized webmail IMAP smoke missing %q", want)
 		}
@@ -80,7 +80,7 @@ func TestReferenceComposeIncludesContainerizedCustomWebmailUISmoke(t *testing.T)
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"gophermailforge", "GMF_LIVE_WEBMAIL_UI_URL=http://gophermailforge:8080", "TestLiveContainerWebmailShellReachable", "containerized custom webmail UI smoke passed"} {
+	for _, want := range []string{"gotth-mail", "GOTTH_MAIL_LIVE_WEBMAIL_UI_URL=http://gotth-mail:8080", "TestLiveContainerWebmailShellReachable", "containerized custom webmail UI smoke passed"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("containerized custom webmail UI smoke missing %q", want)
 		}
@@ -93,7 +93,7 @@ func TestReferenceComposeIncludesContainerizedNotificationPluginSmoke(t *testing
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"notification-plugin", "GMF_LIVE_PLUGIN_ENDPOINT=notification-plugin:9443", "GMF_LIVE_PLUGIN_NAME=telegram-notification-sink", "GMF_LIVE_PLUGIN_TOKEN=dev-plugin-token", "TestLivePluginControlOverGRPC", "TestLiveNotificationBackendOverGRPC", "TestRuntimeCommandProvider", "TestTelegramReceiver", "TestApprovalExecutor", `go test -list "^TestSignedEmailBackend"`, `grep -qx "TestSignedEmailBackendSendsOnlyOpenPGPMIMESignedAlert"`, `grep -qx "TestSignedEmailBackendFailsClosedWithoutSignerOrMatchingIdentity"`, `go test -list "^TestSignedEmailNotificationSinkGRPC"`, `grep -qx "TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAndRejectsPrompt"`, "TestSignedEmailBackend.*", "TestSignedEmailNotificationSinkGRPC.*", "go test -v -count=1", "containerized notification plugin gRPC/backend smoke passed"} {
+	for _, want := range []string{"notification-plugin", "GOTTH_MAIL_LIVE_PLUGIN_ENDPOINT=notification-plugin:9443", "GOTTH_MAIL_LIVE_PLUGIN_NAME=telegram-notification-sink", "GOTTH_MAIL_LIVE_PLUGIN_TOKEN=dev-plugin-token", "TestLivePluginControlOverGRPC", "TestLiveNotificationBackendOverGRPC", "TestRuntimeCommandProvider", "TestTelegramReceiver", "TestApprovalExecutor", `go test -list "^TestSignedEmailBackend"`, `grep -qx "TestSignedEmailBackendSendsOnlyOpenPGPMIMESignedAlert"`, `grep -qx "TestSignedEmailBackendFailsClosedWithoutSignerOrMatchingIdentity"`, `go test -list "^TestSignedEmailNotificationSinkGRPC"`, `grep -qx "TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAndRejectsPrompt"`, "TestSignedEmailBackend.*", "TestSignedEmailNotificationSinkGRPC.*", "go test -v -count=1", "containerized notification plugin gRPC/backend smoke passed"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("containerized notification plugin smoke missing %q", want)
 		}
@@ -119,7 +119,7 @@ func TestReferenceComposeIncludesContainerizedNotificationPluginSmoke(t *testing
 	if strings.Contains(s[loopAt:loopAt+loopEnd], "build test-runner") {
 		t.Fatal("test-runner build must not execute inside readiness loop")
 	}
-	if !strings.Contains(s, `PROJECT=${GMF_NOTIFICATION_PLUGIN_SMOKE_PROJECT:-gmf-notification-plugin-smoke-$(date +%s)-$$}`) {
+	if !strings.Contains(s, `PROJECT=${GOTTH_MAIL_NOTIFICATION_PLUGIN_SMOKE_PROJECT:-gotth-mail-notification-plugin-smoke-$(date +%s)-$$}`) {
 		t.Fatal("notification smoke must use a unique default Compose project")
 	}
 	finalCleanup := `$DOCKER compose -p "$PROJECT" -f "$COMPOSE" down -v --remove-orphans`
@@ -157,8 +157,8 @@ func TestDockerImageBuildsPluginRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	if !strings.Contains(s, "go build -o /out/gmf-plugin ./cmd/gmf-plugin") || !strings.Contains(s, "COPY --from=build /out/gmf-plugin /usr/local/bin/gmf-plugin") {
-		t.Fatal("Dockerfile must build and copy gmf-plugin")
+	if !strings.Contains(s, "go build -o /out/gotth-mail-plugin ./cmd/gotth-mail-plugin") || !strings.Contains(s, "COPY --from=build /out/gotth-mail-plugin /usr/local/bin/gotth-mail-plugin") {
+		t.Fatal("Dockerfile must build and copy gotth-mail-plugin")
 	}
 }
 
@@ -178,7 +178,7 @@ func TestV1ReferenceComposeIncludesRealDaemonRuntime(t *testing.T) {
 		combined.WriteByte('\n')
 	}
 	s := combined.String()
-	for _, want := range []string{"postfix:", "dovecot:", "rspamd:", "webmail:", "postfix start-fg", "dovecot -F", "rspamd -f", "roundcube/roundcubemail", "ROUNDCUBEMAIL_DEFAULT_HOST", "check_policy_service inet:gophermailforge:10025", "smtpd_milters = inet:rspamd:11332", "bind_socket = \"*:11332\"", "/internal/v1/postfix/aliases/alias@example.test", "/internal/v1/dovecot/passdb", "/internal/v1/rspamd/signing-decision", "maildata:", "dkimdata:"} {
+	for _, want := range []string{"postfix:", "dovecot:", "rspamd:", "webmail:", "postfix start-fg", "dovecot -F", "rspamd -f", "roundcube/roundcubemail", "ROUNDCUBEMAIL_DEFAULT_HOST", "check_policy_service inet:gotth-mail:10025", "smtpd_milters = inet:rspamd:11332", "bind_socket = \"*:11332\"", "/internal/v1/postfix/aliases/alias@example.test", "/internal/v1/dovecot/passdb", "/internal/v1/rspamd/signing-decision", "maildata:", "dkimdata:"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("reference runtime missing marker %q", want)
 		}
@@ -191,7 +191,7 @@ func TestReferenceRuntimeSmokeScriptCoversMailFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"RCPT TO:<nobody@example.test>", "recipient unknown", "RCPT TO:<alias@example.test>", "find /mail/example.test/smoke/new", "a login smoke@example.test smoke-secret", "GopherMailForge smoke", "roundcube_token", "?_task=mail&_mbox=INBOX", "?_task=mail&_action=list", "acme_not_configured_reference_manual_mode", "\"category\":\"plugin\"", "^DKIM-Signature:", "rspamadm configtest", "postfix policy recipient=alias@example.test decision=ok", "/internal/v1/postfix/recipients/smoke@example.test", "/internal/v1/rspamd/dkim/example.test"} {
+	for _, want := range []string{"RCPT TO:<nobody@example.test>", "recipient unknown", "RCPT TO:<alias@example.test>", "find /mail/example.test/smoke/new", "a login smoke@example.test smoke-secret", "GOTTH Mail smoke", "roundcube_token", "?_task=mail&_mbox=INBOX", "?_task=mail&_action=list", "acme_not_configured_reference_manual_mode", "\"category\":\"plugin\"", "^DKIM-Signature:", "rspamadm configtest", "postfix policy recipient=alias@example.test decision=ok", "/internal/v1/postfix/recipients/smoke@example.test", "/internal/v1/rspamd/dkim/example.test"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("smoke script missing %q", want)
 		}
@@ -212,14 +212,14 @@ func TestV1MailAdminUIScreensExist(t *testing.T) {
 }
 
 func TestV1CLIDoctorCommandExists(t *testing.T) {
-	b, err := os.ReadFile("../../cmd/gmf/main.go")
+	b, err := os.ReadFile("../../cmd/gotth-mailctl/main.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(b)
 	for _, want := range []string{"case \"doctor\"", "--format", "json.NewEncoder", "unsupported doctor format"} {
 		if !strings.Contains(s, want) {
-			t.Fatalf("gmf doctor missing %q", want)
+			t.Fatalf("gotth-mailctl doctor missing %q", want)
 		}
 	}
 }

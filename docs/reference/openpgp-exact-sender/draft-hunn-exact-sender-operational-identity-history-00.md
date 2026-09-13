@@ -208,4 +208,4 @@ This document has no IANA actions.
 
 # Acknowledgements
 
-This draft was motivated by operational requirements from GopherMailForge and by the need to distinguish stable identity history from mutable email addresses and display names.
+This draft was motivated by operational requirements from GOTTH Mail and by the need to distinguish stable identity history from mutable email addresses and display names.

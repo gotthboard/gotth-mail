@@ -1,4 +1,4 @@
-# GopherMailForge PRD — v2 Identity + Provisioning
+# GOTTH Mail PRD — v2 Identity + Provisioning
 
 ## Goal
 
@@ -95,7 +95,7 @@ Requirements:
 - No custom identity provider.
 - No embedding Authentik.
 - No generic policy framework.
-- No mailbox provisioning that bypasses GopherMailForge validation.
+- No mailbox provisioning that bypasses GOTTH Mail validation.
 
 ## Acceptance criteria
 

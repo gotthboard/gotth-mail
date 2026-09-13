@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/store"
-	"forgejo/linus/gophermailforge/internal/testpg"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/store"
+	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
 
 func TestSQLAuditStoreQueryGetRedactsAndFilters(t *testing.T) {
@@ -272,7 +272,7 @@ func TestSQLSnapshotStorePersistsVerifiedBackupLinkage(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("latest ok=%v err=%v", ok, err)
 	}
-	snap, err := (SQLSnapshotStore{DB: db}).Capture(context.Background(), SnapshotView{ID: "00000000-0000-4000-8000-000000000301", MigrationVersion: "schema_migrations", DeploymentPolicyHash: "policy", LinkedBackupVerificationID: latest.ID, ImageVersions: []string{"gmf@sha256:1"}, PluginVersions: []string{"backup:v1"}}, time.Unix(20, 0))
+	snap, err := (SQLSnapshotStore{DB: db}).Capture(context.Background(), SnapshotView{ID: "00000000-0000-4000-8000-000000000301", MigrationVersion: "schema_migrations", DeploymentPolicyHash: "policy", LinkedBackupVerificationID: latest.ID, ImageVersions: []string{"gotth-mail@sha256:1"}, PluginVersions: []string{"backup:v1"}}, time.Unix(20, 0))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 
-	"forgejo/linus/gophermailforge/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"net/mail"
 	"strconv"
 	"strings"

@@ -19,7 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"forgejo/linus/gophermailforge/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
 )
 
 type Message struct {
@@ -455,7 +455,7 @@ func messageID(v, from string) (string, error) {
 		if _, d, ok := strings.Cut(from, "@"); ok && d != "" {
 			domain = strings.ToLower(d)
 		}
-		v = "<gmf-" + safeToken(18) + "@" + domain + ">"
+		v = "<gotth-mail-" + safeToken(18) + "@" + domain + ">"
 	}
 	if strings.ContainsAny(v, "\r\n") || len(v) > 255 || !strings.HasPrefix(v, "<") || !strings.HasSuffix(v, ">") {
 		return "", errors.New("invalid message id")

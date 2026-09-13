@@ -2,7 +2,7 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 COMPOSE="$ROOT/compose/reference/docker-compose.yml"
-PROJECT=${GMF_MAILU_SMOKE_PROJECT:-gmf-mailu-import-smoke}
+PROJECT=${GOTTH_MAIL_MAILU_SMOKE_PROJECT:-gotth-mail-mailu-import-smoke}
 DOCKER=${DOCKER:-docker}
 if ! $DOCKER ps >/dev/null 2>&1; then
   if command -v sudo >/dev/null 2>&1 && sudo docker ps >/dev/null 2>&1; then
@@ -28,7 +28,7 @@ for i in $(seq 1 90); do
   sleep 2
 done
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T mailu-admin flask mailu domain example.test >/dev/null 2>&1 || true
-$DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T mailu-admin flask mailu user user example.test gmf-user-password >/dev/null
+$DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T mailu-admin flask mailu user user example.test gotth-mail-user-password >/dev/null
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T mailu-admin flask mailu alias alias example.test 'postmaster@example.test,user@example.test' >/dev/null 2>&1 || true
 tmpdir=$(mktemp -d)
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T mailu-admin flask mailu config-export --json > "$tmpdir/config-export.json"

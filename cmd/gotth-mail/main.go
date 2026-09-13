@@ -11,22 +11,22 @@ import (
 	"strings"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/admin"
-	"forgejo/linus/gophermailforge/internal/api"
-	"forgejo/linus/gophermailforge/internal/authn"
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/diag"
-	"forgejo/linus/gophermailforge/internal/httpui"
-	"forgejo/linus/gophermailforge/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/admin"
+	"forgejo/gotthboard/gotth-mail/internal/api"
+	"forgejo/gotthboard/gotth-mail/internal/authn"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/diag"
+	"forgejo/gotthboard/gotth-mail/internal/httpui"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
 )
 
 func main() {
 	mux := http.NewServeMux()
 	server := api.Server{Authz: authz.StaticAuthorizer{}}
-	if os.Getenv("GMF_REFERENCE_FIXTURE") == "1" {
+	if os.Getenv("GOTTH_MAIL_REFERENCE_FIXTURE") == "1" {
 		server = referenceServer()
-		go servePostfixPolicy(os.Getenv("GMF_POSTFIX_POLICY_LISTEN"), server.Daemon)
+		go servePostfixPolicy(os.Getenv("GOTTH_MAIL_POSTFIX_POLICY_LISTEN"), server.Daemon)
 	}
 	if err := configureOIDCFromEnv(context.Background(), &server, http.DefaultClient); err != nil {
 		log.Fatalf("configure oidc: %v", err)
@@ -37,7 +37,7 @@ func main() {
 	mux.Handle("/readyz", server.Handler())
 	mux.Handle("/webmail", server.Handler())
 	mux.Handle("/", httpui.HandlerWithAdmin(referenceAdminStore()))
-	addr := os.Getenv("GMF_LISTEN")
+	addr := os.Getenv("GOTTH_MAIL_LISTEN")
 	if addr == "" {
 		addr = ":8080"
 	}
@@ -45,17 +45,17 @@ func main() {
 }
 
 func configureOIDCFromEnv(ctx context.Context, server *api.Server, client *http.Client) error {
-	issuer := strings.TrimSpace(os.Getenv("GMF_AUTHENTIK_ISSUER"))
-	clientID := strings.TrimSpace(os.Getenv("GMF_AUTHENTIK_CLIENT_ID"))
-	redirectURI := strings.TrimSpace(os.Getenv("GMF_AUTHENTIK_REDIRECT_URI"))
+	issuer := strings.TrimSpace(os.Getenv("GOTTH_MAIL_AUTHENTIK_ISSUER"))
+	clientID := strings.TrimSpace(os.Getenv("GOTTH_MAIL_AUTHENTIK_CLIENT_ID"))
+	redirectURI := strings.TrimSpace(os.Getenv("GOTTH_MAIL_AUTHENTIK_REDIRECT_URI"))
 	if issuer == "" && clientID == "" && redirectURI == "" {
 		return nil
 	}
 	if issuer == "" || clientID == "" || redirectURI == "" {
-		return fmt.Errorf("GMF_AUTHENTIK_ISSUER, GMF_AUTHENTIK_CLIENT_ID, and GMF_AUTHENTIK_REDIRECT_URI are required together")
+		return fmt.Errorf("GOTTH_MAIL_AUTHENTIK_ISSUER, GOTTH_MAIL_AUTHENTIK_CLIENT_ID, and GOTTH_MAIL_AUTHENTIK_REDIRECT_URI are required together")
 	}
 	issuer = strings.TrimRight(issuer, "/") + "/"
-	cfg := authn.OIDCConfig{Issuer: issuer, ClientID: clientID, ClientSecret: os.Getenv("GMF_AUTHENTIK_CLIENT_SECRET"), RedirectURI: redirectURI, ClockSkew: time.Minute}
+	cfg := authn.OIDCConfig{Issuer: issuer, ClientID: clientID, ClientSecret: os.Getenv("GOTTH_MAIL_AUTHENTIK_CLIENT_SECRET"), RedirectURI: redirectURI, ClockSkew: time.Minute}
 	d, jwks, err := authn.DiscoverProvider(ctx, client, cfg)
 	if err != nil {
 		return err

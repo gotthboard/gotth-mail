@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"forgejo/linus/gophermailforge/internal/store"
-	"forgejo/linus/gophermailforge/internal/testpg"
+	"forgejo/gotthboard/gotth-mail/internal/store"
+	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
 
 func TestSQLDraftStorePersistsDraftAcrossReload(t *testing.T) {

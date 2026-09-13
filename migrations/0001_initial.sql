@@ -1,4 +1,4 @@
--- GopherMailForge v0 initial schema. See internal/store.InitialSchema for executable test representation.
+-- GOTTH Mail v0 initial schema. See internal/store.InitialSchema for executable test representation.
 CREATE TABLE schema_migrations (version text primary key, applied_at timestamp not null, checksum text not null, dirty boolean not null default false);
 CREATE TABLE domains (id uuid primary key, name text not null unique, enabled boolean not null default true, created_at timestamp not null, updated_at timestamp not null);
 CREATE TABLE mailboxes (id uuid primary key, domain_id uuid not null references domains(id), local_part text not null, display_name text, enabled boolean not null default true, verifier text null, quota_bytes bigint null, created_at timestamp not null, updated_at timestamp not null, unique(domain_id, local_part));

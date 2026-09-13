@@ -1,11 +1,11 @@
 services:
-  gophermailforge:
+  gotth-mail:
     build:
       context: ../..
     environment:
-      GMF_LISTEN: ":8080"
-      GMF_REFERENCE_FIXTURE: "1"
-      GMF_POSTFIX_POLICY_LISTEN: ":10025"
+      GOTTH_MAIL_LISTEN: ":8080"
+      GOTTH_MAIL_REFERENCE_FIXTURE: "1"
+      GOTTH_MAIL_POSTFIX_POLICY_LISTEN: ":10025"
     ports:
       - "8080:8080"
     depends_on:
@@ -25,9 +25,9 @@ services:
   database:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: gophermailforge
-      POSTGRES_USER: gmf
-      POSTGRES_PASSWORD: gmf-dev-only
+      POSTGRES_DB: gotth_mail
+      POSTGRES_USER: gotth_mail
+      POSTGRES_PASSWORD: gotth-mail-dev-only
   mailu-redis:
     image: redis:alpine
     profiles: ["mailu-import"]
@@ -40,7 +40,7 @@ services:
       MAILU_VERSION: "2.0"
       DOCKER_ORG: ghcr.io/mailu
       DOCKER_PREFIX: ""
-      SECRET_KEY: gmf-mailu-fixture-dev-only
+      SECRET_KEY: gotth-mail-mailu-fixture-dev-only
       DOMAIN: example.test
       HOSTNAMES: mail.example.test
       POSTMASTER: postmaster
@@ -53,12 +53,12 @@ services:
       WEB_WEBMAIL: /webmail
       WEB_API: /api
       WEBMAIL: none
-      SITENAME: GMF Mailu Fixture
+      SITENAME: GOTTH Mail Fixture
       WEBSITE: https://example.test
       SESSION_COOKIE_SECURE: "False"
       INITIAL_ADMIN_ACCOUNT: postmaster
       INITIAL_ADMIN_DOMAIN: example.test
-      INITIAL_ADMIN_PW: gmf-dev-postmaster
+      INITIAL_ADMIN_PW: gotth-mail-dev-postmaster
       INITIAL_ADMIN_MODE: ifmissing
       LOG_LEVEL: INFO
       SUBNET: 172.28.241.0/24
@@ -76,9 +76,9 @@ services:
     environment:
       AUTHENTIK_SECRET_KEY: dev-only-change-me
       AUTHENTIK_POSTGRESQL__HOST: database
-      AUTHENTIK_POSTGRESQL__USER: gmf
-      AUTHENTIK_POSTGRESQL__PASSWORD: gmf-dev-only
-      AUTHENTIK_POSTGRESQL__NAME: gophermailforge
+      AUTHENTIK_POSTGRESQL__USER: gotth_mail
+      AUTHENTIK_POSTGRESQL__PASSWORD: gotth-mail-dev-only
+      AUTHENTIK_POSTGRESQL__NAME: gotth_mail
   postfix:
     image: alpine:3.22
     command:
@@ -91,10 +91,10 @@ services:
         mkdir -p /mail/example.test/smoke/{cur,new,tmp} /mail/example.test/postmaster/{cur,new,tmp}
         chown -R 5000:5000 /mail
         cp /reference/postfix/main.cf /etc/postfix/main.cf
-        until curl -fsS http://gophermailforge:8080/healthz >/dev/null; do sleep 1; done
-        curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gophermailforge:8080/internal/v1/postfix/mailboxes/smoke@example.test | jq -e '.decision == "ok"' >/dev/null
-        curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gophermailforge:8080/internal/v1/postfix/mailboxes/postmaster@example.test | jq -e '.decision == "ok"' >/dev/null
-        alias_targets=$$(curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gophermailforge:8080/internal/v1/postfix/aliases/alias@example.test | jq -r 'select(.decision == "ok") | .targets | join(",")')
+        until curl -fsS http://gotth-mail:8080/healthz >/dev/null; do sleep 1; done
+        curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gotth-mail:8080/internal/v1/postfix/mailboxes/smoke@example.test | jq -e '.decision == "ok"' >/dev/null
+        curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gotth-mail:8080/internal/v1/postfix/mailboxes/postmaster@example.test | jq -e '.decision == "ok"' >/dev/null
+        alias_targets=$$(curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gotth-mail:8080/internal/v1/postfix/aliases/alias@example.test | jq -r 'select(.decision == "ok") | .targets | join(",")')
         test "$$alias_targets" = "smoke@example.test"
         printf 'smoke@example.test example.test/smoke/\npostmaster@example.test example.test/postmaster/\n' > /etc/postfix/virtual_mailboxes
         printf 'alias@example.test %s\n' "$$alias_targets" > /etc/postfix/virtual_aliases
@@ -106,7 +106,7 @@ services:
       - maildata:/mail
       - ./postfix:/reference/postfix:ro
     depends_on:
-      - gophermailforge
+      - gotth-mail
       - rspamd
     ports:
       - "2525:25"
@@ -122,9 +122,9 @@ services:
         mkdir -p /mail/example.test/smoke/{cur,new,tmp} /mail/example.test/postmaster/{cur,new,tmp}
         chown -R 5000:5000 /mail
         cp /reference/dovecot/dovecot.conf /etc/dovecot/dovecot.conf
-        until curl -fsS http://gophermailforge:8080/healthz >/dev/null; do sleep 1; done
-        curl -fsS -H 'X-Correlation-ID: dovecot-passdb-gen' -H 'Content-Type: application/json' -d '{"username":"smoke@example.test","secret":"smoke-secret","protocol":"imap"}' http://gophermailforge:8080/internal/v1/dovecot/passdb | jq -e '.decision == "ok"' >/dev/null
-        curl -fsS -H 'X-Correlation-ID: dovecot-passdb-gen' http://gophermailforge:8080/internal/v1/dovecot/userdb/smoke@example.test >/tmp/smoke-userdb.json
+        until curl -fsS http://gotth-mail:8080/healthz >/dev/null; do sleep 1; done
+        curl -fsS -H 'X-Correlation-ID: dovecot-passdb-gen' -H 'Content-Type: application/json' -d '{"username":"smoke@example.test","secret":"smoke-secret","protocol":"imap"}' http://gotth-mail:8080/internal/v1/dovecot/passdb | jq -e '.decision == "ok"' >/dev/null
+        curl -fsS -H 'X-Correlation-ID: dovecot-passdb-gen' http://gotth-mail:8080/internal/v1/dovecot/userdb/smoke@example.test >/tmp/smoke-userdb.json
         smoke_home=$$(jq -r 'select(.decision == "ok") | .home' /tmp/smoke-userdb.json)
         smoke_uid=$$(jq -r 'select(.decision == "ok") | .uid' /tmp/smoke-userdb.json)
         smoke_gid=$$(jq -r 'select(.decision == "ok") | .gid' /tmp/smoke-userdb.json)
@@ -135,7 +135,7 @@ services:
       - maildata:/mail
       - ./dovecot:/reference/dovecot:ro
     depends_on:
-      - gophermailforge
+      - gotth-mail
     ports:
       - "2143:143"
   rspamd:
@@ -147,9 +147,9 @@ services:
         apk add --no-cache rspamd curl jq >/dev/null
         mkdir -p /run/rspamd/dkim /etc/rspamd/local.d
         cp /reference/rspamd/local.d/* /etc/rspamd/local.d/
-        until curl -fsS http://gophermailforge:8080/healthz >/dev/null; do sleep 1; done
-        curl -fsS -H 'X-Correlation-ID: rspamd-dkim-gen' http://gophermailforge:8080/internal/v1/rspamd/dkim/example.test | jq -e '.decision == "ok" and .selector == "mail"' >/dev/null
-        curl -fsS -H 'X-Correlation-ID: rspamd-dkim-gen' -H 'Content-Type: application/json' -d '{"domain":"example.test"}' http://gophermailforge:8080/internal/v1/rspamd/signing-decision | jq -e '.decision == "ok"' >/dev/null
+        until curl -fsS http://gotth-mail:8080/healthz >/dev/null; do sleep 1; done
+        curl -fsS -H 'X-Correlation-ID: rspamd-dkim-gen' http://gotth-mail:8080/internal/v1/rspamd/dkim/example.test | jq -e '.decision == "ok" and .selector == "mail"' >/dev/null
+        curl -fsS -H 'X-Correlation-ID: rspamd-dkim-gen' -H 'Content-Type: application/json' -d '{"domain":"example.test"}' http://gotth-mail:8080/internal/v1/rspamd/signing-decision | jq -e '.decision == "ok"' >/dev/null
         rspamadm dkim_keygen -d example.test -s mail -k /run/rspamd/dkim/example.test.mail.key >/run/rspamd/dkim/example.test.mail.txt
         chown -R rspamd:rspamd /run/rspamd/dkim
         chmod 0400 /run/rspamd/dkim/example.test.mail.key
@@ -158,7 +158,7 @@ services:
       - dkimdata:/run/rspamd/dkim
       - ./rspamd:/reference/rspamd:ro
     depends_on:
-      - gophermailforge
+      - gotth-mail
     ports:
       - "11332:11332"
       - "11333:11333"
@@ -180,57 +180,57 @@ services:
   external-webmail-plugin:
     build:
       context: ../..
-    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    entrypoint: ["/usr/local/bin/gotth-mail-plugin"]
     environment:
-      GMF_PLUGIN_NAME: external-webmail
-      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+      GOTTH_MAIL_PLUGIN_NAME: external-webmail
+      GOTTH_MAIL_PLUGIN_SERVICE_TOKEN: dev-plugin-token
   manual-dns-plugin:
     build:
       context: ../..
-    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    entrypoint: ["/usr/local/bin/gotth-mail-plugin"]
     environment:
-      GMF_PLUGIN_NAME: manual-dns-export
-      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+      GOTTH_MAIL_PLUGIN_NAME: manual-dns-export
+      GOTTH_MAIL_PLUGIN_SERVICE_TOKEN: dev-plugin-token
   cert-plugin:
     build:
       context: ../..
-    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    entrypoint: ["/usr/local/bin/gotth-mail-plugin"]
     environment:
-      GMF_PLUGIN_NAME: manual-letsencrypt-cert
-      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+      GOTTH_MAIL_PLUGIN_NAME: manual-letsencrypt-cert
+      GOTTH_MAIL_PLUGIN_SERVICE_TOKEN: dev-plugin-token
   backup-plugin:
     build:
       context: ../..
-    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    entrypoint: ["/usr/local/bin/gotth-mail-plugin"]
     environment:
-      GMF_PLUGIN_NAME: local-filesystem-backup
-      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+      GOTTH_MAIL_PLUGIN_NAME: local-filesystem-backup
+      GOTTH_MAIL_PLUGIN_SERVICE_TOKEN: dev-plugin-token
     volumes:
       - backup-data:/backup
   notification-plugin:
     build:
       context: ../..
-    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    entrypoint: ["/usr/local/bin/gotth-mail-plugin"]
     environment:
-      GMF_PLUGIN_NAME: telegram-notification-sink
-      GMF_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+      GOTTH_MAIL_PLUGIN_NAME: telegram-notification-sink
+      GOTTH_MAIL_PLUGIN_SERVICE_TOKEN: dev-plugin-token
   signed-email-notification-plugin:
     profiles: ["signed-email-notification"]
     build:
       context: ../..
-    entrypoint: ["/usr/local/bin/gmf-plugin"]
+    entrypoint: ["/usr/local/bin/gotth-mail-plugin"]
     environment:
-      GMF_PLUGIN_NAME: signed-email-notification-sink
-      GMF_PLUGIN_SERVICE_TOKEN: ${GMF_SIGNED_EMAIL_PLUGIN_SERVICE_TOKEN:-dev-plugin-token}
-      GMF_NOTIFICATION_EMAIL_FROM: ${GMF_NOTIFICATION_EMAIL_FROM:-}
-      GMF_NOTIFICATION_EMAIL_TO: ${GMF_NOTIFICATION_EMAIL_TO:-}
-      GMF_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT: ${GMF_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT:-}
-      GMF_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE: /run/secrets/notification-signing-key.asc
+      GOTTH_MAIL_PLUGIN_NAME: signed-email-notification-sink
+      GOTTH_MAIL_PLUGIN_SERVICE_TOKEN: ${GOTTH_MAIL_SIGNED_EMAIL_PLUGIN_SERVICE_TOKEN:-dev-plugin-token}
+      GOTTH_MAIL_NOTIFICATION_EMAIL_FROM: ${GOTTH_MAIL_NOTIFICATION_EMAIL_FROM:-}
+      GOTTH_MAIL_NOTIFICATION_EMAIL_TO: ${GOTTH_MAIL_NOTIFICATION_EMAIL_TO:-}
+      GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT: ${GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT:-}
+      GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE: /run/secrets/notification-signing-key.asc
       # NetSMTPSubmitter is plaintext/no-auth; runtime confines this to a trusted local relay.
-      GMF_NOTIFICATION_EMAIL_SMTP_ADDR: ${GMF_NOTIFICATION_EMAIL_SMTP_ADDR:-postfix:25}
+      GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR: ${GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR:-postfix:25}
     volumes:
       - type: bind
-        source: ${GMF_NOTIFICATION_EMAIL_PRIVATE_KEY_SOURCE:-./secrets/notification-signing-key.asc}
+        source: ${GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_SOURCE:-./secrets/notification-signing-key.asc}
         target: /run/secrets/notification-signing-key.asc
         read_only: true
     depends_on:

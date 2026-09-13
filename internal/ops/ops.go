@@ -5,11 +5,11 @@ import (
 	"strings"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/diag"
-	"forgejo/linus/gophermailforge/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/diag"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
 )
 
 type Status string

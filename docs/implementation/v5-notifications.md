@@ -9,7 +9,7 @@ Implement the notification backend plugin seam with Telegram as the first requir
 
 ## Notification protobuf
 
-Package: `gophermailforge.notification.v1`
+Package: `gotth-mail.notification.v1`
 
 ```proto
 service NotificationBackend {
@@ -87,7 +87,7 @@ Telegram actor mapping is explicit. Chat membership is not authorization. Config
 Mapping sources may include:
 
 - configured chat/user IDs
-- linked GopherMailForge user accounts
+- linked GOTTH Mail user accounts
 - Authentik identities
 - explicit combination of the above
 
@@ -177,17 +177,17 @@ The target implementation contract is [Exact Sender Identity Binding for OpenPGP
 
 Any email notification backend introduced in v5 must OpenPGP-sign every outbound email notification with the responsible user or system notification identity before delivery. Telegram/webhook transports may use their own authenticated transport semantics, but email output is never exempt from the global OpenPGP signing invariant. `notifyruntime.SignedEmailBackend` implements the configured system-identity adapter. It sanitizes the alert, reloads and resolves exact sender lifecycle state for each delivery, constructs RFC 2047/quoted-printable seven-bit MIME with a stable alert-derived Message-ID, signs through `webmail.OpenPGPMIMESigner`, requires one canonical headerless detached-signature armor block containing exactly one SHA-256 packet as advertised by `micalg=pgp-sha256`, cryptographically verifies that hash over the exact raw signed entity through `webmail.OpenPGPMIMEVerifier`, and passes only those verified bytes to a trusted local SMTP relay. Parser shape or a generic cryptographic-validity result alone is not an admission check. Key types whose maintained signing path cannot emit SHA-256 are rejected during configuration and remain permanent fail-closed delivery errors after runtime reload.
 
-`gmf-plugin` exposes this adapter only as the distinct `signed-email-notification-sink` mechanism. The Telegram mechanism retains its existing behavior. The signed-email process requires these settings together:
+`gotth-mail-plugin` exposes this adapter only as the distinct `signed-email-notification-sink` mechanism. The Telegram mechanism retains its existing behavior. The signed-email process requires these settings together:
 
-- `GMF_NOTIFICATION_EMAIL_FROM`
-- `GMF_NOTIFICATION_EMAIL_TO`
-- `GMF_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT`
-- `GMF_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE`
-- `GMF_NOTIFICATION_EMAIL_SMTP_ADDR` as `host:port`
+- `GOTTH_MAIL_NOTIFICATION_EMAIL_FROM`
+- `GOTTH_MAIL_NOTIFICATION_EMAIL_TO`
+- `GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT`
+- `GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE`
+- `GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR` as `host:port`
 
-Startup validates complete configuration. Startup and every delivery load a bounded regular private-key file that is not group/world accessible and require exactly one matching entity, exactly one matching sender user ID, usable unencrypted private signing material, and non-revoked/non-expired identity and key state. Invalid or partial configuration aborts startup; later lifecycle/key-file drift blocks that delivery. `GMF_NOTIFICATION_EMAIL_SMTP_ADDR` is limited to loopback/private IPs or a single-label local service name because the transport has no remote TLS/authentication policy. Literal public IPs and dotted hostnames are rejected; a single-label name delegates trust to the deployment's local/container resolver. This first configured adapter intentionally has no prompt capability.
+Startup validates complete configuration. Startup and every delivery load a bounded regular private-key file that is not group/world accessible and require exactly one matching entity, exactly one matching sender user ID, usable unencrypted private signing material, and non-revoked/non-expired identity and key state. Invalid or partial configuration aborts startup; later lifecycle/key-file drift blocks that delivery. `GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR` is limited to loopback/private IPs or a single-label local service name because the transport has no remote TLS/authentication policy. Literal public IPs and dotted hostnames are rejected; a single-label name delegates trust to the deployment's local/container resolver. This first configured adapter intentionally has no prompt capability.
 
-The adapter is not yet selected by the control-plane application. `cmd/gophermailforge` still builds the default first-mechanism registry, which excludes signed email, and no core alert dispatcher routes to the explicit registration. That routing/selection work remains a feature blocker; the child-process integration proves the standalone plugin adapter, not an end-to-end application notification path.
+The adapter is not yet selected by the control-plane application. `cmd/gotth-mail` still builds the default first-mechanism registry, which excludes signed email, and no core alert dispatcher routes to the explicit registration. That routing/selection work remains a feature blocker; the child-process integration proves the standalone plugin adapter, not an end-to-end application notification path.
 
 Required behavior:
 

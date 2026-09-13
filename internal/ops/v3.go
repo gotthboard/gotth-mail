@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/store"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/store"
 )
 
 type AuditFilter struct {
@@ -1207,7 +1207,7 @@ type V3Runtime struct {
 }
 
 func NewV3Runtime() *V3Runtime {
-	return &V3Runtime{RetentionStore: NewRetentionStore(), ImportStore: NewImportStore(), BulkStore: NewBulkStore(), BackupStore: MemoryBackupStorage{Artifacts: map[string]BackupArtifact{}}, Snapshots: map[string]SnapshotView{"current": {ID: "current", GeneratedConfigSetID: "current", MigrationVersion: "schema_migrations", VerifiedRestoreStatus: "unknown", ImageVersions: []string{"gophermailforge:current"}}}}
+	return &V3Runtime{RetentionStore: NewRetentionStore(), ImportStore: NewImportStore(), BulkStore: NewBulkStore(), BackupStore: MemoryBackupStorage{Artifacts: map[string]BackupArtifact{}}, Snapshots: map[string]SnapshotView{"current": {ID: "current", GeneratedConfigSetID: "current", MigrationVersion: "schema_migrations", VerifiedRestoreStatus: "unknown", ImageVersions: []string{"gotth-mail:current"}}}}
 }
 
 type SQLAuditStore struct{ DB *sql.DB }

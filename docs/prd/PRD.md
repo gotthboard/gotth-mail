@@ -1,10 +1,10 @@
-# GopherMailForge PRD
+# GOTTH Mail PRD
 
 ## Product summary
 
-GopherMailForge is a Docker/Compose-deployed Go mail-server control plane and deployment system using Mailu as the reference architecture and executable behavioral specification. It keeps the proven mail-daemon split while replacing the control plane with typed configuration, explicit contracts, strict validation, observable operations, and containerized plugin boundaries.
+GOTTH Mail is a Docker/Compose-deployed Go mail-server control plane and deployment system using Mailu as the reference architecture and executable behavioral specification. It keeps the proven mail-daemon split while replacing the control plane with typed configuration, explicit contracts, strict validation, observable operations, and containerized plugin boundaries.
 
-GopherMailForge is not a Mailu fork and must not mechanically copy Mailu's Python/Flask/SQLAlchemy behavior.
+GOTTH Mail is not a Mailu fork and must not mechanically copy Mailu's Python/Flask/SQLAlchemy behavior.
 
 ## Required stack
 
@@ -20,7 +20,7 @@ GopherMailForge is not a Mailu fork and must not mechanically copy Mailu's Pytho
 
 ## Reference drafts
 
-GopherMailForge exact-sender OpenPGP/MIME requirements are traced to these local reference drafts:
+GOTTH Mail exact-sender OpenPGP/MIME requirements are traced to these local reference drafts:
 
 - [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md)
 - [Operational Identity History and Audit Indexing for Exact Sender Binding](../reference/openpgp-exact-sender/draft-hunn-exact-sender-operational-identity-history-00.md)
@@ -141,7 +141,7 @@ Do not jump straight into coding. That is how control planes become piles of acc
 
 ## Global outbound email signing invariant
 
-Every outbound email produced or relayed by GopherMailForge must follow [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md) for the asserted sender/user identity. DKIM remains required for domain/server authenticity, but it is not enough: OpenPGP is the exact-user-origin proof.
+Every outbound email produced or relayed by GOTTH Mail must follow [Exact Sender Identity Binding for OpenPGP/MIME Signed Email](../reference/openpgp-exact-sender/draft-hunn-openpgp-exact-sender-signatures-01.md) for the asserted sender/user identity. DKIM remains required for domain/server authenticity, but it is not enough: OpenPGP is the exact-user-origin proof.
 
 The verifier must be able to answer **exactly which configured user identity signed this message**. A valid domain signature, relay signature, shared mailbox signature, or unmapped OpenPGP key is not sufficient. The signing key must be bound to the asserted `From`/`Sender` identity and current user/key state.
 

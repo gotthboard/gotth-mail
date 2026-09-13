@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/identity"
-	"forgejo/linus/gophermailforge/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/ops"
 )
 
 func (s Server) v3Runtime() *ops.V3Runtime {

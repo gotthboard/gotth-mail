@@ -3,7 +3,7 @@ package authn
 import "testing"
 
 func TestAuthentikConfigAndBootstrap(t *testing.T) {
-	c := AuthentikConfig{Enabled: true, BaseURL: "https://auth.example.test", OIDCClientID: "gmf", SCIMBaseURL: "https://auth.example.test/scim", GlobalAdminGroup: "admins", DomainManagerGroup: "managers", ScopedDomainGroupPrefix: "domain-"}
+	c := AuthentikConfig{Enabled: true, BaseURL: "https://auth.example.test", OIDCClientID: "gotth-mail", SCIMBaseURL: "https://auth.example.test/scim", GlobalAdminGroup: "admins", DomainManagerGroup: "managers", ScopedDomainGroupPrefix: "domain-"}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}

@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/render"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/render"
 )
 
 type Gate struct {
