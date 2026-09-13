@@ -21,9 +21,32 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 18:07 CDT — Expose bound app-password self-service
+### 2026-09-13 18:14 CDT — Close identity transaction failure paths
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- OIDC identity-session PostgreSQL tests
+- SCIM/OIDC lifecycle API tests
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added proof that an audit insertion failure rolls back the identity reference
+and session rather than leaving unaudited authority behind. Extended the SCIM
+lifecycle proof to establish that re-enabling a mailbox does not revive a
+session revoked by deprovisioning; a fresh verified login is required.
+
+Verification:
+
+- focused PostgreSQL-backed authn and API tests remain pending on the
+  development host
+- `git diff --check`
+
+### 2026-09-13 18:07 CDT — Expose bound app-password self-service
+
+Commit: `556600ba8887b4d52e7cfe3e0f97eebde27cc7f7`
 
 Affected files:
 

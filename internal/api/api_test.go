@@ -290,6 +290,19 @@ func TestBoundOIDCSessionManagesOnlyOwnAppPasswordsWithCSRF(t *testing.T) {
 	if err := db.QueryRow(`SELECT revoked_at FROM sessions WHERE id=$1`, sessionCookie.Value).Scan(&revoked); err != nil || !revoked.Valid {
 		t.Fatalf("session revoked_at=%#v err=%v", revoked, err)
 	}
+	reenable := authed(http.MethodPatch, "/scim/v2/Users/"+userID, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"active","value":true}]}`, "scim-secret-token")
+	reenabled := httptest.NewRecorder()
+	scimHTTP.ServeHTTP(reenabled, reenable)
+	if reenabled.Code != http.StatusOK {
+		t.Fatalf("re-enable status=%d body=%s", reenabled.Code, reenabled.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/mailboxes/member@example.test/app-passwords", nil)
+	request.AddCookie(sessionCookie)
+	afterReenable := httptest.NewRecorder()
+	h.ServeHTTP(afterReenable, request)
+	if afterReenable.Code != http.StatusUnauthorized {
+		t.Fatalf("SCIM re-enable revived revoked session: status=%d body=%s", afterReenable.Code, afterReenable.Body.String())
+	}
 }
 
 func TestOIDCLoginRouteRequiresBrowserBinding(t *testing.T) {

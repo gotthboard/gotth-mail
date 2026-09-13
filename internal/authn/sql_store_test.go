@@ -123,6 +123,34 @@ func TestSQLStoreIdentityBindingCannotMoveSubjectOrShareMailbox(t *testing.T) {
 	}
 }
 
+func TestSQLStoreIdentityBindingRollsBackWhenAuditFails(t *testing.T) {
+	db := authnTestDB(t)
+	seedSCIMMailbox(t, db, "scope-a", "stable-user", "subject", "member@example.test", true)
+	if _, err := db.Exec(`CREATE FUNCTION reject_oidc_session_audit() RETURNS trigger AS $$
+BEGIN
+  IF NEW.action = 'oidc.session.create' THEN
+    RAISE EXCEPTION 'forced audit failure';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER reject_oidc_session_audit BEFORE INSERT ON audit_events
+FOR EACH ROW EXECUTE FUNCTION reject_oidc_session_audit()`); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(700, 0).UTC()
+	_, err := (SQLStore{DB: db}).PutIdentitySession(context.Background(), Identity{Issuer: "https://auth.example/", Subject: "subject", Email: "member@example.test"}, Session{ID: "must-roll-back", CSRFSecretHash: hashText("csrf"), AuthMethod: "oidc", CreatedAt: now, ExpiresAt: now.Add(time.Hour), LastSeenAt: now})
+	if err == nil || !strings.Contains(err.Error(), "forced audit failure") {
+		t.Fatalf("audit failure not propagated: %v", err)
+	}
+	for _, table := range []string{"identity_refs", "sessions", "audit_events"} {
+		var count int
+		if scanErr := db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); scanErr != nil || count != 0 {
+			t.Fatalf("%s count=%d err=%v after rollback", table, count, scanErr)
+		}
+	}
+}
+
 func seedSCIMMailbox(t *testing.T, db *sql.DB, scope, resourceID, externalID, email string, active bool) {
 	t.Helper()
 	local, domain, ok := strings.Cut(email, "@")
