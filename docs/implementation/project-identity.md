@@ -28,6 +28,6 @@
 - builds of all three renamed commands
 - current-name audit excluding declared historical records
 - Forgejo API and SSH ref parity before and after transfer
-- old Forgejo URL redirect proof
+- old Forgejo API redirect and obsolete Git-transport failure proof
 - GitHub distribution parity, or an explicit blocker if credentials or the
   destination repository do not exist

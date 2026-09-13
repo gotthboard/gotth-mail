@@ -21,6 +21,49 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 14:02 CDT — Admit the canonical Forgejo rename and record the distribution blocker
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `docs/prd/PRD-project-identity.md`
+- `docs/architecture/project-identity.md`
+- `docs/implementation/project-identity.md`
+- `workflow.toml`
+- `workflow.events.jsonl`
+- `workflow/features/project.identity/rename-gotth-mail/evidence/2026-09-13-gotth-mail-rename.md`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Recorded the real post-operation boundary. Forgejo repository ID 46 is now the
+private canonical `gotthboard/gotth-mail` repository, and PR #3 fast-forwarded
+the main-only rename without importing unfinished v2-v5 work. The unfinished
+development line was renamed independently and preserved. Canonical development
+checkout paths and remotes were repaired after the ownership transfer.
+
+Forgejo preserves `301` API redirects for the old owner/name, but SSH Git
+transport to obsolete paths fails closed. More importantly, the required public
+`gotthboard/gotth-mail` GitHub repository is absent or inaccessible, no GitHub
+authentication exists on either execution host, and Forgejo has no push mirror
+for this repository. The project identity feature is therefore `blocked`, not
+falsely marked done. No placeholder repository, credential, or fake mirror was
+invented.
+
+Verification:
+
+- exact Forgejo API identity, ownership, privacy, permissions, description,
+  default branch, old-path behavior, and SSH refs were checked;
+- main-only full tests, race tests, vet, command builds, shell syntax, Compose
+  rendering, deterministic protobuf regeneration, diff check, and current-name
+  audit passed at `e3e660ab33196a92ddad755f72c0a741ecac144d`;
+- the renamed unfinished development line passed the same applicable full,
+  race, vet, build, shell, Compose, diff, and name gates at
+  `26b20599fac8a8ca612259d2ea00d327777878b1`;
+- GitHub destination and Forgejo push-mirror reads independently confirmed the
+  remaining distribution blocker.
+
 ### 2026-09-13 13:47 CDT — Rename the project to GOTTH Mail
 
 Commit: current commit; hash assigned by Git after commit
