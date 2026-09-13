@@ -21,6 +21,40 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 14:02 CDT — Record GOTTH Mail canonical admission boundary
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- project-identity PRD, architecture, implementation, workflow, and evidence
+  records
+- `workflow.events.jsonl`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Recorded the real post-operation boundary on the unfinished development line.
+Forgejo repository ID 46 is now the private canonical
+`gotthboard/gotth-mail` repository. The renamed v2-v5 implementation remains
+separate from `main`, and its previously recovered work is preserved.
+
+Full GOTTH-series admission remains blocked: the matching public GitHub
+repository does not exist or is inaccessible, neither execution host has an
+authenticated GitHub session, and Forgejo has no push mirror configured. The
+identity feature is marked `blocked`; no fake mirror or credential was invented.
+
+Verification:
+
+- full tests, race tests, vet, renamed command builds, shell syntax, Compose
+  rendering, protobuf regeneration, diff check, and current-name audit passed
+  on the renamed development implementation parent
+  `26b20599fac8a8ca612259d2ea00d327777878b1`;
+- admitted `main` and both Forgejo PRs were verified at
+  `fb1fcb893bf47aa00014c1a55b156603d463eb9a`;
+- Forgejo API identity, permissions, old-path behavior, SSH refs, GitHub
+  destination status, and empty push-mirror state were read independently.
+
 ### 2026-09-13 13:44 CDT — Correct renamed exact-sender header tokens
 
 Commit: current commit; hash assigned by Git after commit

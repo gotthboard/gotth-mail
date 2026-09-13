@@ -33,9 +33,11 @@ proof. Old browser sessions and pending Telegram approval callbacks are invalid
 after the rename.
 
 Git history, tags, changelog entries, dated evidence, and append-only workflow
-events are immutable historical records. Forgejo's repository redirect is the
-only old-name compatibility mechanism. No secret, permission, or runtime trust
-boundary changes as part of this rename.
+events are immutable historical records. Forgejo preserves an API redirect for
+the former owner/name, but SSH Git transport does not follow that redirect
+after the ownership transfer; development checkouts must update their remote.
+No secret, permission, or runtime trust boundary changes as part of this
+rename.
 
 ## Integration boundary
 

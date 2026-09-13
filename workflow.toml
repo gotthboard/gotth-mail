@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "project.identity.rename-gotth-mail"
+active_feature = "v5.notifications.openpgp-signed-email"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -108,7 +108,7 @@ required_verification = ["git diff --check", "go test ./...", "notification plug
 [[root_features]]
 id = "project.identity"
 title = "GOTTH Mail Project Identity"
-state = "in_progress"
+state = "blocked"
 prd = "docs/prd/PRD-project-identity.md"
 architecture = "docs/architecture/project-identity.md"
 implementation_spec = "docs/implementation/project-identity.md"
@@ -117,7 +117,7 @@ source_path = "."
 branch = "workflow/feature/project.rename-gotth-mail"
 worktree = "/tank/development/linus/gotth-mail-worktrees/project.identity"
 dependencies = []
-required_verification = ["git diff --check", "go test ./...", "renamed command builds", "current-name audit", "Forgejo ref and redirect proof"]
+required_verification = ["git diff --check", "go test ./...", "renamed command builds", "current-name audit", "Forgejo ref and old-path proof", "GitHub distribution parity"]
 
 [[features]]
 id = "v0.foundation.repo-skeleton"
@@ -135,13 +135,13 @@ verification = ["container build smoke test", "go test ./...", "git diff --check
 id = "project.identity.rename-gotth-mail"
 root = "project.identity"
 title = "Rename the product and admit it to the GOTTH project series"
-state = "in_progress"
+state = "blocked"
 path = "workflow/features/project.identity/rename-gotth-mail"
 source_path = "."
 branch = "workflow/feature/project.rename-gotth-mail"
 dependencies = []
 implementation_spec_sections = ["Required changes", "Verification"]
-verification = ["git diff --check", "go test ./...", "renamed command builds", "protobuf regeneration", "current-name audit", "Forgejo ref and redirect proof"]
+verification = ["git diff --check", "go test ./...", "renamed command builds", "protobuf regeneration", "current-name audit", "Forgejo ref and old-path proof", "GitHub distribution parity"]
 
 [[features]]
 id = "v0.foundation.store-migrations"
