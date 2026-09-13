@@ -21,9 +21,32 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 17:36 CDT — Close app-password validation coverage gaps
+### 2026-09-13 17:51 CDT — Record app-password repair verification and review
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- current app-password/Dovecot feature evidence
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Recorded the exact reviewed head, GOTTH component allocation, migration and
+runtime behavior, PostgreSQL rollback/concurrency proof, full and race suites,
+coverage detail and honest gaps, Graphify artifact, cold-review findings, and
+remaining live-integration constraints. The old July happy-path record remains
+explicitly superseded.
+
+Verification:
+
+- the reviewed `cd172cb4dc2a9a6ff3491073faeba06a7f8f6b16` worktree is clean;
+- focused, full, race, vet, three builds, module, diff, PostgreSQL, Graphify,
+  and cold-review gates pass as enumerated in the feature evidence.
+
+### 2026-09-13 17:36 CDT — Close app-password validation coverage gaps
+
+Commit: `cd172cb4dc2a9a6ff3491073faeba06a7f8f6b16`
 
 Affected files:
 
