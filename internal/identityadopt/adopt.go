@@ -127,9 +127,6 @@ func (s Service) Apply(ctx context.Context, request Request, confirmation string
 	if !equalDigest(plan.PlanID, strings.TrimSpace(confirmation)) {
 		return Result{}, errors.New("confirmation digest does not match current mailbox state")
 	}
-	if plan.AlreadyAdopted {
-		return Result{Plan: plan, ResourceID: plan.ExistingResourceID}, nil
-	}
 	identityService, err := identity.NewSQLService(ctx, s.DB)
 	if err != nil {
 		return Result{}, err
@@ -162,19 +159,24 @@ func (s Service) Apply(ctx context.Context, request Request, confirmation string
 		return Result{}, err
 	}
 	ctx = scimstore.WithRequestMetadata(ctx, authz.Actor{Type: "scim_client", ID: "legacy-mailbox-adoption"}, plan.PlanID, "", "gotth-mailctl")
-	ctx = scimstore.WithLegacyMailboxAdoption(ctx, plan.MailboxID, plan.Mailbox, plan.UpdatedAt)
+	if !plan.AlreadyAdopted {
+		ctx = scimstore.WithLegacyMailboxAdoption(ctx, plan.MailboxID, plan.Mailbox, plan.UpdatedAt)
+	}
 	result, err := reconciler.Reconcile(ctx, gotthscim.ReconcileRequest{Scope: plan.Scope, Manager: plan.Manager, Resources: []gotthscim.DesiredResource{{ResourceType: "User", ExternalID: plan.Subject, Data: document}}})
 	if err != nil {
 		return Result{}, err
 	}
-	if result.Created != 1 {
+	if !plan.AlreadyAdopted && result.Created != 1 {
 		return Result{}, fmt.Errorf("legacy adoption created %d resources, want 1", result.Created)
+	}
+	if plan.AlreadyAdopted && (result.Created != 0 || result.Updated+result.Unchanged != 1) {
+		return Result{}, fmt.Errorf("legacy adoption reconciliation result is invalid")
 	}
 	var resourceID string
 	if err := s.DB.QueryRowContext(ctx, `SELECT id FROM scim_resources WHERE scope=$1 AND resource_type='User' AND external_id=$2 AND manager=$3`, plan.Scope, plan.Subject, plan.Manager).Scan(&resourceID); err != nil {
 		return Result{}, err
 	}
-	return Result{Plan: plan, ResourceID: resourceID, Created: true}, nil
+	return Result{Plan: plan, ResourceID: resourceID, Created: result.Created == 1}, nil
 }
 
 func digestPlan(plan Plan) (string, error) {
