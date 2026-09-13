@@ -307,10 +307,21 @@ Create response exposes plaintext secret once:
 Storage:
 
 - store Authentik-compatible Django encoded verifier/hash strings where password sync or Dovecot verification is intended
+- store the opaque API credential ID in `tokens.public_id` and the human label
+  in `tokens.label`; migration `0005_app_password_contract` backfills legacy
+  app-password public IDs from the old overloaded label field
 - never log plaintext secret
 - never return secret after creation
 - revocation sets `revoked_at`
 - Dovecot passdb validates against the same stored verifier string
+- enforce a maximum of eight active app passwords per mailbox while holding
+  the mailbox row lock; a ninth concurrent or sequential create fails
+- reject startup when persisted active app-password state violates that bound
+
+Configured PostgreSQL create/revoke uses a database transaction that contains
+the token mutation and normalized success audit insert. The process-local
+Dovecot projection changes only after commit. Failure and denied attempts are
+audited through the configured writer, but never called success.
 
 Audit events:
 
@@ -325,11 +336,16 @@ GOTTH pages:
 
 - OIDC/Auth status
 - Authentik role/group mapping
-- SCIM status/test
-- app-password list/create/revoke
+- read-only SCIM capability/status linked to `/scim/v2`; never a second
+  handwritten provisioning path
+- app-password list/create/revoke only after the `gotth-oidc` application
+  session maps through durable identity/role state to the target mailbox
 - permission simulator
 
-All mutations use service/auth/audit paths.
+All mutations use service/auth/audit paths. Before that session binding is
+admitted, the browser UI renders an explicit unavailable status and no
+mutation forms. The scoped bearer API remains the only admitted management
+surface; expecting an HTML form to supply a bearer header is not a design.
 
 ## Plugin identity boundary
 
@@ -363,6 +379,11 @@ Required tests:
   `pbkdf2_sha256` Authentik/Django default profile plus rejection tests for
   unsupported Django hashers
 - app-password create/revoke/list/Dovecot auth with `pbkdf2_sha256` Django encoded verifier/hash storage where applicable
+- stable public ID and human label persistence across restart
+- atomic SQL create/revoke plus success audit, including rollback injection
+- eight-active-credential boundary under concurrent creation and startup
+- runtime UI uses the configured identity service and exposes no fake SCIM or
+  unauthenticatable app-password mutation path
 - every identity/provisioning mutation audited
 - `git diff --check`
 - `go test ./...`

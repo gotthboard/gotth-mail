@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "v2.identity-provisioning.scim"
+active_feature = "v2.identity-provisioning.app-passwords-ui"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -407,7 +407,7 @@ source_path = "internal/httpui"
 branch = "workflow/feature/v2.identity-provisioning.app-passwords-ui"
 dependencies = ["v2.identity-provisioning.scim", "v1.mail-core.daemon-contracts"]
 implementation_spec_sections = ["App passwords / mail-client tokens", "Identity UI", "Plugin identity boundary"]
-verification = ["create/revoke/list tests", "Dovecot Authentik-compatible verifier tests", "secret-once/no-plaintext/Django-hash-format tests", "identity UI service/auth/audit tests", "go test ./...", "git diff --check"]
+verification = ["create/revoke/list tests", "stable public ID and label restart tests", "atomic SQL credential/audit rollback tests", "eight-active concurrent and startup bound tests", "Dovecot Authentik-compatible bounded verifier tests", "secret-once/no-plaintext/Django-hash-format tests", "runtime configured identity service test", "no fake SCIM or unauthenticatable browser mutation forms", "go test ./...", "go test -race ./...", "git diff --check"]
 
 [[features]]
 id = "v3.ops-import-admin.audit-backup-snapshots"

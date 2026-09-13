@@ -21,9 +21,43 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 16:29 CDT — Adopt gotth-scim with atomic PostgreSQL projection
+### 2026-09-13 17:05 CDT — Reconcile app-password and Dovecot admission contract
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- identity PRD, architecture, implementation specification, and GOTTH stack
+  adoption contract
+- app-password feature README and workflow manifest
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Corrected the app-password slice before implementation. The contract now
+separates opaque public credential IDs from human labels, bounds active
+credentials to eight per mailbox, requires atomic PostgreSQL credential and
+success-audit admission, and makes the post-commit Dovecot projection and
+startup validation explicit.
+
+The browser contract no longer pretends ordinary HTML forms can provide API
+bearer headers or that an in-process mailbox helper is a SCIM test. Until a
+verified `gotth-oidc` session is durably bound to mailbox and role state, the
+identity UI must remain read-only and direct authorized automation to the
+scoped API. The GOTTH adoption record now states exactly why `gotth-oidc` and
+`gotth-scim` are relevant and why no unrelated `gotth-*` package belongs in
+the synchronous credential path.
+
+Verification:
+
+- documentation and workflow references were reconciled against the current
+  runtime, SQL schema, adopted library boundaries, and dependent live
+  Authentik feature;
+- implementation and full verification remain pending in this feature branch.
+
+### 2026-09-13 16:29 CDT — Adopt gotth-scim with atomic PostgreSQL projection
+
+Commit: `78b11594abdbb89a37c39151cf6a88ebd17ef833`
 
 Affected files:
 
