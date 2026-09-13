@@ -115,12 +115,12 @@ Fresh SCIM-created resources and renames never use an email address as their ID.
 No reusable `gotth-*` repository currently owns app-password generation,
 Django PBKDF2 verification, or Dovecot passdb policy. GOTTH Mail therefore
 keeps those mechanisms in core instead of importing a decorative dependency.
-The already-adopted `gotth-oidc` library will supply the verified browser
-identity facts used by future self-service; `gotth-scim` supplies the mailbox
-provisioning identity. Binding those two opaque identities to a mailbox and
-roles remains product policy and must be proven before browser mutation is
-enabled. `gotth-jobs` is excluded because credential creation, revocation, and
-success audit admission must be synchronous and atomic.
+The already-adopted `gotth-oidc` library supplies the verified browser identity
+facts used by self-service; `gotth-scim` supplies the authoritative User and
+mailbox provisioning identity. GOTTH Mail binds those two opaque identities to
+one mailbox transactionally before enabling browser mutation. `gotth-jobs` is
+excluded because credential creation, revocation, and success audit admission
+must be synchronous and atomic.
 
 The 1.0-alpha live-binding slice composes the two admitted libraries without
 making either one lie about its boundary: `gotth-oidc` supplies only verified
@@ -135,6 +135,23 @@ candidate for desired-state application/provider/group management, but it has
 no admitted license or release. Copying it or importing it merely to increase
 the `gotth-*` count would violate the same component contract this document is
 meant to enforce.
+
+## Live Authentik rename status
+
+The public provider probe on 2026-09-13 found:
+
+- `https://auth.dannyhunn.com/application/o/gotth-mail/.well-known/openid-configuration`
+  returns HTTP 404;
+- `https://auth.dannyhunn.com/application/o/gophermailforge/.well-known/openid-configuration`
+  returns HTTP 200 and advertises the historical issuer.
+
+The local consumer mechanism is therefore admissible, but the live provider is
+not renamed and no live `gotth-mail` authorization-code, provisioning, or
+deprovisioning proof exists yet. The fix belongs in the Authentik desired-state
+profile after `gotth-authentik` has an owner-selected license and admitted
+release, or through an explicitly reviewed manual provider migration. Pointing
+the new product silently at the old issuer would preserve stale identity
+namespaces and is not an acceptable completion claim.
 
 The present Dovecot verifier projection is deliberately bounded to eight
 active app passwords per mailbox. That retains opaque random one-time secrets

@@ -1,5 +1,10 @@
 # v2 full-finish blockers
 
+> Superseded for current status by
+> [2026-09-13-live-identity-binding.md](2026-09-13-live-identity-binding.md).
+> This file is retained as historical evidence; its `GMF_*`, GopherMailForge,
+> group-claim, and memory-only gap statements are not current contracts.
+
 Status: planned/incomplete after full-finish audit.
 
 Required before v2 can honestly return to done:

@@ -21,9 +21,35 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 18:25 CDT — Remove unavailable self-service link
+### 2026-09-13 18:38 CDT — Reconcile identity evidence and live provider status
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- root blocker summary and GOTTH component adoption reference
+- identity coverage map and current live-binding evidence
+- historical blocker supersession marker
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Replaced stale pre-rename and pre-library-adoption status with the verified
+current boundary. The documents now record durable OIDC-to-SCIM binding,
+transactional session invalidation, session-bound app-password self-service,
+the full/race/PostgreSQL gates, focused coverage, and the code graph. Public
+provider probes are recorded without bluffing: the desired `gotth-mail`
+issuer returns 404 while the historical GopherMailForge issuer remains live.
+
+Verification:
+
+- documentation reconciled against source, tests, PostgreSQL results, public
+  discovery responses, and the code-only Graphify artifact
+- `git diff --check`: pass
+
+### 2026-09-13 18:25 CDT — Remove unavailable self-service link
+
+Commit: `846683cdef79b0a4c2ad667492c9486f2f40586d`
 
 Affected files:
 
