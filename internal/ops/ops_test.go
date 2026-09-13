@@ -91,7 +91,7 @@ func TestQueueMutationsRequireConfirmationAndAudit(t *testing.T) {
 
 func TestSnapshotIsNotRollback(t *testing.T) {
 	now := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
-	s := CaptureSnapshot("set1", "schema_migrations", "policy", []string{"gotth-mail:v1"}, []string{"external-webmail:v0"}, now)
+	s := CaptureSnapshot("set1", "schema_migrations", "policy", []string{"gotth-mail:1.0.0-alpha.1"}, []string{"external-webmail:test-fixture"}, now)
 	if s.IsRollback || s.Timestamp != now || s.GeneratedConfigSetID != "set1" {
 		t.Fatalf("snapshot=%#v", s)
 	}

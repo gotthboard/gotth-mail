@@ -25,3 +25,19 @@ func TestTag(t *testing.T) {
 		t.Fatal("development build produced a release tag")
 	}
 }
+
+func TestStage(t *testing.T) {
+	t.Parallel()
+	for value, want := range map[string]string{
+		"dev": "development", "1.0.0-alpha.2": "alpha",
+		"1.0.0-beta.4": "beta", "1.0.0": "stable",
+	} {
+		got, err := Stage(value)
+		if err != nil || got != want {
+			t.Errorf("Stage(%q) = (%q, %v), want %q", value, got, err, want)
+		}
+	}
+	if _, err := Stage("v1.0.0"); err == nil {
+		t.Fatal("invalid build version has a release stage")
+	}
+}

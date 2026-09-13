@@ -106,6 +106,16 @@ plugins:
 	}
 }
 
+func TestStatusReportsReleaseIdentity(t *testing.T) {
+	t.Parallel()
+	h := (Server{}).Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"status":"development"`) || !strings.Contains(rr.Body.String(), `"version":"dev"`) || !strings.Contains(rr.Body.String(), `"mail_stack_complete":false`) {
+		t.Fatalf("status response = %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 type apiOIDCExchange struct{ token string }
 
 func (f apiOIDCExchange) ExchangeCode(ctx context.Context, req authn.TokenRequest) (authn.TokenResponse, error) {

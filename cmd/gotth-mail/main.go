@@ -19,9 +19,13 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/diag"
 	"forgejo/gotthboard/gotth-mail/internal/httpui"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/version"
 )
 
 func main() {
+	if err := version.Validate(version.Version); err != nil {
+		log.Fatal(err)
+	}
 	mux := http.NewServeMux()
 	server := api.Server{Authz: authz.StaticAuthorizer{}}
 	if os.Getenv("GOTTH_MAIL_REFERENCE_FIXTURE") == "1" {

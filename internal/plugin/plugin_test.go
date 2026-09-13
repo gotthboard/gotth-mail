@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	buildversion "forgejo/gotthboard/gotth-mail/internal/version"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -20,7 +21,7 @@ func TestAuthenticatedPluginControl(t *testing.T) {
 	if h, err := r.Health(context.Background(), "stub", req()); err != nil || !h.Healthy {
 		t.Fatalf("health %v %v", h, err)
 	}
-	if v, err := r.Version(context.Background(), "stub", req()); err != nil || v.Version == "" {
+	if v, err := r.Version(context.Background(), "stub", req()); err != nil || v.Version != buildversion.Version {
 		t.Fatalf("version %v %v", v, err)
 	}
 	if c, err := r.Capabilities(context.Background(), "stub", req()); err != nil || len(c.Capabilities) != 1 {

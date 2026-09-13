@@ -40,3 +40,20 @@ func Tag(value string) (string, error) {
 	}
 	return "v" + value, nil
 }
+
+// Stage returns the release state represented by a valid build identity.
+func Stage(value string) (string, error) {
+	if err := Validate(value); err != nil {
+		return "", err
+	}
+	switch {
+	case value == "dev":
+		return "development", nil
+	case strings.Contains(value, "-alpha."):
+		return "alpha", nil
+	case strings.Contains(value, "-beta."):
+		return "beta", nil
+	default:
+		return "stable", nil
+	}
+}

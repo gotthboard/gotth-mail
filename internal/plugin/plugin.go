@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"forgejo/gotthboard/gotth-mail/internal/version"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -101,7 +102,7 @@ func (r Registry) Version(ctx context.Context, name string, req Request) (Versio
 	if err != nil {
 		return VersionResponse{}, err
 	}
-	return VersionResponse{p.Name, "v0"}, nil
+	return VersionResponse{p.Name, version.Version}, nil
 }
 func (r Registry) Capabilities(ctx context.Context, name string, req Request) (CapabilitiesResponse, error) {
 	p, err := r.auth(ctx, name, req)

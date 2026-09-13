@@ -20,6 +20,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/ops"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/render"
+	"forgejo/gotthboard/gotth-mail/internal/version"
 	"forgejo/gotthboard/gotth-mail/internal/webmail"
 )
 
@@ -68,7 +69,12 @@ func (s Server) Handler() http.Handler {
 		if !method(w, r, "GET") {
 			return
 		}
-		writeJSON(w, map[string]any{"status": "v0-foundation", "mail_stack_complete": false})
+		stage, err := version.Stage(version.Version)
+		if err != nil {
+			http.Error(w, "invalid build identity", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"status": stage, "version": version.Version, "mail_stack_complete": stage == "stable"})
 	})
 	mux.HandleFunc("/api/v1/oidc/login", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {

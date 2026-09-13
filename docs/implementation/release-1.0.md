@@ -16,6 +16,9 @@ Git tags add the conventional `v` prefix. `v1.0.0-alpha.1` therefore embeds
 `1.0.0-alpha.1`. Release builds set
 `forgejo/gotthboard/gotth-mail/internal/version.Version` with `-ldflags -X`,
 then run `gotth-mailctl version` and compare the exact result to the tag.
+The control-plane status API and plugin Version RPC expose the same linked
+identity. Every executable rejects an invalid linked version before serving or
+mutating state.
 
 ## OIDC adoption
 

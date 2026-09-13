@@ -9,6 +9,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/notification"
 	"forgejo/gotthboard/gotth-mail/internal/notifyruntime"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/version"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -22,6 +23,9 @@ func main() {
 }
 
 func run() error {
+	if err := version.Validate(version.Version); err != nil {
+		return err
+	}
 	name := os.Getenv("GOTTH_MAIL_PLUGIN_NAME")
 	if name == "" {
 		return fmt.Errorf("GOTTH_MAIL_PLUGIN_NAME required")

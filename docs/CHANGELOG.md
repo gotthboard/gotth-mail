@@ -21,6 +21,30 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 15:21 CDT — Remove remaining hard-coded v0 runtime identity
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/version`, `internal/api`, and `internal/plugin`
+- `cmd/gotth-mail` and `cmd/gotth-mail-plugin`
+- release implementation specification and `docs/CHANGELOG.md`
+
+Explanation:
+
+Cold review found that the first release-contract pass constrained the CLI
+version but left the status API reporting `v0-foundation` and the plugin
+Version RPC reporting `v0`. Those strings would have kept the false old product
+version alive. All executable entry points now reject invalid linked release
+identity, and the status API, CLI, and plugin RPC report the same development,
+alpha, beta, or stable build identity.
+
+Verification:
+
+- focused version, API, plugin, and command tests pass before the final full
+  development-host rerun.
+
 ### 2026-09-13 15:08 CDT — Define the 1.0 release line and pin GOTTH identity libraries
 
 Commit: current commit; hash assigned by Git after commit
