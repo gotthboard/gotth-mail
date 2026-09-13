@@ -36,8 +36,14 @@ func TestMigrateSQLOnPostgres(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO oidc_login_states(state_hash, nonce_ciphertext, pkce_verifier_ciphertext, context_ciphertext, browser_binding_hash, redirect_after_login, created_at, expires_at) VALUES (decode(repeat('00',32),'hex'),decode(repeat('00',72),'hex'),decode(repeat('00',72),'hex'),'context',decode(repeat('00',32),'hex'),'/',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + interval '10 minutes')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO sessions(id, identity_ref_id, csrf_secret_hash, auth_method, created_at, expires_at, last_seen_at) VALUES ('sess','authentik|sub','csrf','oidc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO identity_refs(id,provider,issuer,subject,created_at,updated_at) VALUES ('00000000-0000-0000-0000-000000000006','local','local','operator',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions(id, identity_ref_id, csrf_secret_hash, auth_method, created_at, expires_at, last_seen_at) VALUES ('sess','00000000-0000-0000-0000-000000000006','csrf','local',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions(id, identity_ref_id, csrf_secret_hash, auth_method, created_at, expires_at, last_seen_at) VALUES ('bad-session','00000000-0000-0000-0000-000000009999','csrf','oidc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err == nil {
+		t.Fatal("expected session identity foreign-key constraint")
 	}
 	if _, err := db.Exec(`INSERT INTO webmail_drafts(id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, created_at, updated_at) VALUES ('draft-a','user@example.test','to@example.test','s','b','fp','draft',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
 		t.Fatal(err)

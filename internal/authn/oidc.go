@@ -56,11 +56,23 @@ type Session struct {
 	AuthMethod     string
 }
 
+type BoundSession struct {
+	Session
+	Issuer  string
+	Subject string
+	Mailbox string
+}
+
 type StateStore interface {
 	PutAttempt(context.Context, LoginAttempt) error
 	ConsumeAttempt(context.Context, string, string, time.Time) (LoginAttempt, error)
 	PutSession(context.Context, Session) error
 	Session(context.Context, string) (Session, bool)
+}
+
+type IdentitySessionStore interface {
+	PutIdentitySession(context.Context, Identity, Session) (Session, error)
+	BoundSession(context.Context, string, time.Time) (BoundSession, bool)
 }
 
 type Store struct {
@@ -154,6 +166,7 @@ type CallbackResult struct {
 	Identity           Identity
 	Session            Session
 	RedirectAfterLogin string
+	CSRFSecret         string
 }
 
 // StartLogin is O(1) aside from the library's fixed-size cryptography and one
@@ -219,14 +232,22 @@ func CompleteCallback(ctx context.Context, client OIDCClient, store StateStore, 
 		return CallbackResult{}, err
 	}
 	session := Session{
-		ID: sessionID, IdentityRefID: identity.Issuer + "|" + identity.Subject,
+		ID:        sessionID,
 		CreatedAt: now.UTC(), ExpiresAt: now.UTC().Add(12 * time.Hour), LastSeenAt: now.UTC(),
 		CSRFSecretHash: hashText(csrfSecret), AuthMethod: "oidc",
 	}
-	if err := store.PutSession(ctx, session); err != nil {
-		return CallbackResult{}, err
+	if boundStore, ok := store.(IdentitySessionStore); ok {
+		session, err = boundStore.PutIdentitySession(ctx, identity, session)
+		if err != nil {
+			return CallbackResult{}, err
+		}
+	} else {
+		session.IdentityRefID = identity.Issuer + "|" + identity.Subject
+		if err := store.PutSession(ctx, session); err != nil {
+			return CallbackResult{}, err
+		}
 	}
-	return CallbackResult{Identity: identity, Session: session, RedirectAfterLogin: attempt.RedirectAfterLogin}, nil
+	return CallbackResult{Identity: identity, Session: session, RedirectAfterLogin: attempt.RedirectAfterLogin, CSRFSecret: csrfSecret}, nil
 }
 
 func localRedirect(value string) (string, error) {
@@ -256,6 +277,14 @@ func NewBrowserBinding() (string, error) { return randomToken(32) }
 func hashText(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
+func ValidCSRF(session Session, secret string) bool {
+	if secret == "" || session.CSRFSecretHash == "" {
+		return false
+	}
+	want := hashText(secret)
+	return subtle.ConstantTimeCompare([]byte(want), []byte(session.CSRFSecretHash)) == 1
 }
 
 func SafeOIDCError(err error) string {

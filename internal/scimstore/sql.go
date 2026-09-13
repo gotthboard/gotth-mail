@@ -195,6 +195,19 @@ func (tx *transaction) Replace(record gotthscim.Record, expectedVersion string) 
 	if !record.Created.Equal(current.Created) || record.Manager != current.Manager {
 		return fmt.Errorf("SCIM record creation time and manager are immutable")
 	}
+	if current.ExternalID != record.ExternalID {
+		var bound bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS (
+			SELECT 1 FROM identity_refs ir
+			JOIN mailboxes m ON m.id=ir.mailbox_id
+			WHERE ir.provider='authentik' AND m.scim_resource_id=$1
+		)`, record.ID).Scan(&bound); err != nil {
+			return err
+		}
+		if bound {
+			return gotthscim.ErrConflict
+		}
+	}
 	if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE scim_resources SET external_id=$1, version=$2, credential_version=$3, last_modified_unix_nano=$4, data=$5 WHERE scope=$6 AND resource_type=$7 AND id=$8`, record.ExternalID, record.Version, record.CredentialVersion, record.LastModified.UnixNano(), record.Data, record.Scope, record.ResourceType, record.ID); err != nil {
 		return err
 	}
@@ -392,6 +405,11 @@ func (tx *transaction) persistMailbox(record gotthscim.Record, previousEmail str
 	if _, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO mailboxes(id, domain_id, local_part, display_name, enabled, verifier, created_at, updated_at, scim_resource_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO UPDATE SET domain_id=EXCLUDED.domain_id, local_part=EXCLUDED.local_part, display_name=EXCLUDED.display_name, enabled=EXCLUDED.enabled, verifier=EXCLUDED.verifier, updated_at=EXCLUDED.updated_at, scim_resource_id=EXCLUDED.scim_resource_id`, mailboxID, domainID, local, nullableString(mailbox.DisplayName), mailbox.Active, nullableString(mailbox.Verifier), mailbox.CreatedAt, mailbox.UpdatedAt, record.ID); err != nil {
 		return mapStoreError(err)
 	}
+	if !mailbox.Active {
+		if err := tx.revokeSessionsForSCIMID(record.ID, mailbox.UpdatedAt); err != nil {
+			return err
+		}
+	}
 	if previousEmail != "" && !strings.EqualFold(previousEmail, mailbox.Email) {
 		scopeJSON, err := json.Marshal([]string{"mailbox:" + mailbox.Email + ":app_password"})
 		if err != nil {
@@ -420,8 +438,22 @@ func (tx *transaction) disableProjection(record gotthscim.Record, now time.Time)
 	if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE mailboxes SET enabled=false, updated_at=$1 WHERE scim_resource_id=$2`, now, record.ID); err != nil {
 		return err
 	}
+	if err := tx.revokeSessionsForSCIMID(record.ID, now); err != nil {
+		return err
+	}
 	tx.project = append(tx.project, mailboxProjection{previousEmail: previousEmail, mailbox: mailbox})
 	return nil
+}
+
+func (tx *transaction) revokeSessionsForSCIMID(resourceID string, now time.Time) error {
+	_, err := tx.tx.ExecContext(tx.ctx, `UPDATE sessions
+		SET revoked_at=$1
+		WHERE revoked_at IS NULL AND identity_ref_id IN (
+			SELECT ir.id FROM identity_refs ir
+			JOIN mailboxes m ON m.id=ir.mailbox_id
+			WHERE ir.provider='authentik' AND m.scim_resource_id=$2
+		)`, now, resourceID)
+	return err
 }
 
 func (tx *transaction) audit(action string, before, after gotthscim.Record) error {

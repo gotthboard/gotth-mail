@@ -76,7 +76,7 @@ func TestMigrateSQLUpgradesRealBaseLedgerAndPersistsEvidence(t *testing.T) {
 	}
 }
 
-func TestOIDCProtectedAttemptsMigrationInvalidatesLegacyInflightState(t *testing.T) {
+func TestOIDCBindingMigrationInvalidatesUnboundLegacyAttemptsAndSessions(t *testing.T) {
 	db := testpg.DB(t, func(ctx context.Context, db *sql.DB) error {
 		if err := createBaseLedger(ctx, db); err != nil {
 			return err
@@ -99,10 +99,20 @@ func TestOIDCProtectedAttemptsMigrationInvalidatesLegacyInflightState(t *testing
 	if err := db.QueryRow(`SELECT count(*) FROM sessions WHERE id='existing-session'`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Fatalf("protected-attempt migration removed existing sessions: %d", count)
+	if count != 0 {
+		t.Fatalf("unbound legacy session survived identity-binding migration: %d", count)
 	}
 	assertProtectedOIDCAttemptColumns(t, db)
+	var dataType string
+	if err := db.QueryRow(`SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='sessions' AND column_name='identity_ref_id'`).Scan(&dataType); err != nil {
+		t.Fatal(err)
+	}
+	if dataType != "uuid" {
+		t.Fatalf("sessions.identity_ref_id type=%q want uuid", dataType)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions(id,identity_ref_id,csrf_secret_hash,auth_method,created_at,expires_at,last_seen_at) VALUES ('bad','00000000-0000-0000-0000-000000000999','csrf','oidc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + interval '1 hour',CURRENT_TIMESTAMP)`); err == nil {
+		t.Fatal("session foreign key accepted missing identity")
+	}
 }
 
 func TestSCIMResourcesMigrationCreatesOpaqueDurableStore(t *testing.T) {

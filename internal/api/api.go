@@ -170,6 +170,7 @@ func (s Server) Handler() http.Handler {
 			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: "gotth_mail_session", Value: res.Session.ID, Path: "/", HttpOnly: true, Secure: secureCookieFor(s.OIDCRedirectURI), SameSite: http.SameSiteStrictMode, Expires: res.Session.ExpiresAt})
+		http.SetCookie(w, &http.Cookie{Name: "gotth_mail_csrf", Value: res.CSRFSecret, Path: "/", HttpOnly: false, Secure: secureCookieFor(s.OIDCRedirectURI), SameSite: http.SameSiteStrictMode, Expires: res.Session.ExpiresAt})
 		if browserCallback {
 			http.SetCookie(w, &http.Cookie{Name: "gotth_mail_oidc_binding", Value: "", Path: "/api/v1/oidc", HttpOnly: true, Secure: secureCookieFor(s.OIDCRedirectURI), SameSite: http.SameSiteLaxMode, MaxAge: -1})
 			target := res.RedirectAfterLogin

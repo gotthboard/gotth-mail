@@ -188,6 +188,110 @@ func TestOIDCBrowserRedirectLoginAndGETCallback(t *testing.T) {
 	}
 }
 
+func TestBoundOIDCSessionManagesOnlyOwnAppPasswordsWithCSRF(t *testing.T) {
+	db, ids, _, scimHTTP := scimTestHandler(t, nil)
+	create := authed(http.MethodPost, "/scim/v2/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"externalId":"bound-subject","userName":"member@example.test","active":true}`, "scim-secret-token")
+	rr := httptest.NewRecorder()
+	scimHTTP.ServeHTTP(rr, create)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("SCIM create status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	userID := responseID(t, rr.Body.String())
+	now := time.Unix(1700, 0).UTC()
+	state := "bound-state"
+	attempt := gotthoidc.ProtectedAttempt{StateHash: sha256.Sum256([]byte(state)), ContextCiphertext: "protected-context"}
+	attempt.NonceCiphertext[0] = 1
+	attempt.PKCEVerifierCiphertext[0] = 2
+	email := "member@example.test"
+	client := &apiOIDCClient{
+		authorization: gotthoidc.Authorization{URL: "https://auth.example.test/application/o/authorize/?state=" + state + "&nonce=nonce&code_challenge=challenge&code_challenge_method=S256", Attempt: attempt},
+		identity:      gotthoidc.Identity{Issuer: "https://auth.example.test/application/o/gotth-mail/", Subject: "bound-subject", Email: &email},
+	}
+	server := Server{OIDCClient: client, OIDCStore: authn.SQLStore{DB: db}, OIDCRedirectURI: "http://127.0.0.1:18080/api/v1/oidc/callback", OIDCNow: func() time.Time { return now }, Identity: ids, Authz: authz.StaticAuthorizer{}}
+	h := server.Handler()
+	login := httptest.NewRecorder()
+	h.ServeHTTP(login, httptest.NewRequest(http.MethodGet, "/api/v1/oidc/login?mode=redirect", nil))
+	var binding *http.Cookie
+	for _, cookie := range login.Result().Cookies() {
+		if cookie.Name == "gotth_mail_oidc_binding" {
+			binding = cookie
+		}
+	}
+	if login.Code != http.StatusFound || binding == nil {
+		t.Fatalf("login status=%d cookies=%#v", login.Code, login.Result().Cookies())
+	}
+	callbackRequest := httptest.NewRequest(http.MethodGet, "/api/v1/oidc/callback?state="+state+"&code=code", nil)
+	callbackRequest.AddCookie(binding)
+	callback := httptest.NewRecorder()
+	h.ServeHTTP(callback, callbackRequest)
+	var sessionCookie, csrfCookie *http.Cookie
+	for _, cookie := range callback.Result().Cookies() {
+		switch cookie.Name {
+		case "gotth_mail_session":
+			sessionCookie = cookie
+		case "gotth_mail_csrf":
+			csrfCookie = cookie
+		}
+	}
+	if callback.Code != http.StatusSeeOther || sessionCookie == nil || csrfCookie == nil || csrfCookie.HttpOnly {
+		t.Fatalf("callback status=%d cookies=%#v body=%s", callback.Code, callback.Result().Cookies(), callback.Body.String())
+	}
+	for _, secret := range []string{sessionCookie.Value, csrfCookie.Value} {
+		if strings.Contains(callback.Body.String(), secret) {
+			t.Fatalf("callback disclosed cookie secret %q", secret)
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/mailboxes/member@example.test/app-passwords", strings.NewReader(`{"label":"phone"}`))
+	request.AddCookie(sessionCookie)
+	missingCSRF := httptest.NewRecorder()
+	h.ServeHTTP(missingCSRF, request)
+	if missingCSRF.Code != http.StatusForbidden {
+		t.Fatalf("missing CSRF status=%d body=%s", missingCSRF.Code, missingCSRF.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/mailboxes/member@example.test/app-passwords", strings.NewReader(`{"label":"phone"}`))
+	request.AddCookie(sessionCookie)
+	request.AddCookie(csrfCookie)
+	request.Header.Set("X-CSRF-Token", csrfCookie.Value)
+	created := httptest.NewRecorder()
+	h.ServeHTTP(created, request)
+	if created.Code != http.StatusOK || !strings.Contains(created.Body.String(), `"secret_once"`) {
+		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/mailboxes/other@example.test/app-passwords", nil)
+	request.AddCookie(sessionCookie)
+	crossMailbox := httptest.NewRecorder()
+	h.ServeHTTP(crossMailbox, request)
+	if crossMailbox.Code != http.StatusForbidden {
+		t.Fatalf("cross-mailbox status=%d body=%s", crossMailbox.Code, crossMailbox.Body.String())
+	}
+	reassign := authed(http.MethodPut, "/scim/v2/Users/"+userID, `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"externalId":"other-subject","userName":"member@example.test","active":true}`, "scim-secret-token")
+	reassigned := httptest.NewRecorder()
+	scimHTTP.ServeHTTP(reassigned, reassign)
+	if reassigned.Code != http.StatusConflict {
+		t.Fatalf("bound externalId reassignment status=%d body=%s", reassigned.Code, reassigned.Body.String())
+	}
+
+	disable := authed(http.MethodPatch, "/scim/v2/Users/"+userID, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"active","value":false}]}`, "scim-secret-token")
+	disabled := httptest.NewRecorder()
+	scimHTTP.ServeHTTP(disabled, disable)
+	if disabled.Code != http.StatusOK {
+		t.Fatalf("disable status=%d body=%s", disabled.Code, disabled.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/mailboxes/member@example.test/app-passwords", nil)
+	request.AddCookie(sessionCookie)
+	afterDisable := httptest.NewRecorder()
+	h.ServeHTTP(afterDisable, request)
+	if afterDisable.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled mailbox retained session authority: status=%d body=%s", afterDisable.Code, afterDisable.Body.String())
+	}
+	var revoked sql.NullTime
+	if err := db.QueryRow(`SELECT revoked_at FROM sessions WHERE id=$1`, sessionCookie.Value).Scan(&revoked); err != nil || !revoked.Valid {
+		t.Fatalf("session revoked_at=%#v err=%v", revoked, err)
+	}
+}
+
 func TestOIDCLoginRouteRequiresBrowserBinding(t *testing.T) {
 	h := Server{OIDCClient: &apiOIDCClient{}}.Handler()
 	rr := httptest.NewRecorder()

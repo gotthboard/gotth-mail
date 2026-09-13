@@ -79,3 +79,22 @@ func TestAuthentikAdminsGroupMapsToGlobalAdmin(t *testing.T) {
 		t.Fatalf("decision=%#v", dec)
 	}
 }
+
+func TestBoundOIDCSubjectMayManageOnlyItsOwnAppPasswords(t *testing.T) {
+	az := StaticAuthorizer{}
+	actor := Actor{Type: "oidc_subject", ID: "identity-1", Mailbox: "member@example.test"}
+	for _, action := range []Action{"mailbox:app_password.read", "mailbox:app_password.create", "mailbox:app_password.revoke"} {
+		decision, err := az.Decide(context.Background(), actor, action, Resource{Type: "mailbox", ID: "MEMBER@example.test"})
+		if err != nil || !decision.Allow {
+			t.Fatalf("own %s decision=%#v err=%v", action, decision, err)
+		}
+		decision, err = az.Decide(context.Background(), actor, action, Resource{Type: "mailbox", ID: "other@example.test"})
+		if err != nil || decision.Allow {
+			t.Fatalf("cross-mailbox %s decision=%#v err=%v", action, decision, err)
+		}
+	}
+	decision, err := az.Decide(context.Background(), actor, "mailbox:admin", Resource{Type: "mailbox", ID: "member@example.test"})
+	if err != nil || decision.Allow {
+		t.Fatalf("unrelated own-mailbox authority decision=%#v err=%v", decision, err)
+	}
+}

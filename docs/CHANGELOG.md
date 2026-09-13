@@ -21,6 +21,34 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 17:48 CDT — Bind OIDC sessions to SCIM mailboxes
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- migration `0006_oidc_scim_identity_binding`
+- identity session, API authentication, authorization, and SCIM projection
+- PostgreSQL migration, binding, lifecycle, CSRF, and authorization tests
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added the durable composition between the admitted OIDC and SCIM consumers.
+The SQL callback path now requires one active SCIM User whose external ID and
+mailbox match the verified OIDC subject and email, then commits the identity
+reference, foreign-keyed session, and redacted audit together. Bound sessions
+receive only same-mailbox app-password authority and browser mutations require
+a separate CSRF cookie/header proof. SCIM disable/delete revokes dependent
+sessions, and a bound User external ID cannot be reassigned silently.
+
+Verification:
+
+- focused authn/authz/API/SCIM/store tests on the constrained agent host
+- `git diff --check`
+- full PostgreSQL, race, and complete-tree gates remain pending on the
+  development host
+
 ### 2026-09-13 17:37 CDT — Reconcile live OIDC/SCIM identity binding
 
 Commit: current commit; hash assigned by Git after commit

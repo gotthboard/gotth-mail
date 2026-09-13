@@ -7,6 +7,7 @@ import (
 
 type Actor struct {
 	Type, ID string
+	Mailbox  string
 	Scopes   []string
 	Groups   []string
 }
@@ -100,6 +101,12 @@ func (s StaticAuthorizer) Explain(ctx context.Context, a Actor, act Action, r Re
 }
 
 func (s StaticAuthorizer) explainOIDC(ex Explanation, a Actor, act Action, r Resource) (Explanation, error) {
+	if a.Mailbox != "" && strings.EqualFold(a.Mailbox, r.ID) && hasPrefix(act, "mailbox:app_password.") {
+		ex.Decision = Decision{true, "OIDC subject may manage app passwords for its bound mailbox"}
+		ex.MatchedRules = []string{"oidc:bound_mailbox:app_password"}
+		ex.Steps = append(ex.Steps, "bound mailbox matched")
+		return ex, nil
+	}
 	roles := s.rolesFor(a)
 	if roles[RoleGlobalAdmin]["*"] {
 		ex.Decision = Decision{true, "global admin role matched"}

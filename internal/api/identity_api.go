@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authn"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 )
 
@@ -47,10 +49,14 @@ func (s Server) registerIdentityAPI(mux *http.ServeMux, auditLog *audit.MemoryWr
 			return
 		}
 		mailboxID := parts[0]
-		actor, err := ids.AuthenticateBearer(r.Header.Get("Authorization"), "api_token")
-		if err != nil {
-			writeAPIAudit(auditLog, r, "app_password.auth", mailboxID, "denied", err.Error())
-			http.Error(w, err.Error(), http.StatusUnauthorized)
+		actor, browserSession, ok := s.identityRequestActor(w, r, ids)
+		if !ok {
+			writeAPIAudit(auditLog, r, "app_password.auth", mailboxID, "denied", "authentication_failed")
+			return
+		}
+		if browserSession && (r.Method == http.MethodPost || r.Method == http.MethodDelete) && !s.validSessionCSRF(r) {
+			writeAPIAudit(auditLog, r, "app_password.csrf", mailboxID, "denied", "csrf_failed")
+			http.Error(w, "CSRF validation failed", http.StatusForbidden)
 			return
 		}
 		switch {
@@ -86,4 +92,48 @@ func (s Server) registerIdentityAPI(mux *http.ServeMux, auditLog *audit.MemoryWr
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	})
+}
+
+func (s Server) identityRequestActor(w http.ResponseWriter, r *http.Request, ids *identity.Service) (authz.Actor, bool, bool) {
+	if r.Header.Get("Authorization") != "" {
+		actor, err := ids.AuthenticateBearer(r.Header.Get("Authorization"), "api_token")
+		if err != nil {
+			http.Error(w, "identity authentication required", http.StatusUnauthorized)
+			return authz.Actor{}, false, false
+		}
+		return actor, false, true
+	}
+	store, ok := s.OIDCStore.(authn.IdentitySessionStore)
+	if !ok {
+		http.Error(w, "identity authentication required", http.StatusUnauthorized)
+		return authz.Actor{}, false, false
+	}
+	cookie, err := r.Cookie("gotth_mail_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "identity authentication required", http.StatusUnauthorized)
+		return authz.Actor{}, false, false
+	}
+	bound, ok := store.BoundSession(r.Context(), cookie.Value, s.oidcNow())
+	if !ok {
+		http.Error(w, "identity session is invalid", http.StatusUnauthorized)
+		return authz.Actor{}, false, false
+	}
+	return authz.Actor{Type: "oidc_subject", ID: bound.IdentityRefID, Mailbox: bound.Mailbox}, true, true
+}
+
+func (s Server) validSessionCSRF(r *http.Request) bool {
+	store, ok := s.OIDCStore.(authn.IdentitySessionStore)
+	if !ok {
+		return false
+	}
+	sessionCookie, err := r.Cookie("gotth_mail_session")
+	if err != nil || sessionCookie.Value == "" {
+		return false
+	}
+	csrfCookie, err := r.Cookie("gotth_mail_csrf")
+	if err != nil || csrfCookie.Value == "" || r.Header.Get("X-CSRF-Token") != csrfCookie.Value {
+		return false
+	}
+	bound, ok := store.BoundSession(r.Context(), sessionCookie.Value, s.oidcNow())
+	return ok && authn.ValidCSRF(bound.Session, csrfCookie.Value)
 }

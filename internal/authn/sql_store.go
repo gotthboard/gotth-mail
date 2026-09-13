@@ -2,11 +2,14 @@ package authn
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
+	"forgejo/gotthboard/gotth-mail/internal/audit"
 	gotthoidc "github.com/gotthboard/gotth-oidc/pkg/oidc"
 )
 
@@ -63,6 +66,115 @@ func (s SQLStore) PutSession(ctx context.Context, session Session) error {
 	}
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO sessions(id, identity_ref_id, csrf_secret_hash, auth_method, created_at, expires_at, last_seen_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, session.ID, session.IdentityRefID, session.CSRFSecretHash, session.AuthMethod, session.CreatedAt, session.ExpiresAt, session.LastSeenAt)
 	return err
+}
+
+// PutIdentitySession binds one verified OIDC identity to exactly one active
+// SCIM-provisioned mailbox and admits the identity reference, session, and
+// redacted success audit in one transaction.
+func (s SQLStore) PutIdentitySession(ctx context.Context, identity Identity, session Session) (Session, error) {
+	if s.DB == nil {
+		return Session{}, fmt.Errorf("OIDC SQL store is unavailable")
+	}
+	if strings.TrimSpace(identity.Issuer) == "" || strings.TrimSpace(identity.Subject) == "" || strings.TrimSpace(identity.Email) == "" {
+		return Session{}, fmt.Errorf("verified OIDC identity is incomplete")
+	}
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return Session{}, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT m.id::text, lower(m.local_part || '@' || d.name)
+		FROM scim_resources sr
+		JOIN mailboxes m ON m.scim_resource_id=sr.id
+		JOIN domains d ON d.id=m.domain_id
+		WHERE sr.resource_type='User' AND sr.external_id=$1 AND m.enabled=true
+		ORDER BY sr.scope, sr.id
+		LIMIT 2`, identity.Subject)
+	if err != nil {
+		return Session{}, err
+	}
+	type candidate struct{ mailboxID, email string }
+	var candidates []candidate
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(&item.mailboxID, &item.email); err != nil {
+			rows.Close()
+			return Session{}, err
+		}
+		candidates = append(candidates, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return Session{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return Session{}, err
+	}
+	if len(candidates) != 1 {
+		return Session{}, fmt.Errorf("verified OIDC identity does not resolve to exactly one active SCIM mailbox")
+	}
+	if !strings.EqualFold(candidates[0].email, strings.TrimSpace(identity.Email)) {
+		return Session{}, fmt.Errorf("verified OIDC email does not match the SCIM mailbox")
+	}
+	identityID, err := randomUUID()
+	if err != nil {
+		return Session{}, err
+	}
+	var boundIdentityID, boundMailboxID string
+	err = tx.QueryRowContext(ctx, `INSERT INTO identity_refs(id, provider, issuer, subject, mailbox_id, created_at, updated_at)
+		VALUES ($1,'authentik',$2,$3,$4,$5,$5)
+		ON CONFLICT (provider, issuer, subject) DO UPDATE SET updated_at=EXCLUDED.updated_at
+		RETURNING id::text, mailbox_id::text`, identityID, identity.Issuer, identity.Subject, candidates[0].mailboxID, session.CreatedAt).Scan(&boundIdentityID, &boundMailboxID)
+	if err != nil {
+		return Session{}, err
+	}
+	if boundMailboxID != candidates[0].mailboxID {
+		return Session{}, fmt.Errorf("verified OIDC identity is already bound to another mailbox")
+	}
+	session.IdentityRefID = boundIdentityID
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(id, identity_ref_id, csrf_secret_hash, auth_method, created_at, expires_at, last_seen_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, session.ID, session.IdentityRefID, session.CSRFSecretHash, session.AuthMethod, session.CreatedAt, session.ExpiresAt, session.LastSeenAt); err != nil {
+		return Session{}, err
+	}
+	if err := audit.WriteSQL(ctx, tx, audit.Event{
+		Time: session.CreatedAt, Actor: audit.ActorRef{Type: "oidc_subject", ID: boundIdentityID},
+		Action: "oidc.session.create", Resource: audit.ResourceRef{Type: "identity", ID: boundIdentityID},
+		AfterRedacted: map[string]any{"mailbox": candidates[0].email}, CorrelationID: "oidc", Result: "success",
+	}); err != nil {
+		return Session{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Session{}, err
+	}
+	return session, nil
+}
+
+func (s SQLStore) BoundSession(ctx context.Context, id string, now time.Time) (BoundSession, bool) {
+	if s.DB == nil || id == "" {
+		return BoundSession{}, false
+	}
+	var bound BoundSession
+	err := s.DB.QueryRowContext(ctx, `SELECT s.id, s.identity_ref_id::text, s.csrf_secret_hash, s.auth_method, s.created_at, s.expires_at, s.last_seen_at,
+		ir.issuer, ir.subject, lower(m.local_part || '@' || d.name)
+		FROM sessions s
+		JOIN identity_refs ir ON ir.id=s.identity_ref_id
+		JOIN mailboxes m ON m.id=ir.mailbox_id
+		JOIN domains d ON d.id=m.domain_id
+		WHERE s.id=$1 AND s.revoked_at IS NULL AND s.expires_at>$2 AND s.created_at<=$2 AND m.enabled=true`, id, now.UTC()).Scan(
+		&bound.ID, &bound.IdentityRefID, &bound.CSRFSecretHash, &bound.AuthMethod,
+		&bound.CreatedAt, &bound.ExpiresAt, &bound.LastSeenAt,
+		&bound.Issuer, &bound.Subject, &bound.Mailbox,
+	)
+	return bound, err == nil
+}
+
+func randomUUID() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", err
+	}
+	value[6] = (value[6] & 0x0f) | 0x40
+	value[8] = (value[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16]), nil
 }
 
 func decodeProtectedAttempt(attempt *LoginAttempt, state, nonce, pkce, browser []byte) error {
