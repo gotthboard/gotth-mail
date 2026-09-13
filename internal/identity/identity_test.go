@@ -137,6 +137,46 @@ func TestAppPasswordLimitAndDisabledMailboxFailClosed(t *testing.T) {
 	}
 }
 
+func TestAppPasswordValidationAndIdempotentRevoke(t *testing.T) {
+	s := testService()
+	admin := authz.Actor{Type: "local_admin", ID: "admin"}
+	if _, err := s.CreateOrReplaceUser(context.Background(), admin, Mailbox{Email: "user@example.test", Active: true}, "mail-password"); err != nil {
+		t.Fatal(err)
+	}
+	for name, label := range map[string]string{"empty": "  ", "too-long": strings.Repeat("x", 129)} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := s.CreateAppPassword(context.Background(), admin, "user@example.test", label); err == nil {
+				t.Fatal("invalid label accepted")
+			}
+		})
+	}
+	if _, err := s.CreateAppPassword(context.Background(), admin, "missing@example.test", "phone"); err == nil || !strings.Contains(err.Error(), "mailbox not found") {
+		t.Fatalf("missing mailbox error=%v", err)
+	}
+	s.Secret = func() (string, error) { return "", errors.New("entropy unavailable") }
+	if _, err := s.CreateAppPassword(context.Background(), admin, "user@example.test", "phone"); err == nil || !strings.Contains(err.Error(), "entropy unavailable") {
+		t.Fatalf("entropy failure=%v", err)
+	}
+	s.Secret = func() (string, error) { return "short", nil }
+	if _, err := s.CreateAppPassword(context.Background(), admin, "user@example.test", "phone"); err == nil || !strings.Contains(err.Error(), "password too short") {
+		t.Fatalf("short generated secret failure=%v", err)
+	}
+	s.Secret = func() (string, error) { return "generated-client-secret", nil }
+	created, err := s.CreateAppPassword(context.Background(), admin, "user@example.test", "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeAppPassword(context.Background(), admin, "user@example.test", "app_missing"); err == nil || !strings.Contains(err.Error(), "app password not found") {
+		t.Fatalf("missing revoke error=%v", err)
+	}
+	if err := s.RevokeAppPassword(context.Background(), admin, "user@example.test", created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeAppPassword(context.Background(), admin, "user@example.test", created.ID); err != nil {
+		t.Fatalf("idempotent revoke failed: %v", err)
+	}
+}
+
 func TestBearerTokensAndFailureAuditing(t *testing.T) {
 	s := testService()
 	if err := s.AddToken("scim", "scim_client", "scim-secret"); err != nil {

@@ -156,6 +156,20 @@ func TestDovecotPassdbDefersSuccessfulAuthWhenAuditFails(t *testing.T) {
 	}
 }
 
+func TestDovecotPassdbNormalizesLegacyProjectionKeys(t *testing.T) {
+	s := Service{
+		Mailboxes: map[string]Mailbox{
+			"User@Example.Test": {Address: "User@Example.Test", Enabled: true, Verifier: MakeDjangoPBKDF2SHA256("mail-secret", "mail-salt", 1200)},
+		},
+		AppPasswordVerifiers: map[string][]string{
+			"User@Example.Test": {MakeDjangoPBKDF2SHA256("app-secret", "app-salt", 1200)},
+		},
+	}
+	if got := s.DovecotPassdb("c", PassdbRequest{Username: "user@example.test", Secret: "app-secret", Protocol: "imap"}); got.Decision != OK {
+		t.Fatalf("legacy normalized projection rejected: %#v", got)
+	}
+}
+
 func TestDjangoVerifierContractIsPBKDF2SHA256Only(t *testing.T) {
 	valid := MakeDjangoPBKDF2SHA256("secret", "salt", 1200)
 	if err := ValidateDjangoPBKDF2SHA256(valid); err != nil {

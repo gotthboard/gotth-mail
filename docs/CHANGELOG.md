@@ -21,9 +21,32 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 17:23 CDT — Make live passdb projection race-free and bounded-copy
+### 2026-09-13 17:36 CDT — Close app-password validation coverage gaps
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- app-password identity and Dovecot daemon tests
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added explicit rejection evidence for empty and oversized labels, missing
+mailboxes, entropy failure, invalid generated secrets, missing credentials,
+and repeated revocation. Added the legacy mixed-case projection-key test so
+the new bounded mailbox snapshot preserves normalization userspace instead of
+silently rejecting old in-memory fixtures.
+
+Verification:
+
+- focused local identity and daemon tests pass;
+- final development-host coverage and race gates remain required on this exact
+  test commit.
+
+### 2026-09-13 17:23 CDT — Make live passdb projection race-free and bounded-copy
+
+Commit: `41cc4b3d6afa086ad9037e45d7dd8c1f1ba09535`
 
 Affected files:
 
