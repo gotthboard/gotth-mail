@@ -31,4 +31,3 @@
 - old Forgejo URL redirect proof
 - GitHub distribution parity, or an explicit blocker if credentials or the
   destination repository do not exist
-

@@ -43,4 +43,3 @@ GOTTH Mail joins the same project family as the other `gotth-*` repositories:
 private canonical development in Forgejo under `gotthboard`, one-way public
 distribution on GitHub, and consumer-driven integration with GOTTH Board. The
 rename does not make unfinished mail functionality release-ready.
-

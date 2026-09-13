@@ -45,4 +45,3 @@ historically accurate and are not rewritten.
 - Deploying GOTTH Mail to production.
 - Renaming third-party Mailu, Postfix, Dovecot, Rspamd, Roundcube, or Authentik.
 - Rewriting historical evidence to pretend it was produced under the new name.
-
