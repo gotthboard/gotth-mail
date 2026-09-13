@@ -549,6 +549,20 @@ func TestSCIMGroupsRequireSameScopeOpaqueUsersAndRemainNonAuthoritative(t *testi
 	if members != 1 || roles != 0 || groupAudits != 1 {
 		t.Fatalf("members=%d roles=%d groupAudits=%d", members, roles, groupAudits)
 	}
+	var scope string
+	if err := db.QueryRow(`SELECT scope FROM scim_resources WHERE resource_type='Group' AND id=$1`, groupID).Scan(&scope); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO scim_group_members(scope, group_id, user_id) VALUES ($1,$2,$3)`, scope, groupID, otherScopeUserID); err == nil {
+		t.Fatal("database admitted a cross-scope Group member")
+	}
+	otherGroup := createGroup(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Other Group","members":[]}`)
+	if otherGroup.Code != http.StatusCreated {
+		t.Fatalf("create other group status=%d body=%s", otherGroup.Code, otherGroup.Body.String())
+	}
+	if _, err := db.Exec(`INSERT INTO scim_group_members(scope, group_id, user_id) VALUES ($1,$2,$3)`, scope, groupID, responseID(t, otherGroup.Body.String())); err == nil {
+		t.Fatal("database admitted a Group resource as a User member")
+	}
 
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, authed(http.MethodDelete, "/scim/v2/Users/"+userID, "", "scim-secret-token"))
