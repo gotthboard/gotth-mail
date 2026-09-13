@@ -2,6 +2,6 @@
 
 ID: `v2.identity-provisioning.app-passwords-ui`
 
-State: `done`
+State: `in_progress`
 
 Canonical state lives in `workflow.toml`. This folder holds scoped evidence, review notes, and postmortems only.

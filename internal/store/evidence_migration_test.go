@@ -38,6 +38,7 @@ func TestMigrateSQLUpgradesRealBaseLedgerAndPersistsEvidence(t *testing.T) {
 		t.Fatalf("idempotent migration rerun: %v", err)
 	}
 	assertEvidenceColumn(t, db, "text", "NO", "'{}'::text")
+	assertProtectedOIDCAttemptColumns(t, db)
 	var legacyEvidence string
 	if err := db.QueryRowContext(ctx, `SELECT evidence_json FROM notification_deliveries WHERE alert_id=$1`, legacyAlert.ID).Scan(&legacyEvidence); err != nil {
 		t.Fatal(err)
@@ -73,6 +74,35 @@ func TestMigrateSQLUpgradesRealBaseLedgerAndPersistsEvidence(t *testing.T) {
 	if got.Status != notification.StatusDelivered || got.Reason != "signed_email_delivered" || got.Evidence != evidence {
 		t.Fatalf("migrated recorder lost structured evidence: %#v", got)
 	}
+}
+
+func TestOIDCProtectedAttemptsMigrationInvalidatesLegacyInflightState(t *testing.T) {
+	db := testpg.DB(t, func(ctx context.Context, db *sql.DB) error {
+		if err := createBaseLedger(ctx, db); err != nil {
+			return err
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO oidc_login_states(state_id, nonce, browser_binding_hash, redirect_after_login, created_at, expires_at) VALUES ('legacy-state','legacy-nonce','legacy-browser','/',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + interval '10 minutes')`); err != nil {
+			return err
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO sessions(id, identity_ref_id, csrf_secret_hash, auth_method, created_at, expires_at, last_seen_at) VALUES ('existing-session','issuer|subject','csrf','oidc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + interval '1 hour',CURRENT_TIMESTAMP)`); err != nil {
+			return err
+		}
+		return store.MigrateSQL(ctx, db)
+	})
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM oidc_login_states`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("legacy OIDC attempts survived protected-storage migration: %d", count)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM sessions WHERE id='existing-session'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("protected-attempt migration removed existing sessions: %d", count)
+	}
+	assertProtectedOIDCAttemptColumns(t, db)
 }
 
 func TestMigrateSQLRejectsInvalidBaseLedgerBeforeUpgrade(t *testing.T) {
@@ -323,5 +353,33 @@ func assertEvidenceColumnAbsent(t *testing.T, db *sql.DB) {
 	}
 	if columnCount != 0 {
 		t.Fatalf("failed migration changed schema: evidence columns=%d", columnCount)
+	}
+}
+
+func assertProtectedOIDCAttemptColumns(t *testing.T, db *sql.DB) {
+	t.Helper()
+	rows, err := db.Query(`SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='oidc_login_states' ORDER BY ordinal_position`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string]string{}
+	for rows.Next() {
+		var name, dataType, nullable string
+		if err := rows.Scan(&name, &dataType, &nullable); err != nil {
+			t.Fatal(err)
+		}
+		got[name] = dataType + ":" + nullable
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"state_hash": "bytea:NO", "nonce_ciphertext": "bytea:NO", "pkce_verifier_ciphertext": "bytea:NO",
+		"context_ciphertext": "text:NO", "browser_binding_hash": "bytea:NO", "redirect_after_login": "text:NO",
+		"created_at": "timestamp without time zone:NO", "expires_at": "timestamp without time zone:NO", "used_at": "timestamp without time zone:YES",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("OIDC attempt schema=%#v want=%#v", got, want)
 	}
 }

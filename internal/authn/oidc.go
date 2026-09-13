@@ -2,21 +2,20 @@ package authn
 
 import (
 	"context"
-	"crypto"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"math/big"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
+
+	gotthoidc "github.com/gotthboard/gotth-oidc/pkg/oidc"
 )
 
 var (
@@ -25,33 +24,14 @@ var (
 	ErrUnsafeTokenLogValue = errors.New("oidc failure must not expose token")
 )
 
-type OIDCConfig struct {
-	Issuer        string
-	ClientID      string
-	ClientSecret  string
-	RedirectURI   string
-	TokenEndpoint string
-	ClockSkew     time.Duration
-	Now           func() time.Time
+type OIDCClient interface {
+	Begin() (gotthoidc.Authorization, error)
+	CompleteResponse(context.Context, gotthoidc.AuthorizationResponse, gotthoidc.ProtectedAttempt) (gotthoidc.Identity, error)
 }
 
-type JWK struct {
-	Kty string `json:"kty"`
-	Kid string `json:"kid"`
-	Alg string `json:"alg,omitempty"`
-	Use string `json:"use,omitempty"`
-	N   string `json:"n"`
-	E   string `json:"e"`
-}
-
-type JWKS struct {
-	Keys []JWK `json:"keys"`
-}
-
-type LoginState struct {
-	StateID            string
-	Nonce              string
-	BrowserBindingHash string
+type LoginAttempt struct {
+	Protected          gotthoidc.ProtectedAttempt
+	BrowserBindingHash [sha256.Size]byte
 	RedirectAfterLogin string
 	CreatedAt          time.Time
 	ExpiresAt          time.Time
@@ -59,11 +39,11 @@ type LoginState struct {
 }
 
 type Identity struct {
-	Subject string
-	Issuer  string
-	Email   string
-	Name    string
-	Groups  []string
+	Subject string   `json:"Subject"`
+	Issuer  string   `json:"Issuer"`
+	Email   string   `json:"Email"`
+	Name    string   `json:"Name"`
+	Groups  []string `json:"Groups"`
 }
 
 type Session struct {
@@ -77,66 +57,87 @@ type Session struct {
 }
 
 type StateStore interface {
-	PutState(LoginState) error
-	Session(string) (Session, bool)
-	consumeState(string, string, time.Time) (LoginState, error)
-	putSession(Session) error
+	PutAttempt(context.Context, LoginAttempt) error
+	ConsumeAttempt(context.Context, string, string, time.Time) (LoginAttempt, error)
+	PutSession(context.Context, Session) error
+	Session(context.Context, string) (Session, bool)
 }
 
 type Store struct {
 	mu       sync.Mutex
-	states   map[string]LoginState
+	attempts map[[sha256.Size]byte]LoginAttempt
 	sessions map[string]Session
 }
 
 func NewStore() *Store {
-	return &Store{states: map[string]LoginState{}, sessions: map[string]Session{}}
+	return &Store{attempts: map[[sha256.Size]byte]LoginAttempt{}, sessions: map[string]Session{}}
 }
 
-func (s *Store) PutState(st LoginState) error {
+func (s *Store) PutAttempt(_ context.Context, attempt LoginAttempt) error {
+	if s == nil {
+		return fmt.Errorf("OIDC store is unavailable")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensure()
-	s.states[st.StateID] = st
+	if _, exists := s.attempts[attempt.Protected.StateHash]; exists {
+		return fmt.Errorf("OIDC attempt already exists")
+	}
+	s.attempts[attempt.Protected.StateHash] = attempt
 	return nil
 }
-func (s *Store) Session(id string) (Session, bool) {
+
+func (s *Store) Session(_ context.Context, id string) (Session, bool) {
+	if s == nil {
+		return Session{}, false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensure()
-	v, ok := s.sessions[id]
-	return v, ok
+	session, ok := s.sessions[id]
+	return session, ok
 }
+
+// ConsumeAttempt is O(1) expected time under the map lock. Comparison of the
+// browser-binding digest is constant-time; the one state transition is atomic.
+func (s *Store) ConsumeAttempt(_ context.Context, state, browserBinding string, now time.Time) (LoginAttempt, error) {
+	if s == nil {
+		return LoginAttempt{}, ErrInvalidOIDCState
+	}
+	stateHash := sha256.Sum256([]byte(state))
+	browserHash := sha256.Sum256([]byte(browserBinding))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensure()
+	attempt, ok := s.attempts[stateHash]
+	if !ok || attempt.UsedAt != nil || now.After(attempt.ExpiresAt) || subtle.ConstantTimeCompare(attempt.BrowserBindingHash[:], browserHash[:]) != 1 {
+		return LoginAttempt{}, ErrInvalidOIDCState
+	}
+	used := now
+	attempt.UsedAt = &used
+	s.attempts[stateHash] = attempt
+	return attempt, nil
+}
+
+func (s *Store) PutSession(_ context.Context, session Session) error {
+	if s == nil {
+		return fmt.Errorf("OIDC store is unavailable")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensure()
+	s.sessions[session.ID] = session
+	return nil
+}
+
 func (s *Store) ensure() {
-	if s.states == nil {
-		s.states = map[string]LoginState{}
+	if s.attempts == nil {
+		s.attempts = map[[sha256.Size]byte]LoginAttempt{}
 	}
 	if s.sessions == nil {
 		s.sessions = map[string]Session{}
 	}
 }
-
-func (s *Store) consumeState(stateID, browserHash string, now time.Time) (LoginState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ensure()
-	st, ok := s.states[stateID]
-	if !ok || st.BrowserBindingHash != browserHash || !st.UsedAtIsNil() || now.After(st.ExpiresAt) {
-		return LoginState{}, ErrInvalidOIDCState
-	}
-	used := now
-	st.UsedAt = &used
-	s.states[stateID] = st
-	return st, nil
-}
-func (s *Store) putSession(sess Session) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ensure()
-	s.sessions[sess.ID] = sess
-	return nil
-}
-func (st LoginState) UsedAtIsNil() bool { return st.UsedAt == nil }
 
 type LoginStart struct {
 	StateID string
@@ -145,27 +146,9 @@ type LoginStart struct {
 }
 
 type CallbackInput struct {
-	StateID            string
-	BrowserBindingHash string
-	RedirectURI        string
-	Code               string
-	JWKS               JWKS
-	Exchanger          CodeExchanger
+	Response       gotthoidc.AuthorizationResponse
+	BrowserBinding string
 }
-
-type TokenRequest struct {
-	Code          string
-	RedirectURI   string
-	ClientID      string
-	ClientSecret  string
-	TokenEndpoint string
-}
-
-type CodeExchanger interface {
-	ExchangeCode(context.Context, TokenRequest) (TokenResponse, error)
-}
-
-type HTTPCodeExchanger struct{ Client *http.Client }
 
 type CallbackResult struct {
 	Identity           Identity
@@ -173,416 +156,118 @@ type CallbackResult struct {
 	RedirectAfterLogin string
 }
 
-func StartLogin(cfg OIDCConfig, store StateStore, authorizeEndpoint, browserBindingHash, redirectAfter string, ttl time.Duration) (LoginStart, error) {
-	if store == nil {
-		return LoginStart{}, fmt.Errorf("oidc store required")
+// StartLogin is O(1) aside from the library's fixed-size cryptography and one
+// store write. It persists only the gotth-oidc protected representation.
+func StartLogin(ctx context.Context, client OIDCClient, store StateStore, browserBinding, redirectAfter string, now time.Time, ttl time.Duration) (LoginStart, error) {
+	if client == nil || store == nil {
+		return LoginStart{}, fmt.Errorf("OIDC client and store are required")
 	}
-	if err := cfg.validate(); err != nil {
-		return LoginStart{}, err
+	if browserBinding == "" || len(browserBinding) > 1024 || ttl <= 0 || ttl > 30*time.Minute {
+		return LoginStart{}, ErrInvalidOIDCState
 	}
-	if authorizeEndpoint == "" || browserBindingHash == "" {
-		return LoginStart{}, fmt.Errorf("authorize endpoint and browser binding required")
+	redirectAfter, err := localRedirect(redirectAfter)
+	if err != nil {
+		return LoginStart{}, ErrInvalidOIDCState
 	}
-	now := cfg.now()
-	state, err := randomToken(32)
+	authorization, err := client.Begin()
 	if err != nil {
 		return LoginStart{}, err
 	}
-	nonce, err := randomToken(32)
+	parsed, err := url.Parse(authorization.URL)
 	if err != nil {
+		return LoginStart{}, fmt.Errorf("parse OIDC authorization URL: %w", err)
+	}
+	state, nonce := parsed.Query().Get("state"), parsed.Query().Get("nonce")
+	if state == "" || nonce == "" || sha256.Sum256([]byte(state)) != authorization.Attempt.StateHash {
+		return LoginStart{}, fmt.Errorf("gotth-oidc returned inconsistent authorization material")
+	}
+	attempt := LoginAttempt{
+		Protected: authorization.Attempt, BrowserBindingHash: sha256.Sum256([]byte(browserBinding)),
+		RedirectAfterLogin: redirectAfter, CreatedAt: now.UTC(), ExpiresAt: now.UTC().Add(ttl),
+	}
+	if err := store.PutAttempt(ctx, attempt); err != nil {
 		return LoginStart{}, err
 	}
-	if err := store.PutState(LoginState{StateID: state, Nonce: nonce, BrowserBindingHash: browserBindingHash, RedirectAfterLogin: redirectAfter, CreatedAt: now, ExpiresAt: now.Add(ttl)}); err != nil {
-		return LoginStart{}, err
-	}
-	u, err := url.Parse(authorizeEndpoint)
-	if err != nil {
-		return LoginStart{}, err
-	}
-	q := u.Query()
-	q.Set("response_type", "code")
-	q.Set("client_id", cfg.ClientID)
-	q.Set("redirect_uri", cfg.RedirectURI)
-	q.Set("scope", "openid email profile")
-	q.Set("state", state)
-	q.Set("nonce", nonce)
-	u.RawQuery = q.Encode()
-	return LoginStart{StateID: state, Nonce: nonce, URL: u.String()}, nil
+	return LoginStart{StateID: state, Nonce: nonce, URL: authorization.URL}, nil
 }
 
-func CompleteCallback(ctx context.Context, cfg OIDCConfig, store StateStore, in CallbackInput) (CallbackResult, error) {
-	if store == nil {
-		return CallbackResult{}, fmt.Errorf("oidc store required")
-	}
-	if err := cfg.validate(); err != nil {
-		return CallbackResult{}, err
-	}
-	now := cfg.now()
-	if in.RedirectURI != cfg.RedirectURI {
+// CompleteCallback performs one atomic attempt consumption, one gotth-oidc
+// verification/exchange, and one session write. A failed exchange still spends
+// the attempt, preventing replay after partial failure.
+func CompleteCallback(ctx context.Context, client OIDCClient, store StateStore, input CallbackInput, now time.Time) (CallbackResult, error) {
+	if client == nil || store == nil || strings.TrimSpace(input.Response.State) == "" {
 		return CallbackResult{}, ErrInvalidOIDCState
 	}
-	st, err := store.consumeState(in.StateID, in.BrowserBindingHash, now)
+	attempt, err := store.ConsumeAttempt(ctx, input.Response.State, input.BrowserBinding, now.UTC())
 	if err != nil {
 		return CallbackResult{}, err
 	}
-	if strings.TrimSpace(in.Code) == "" {
-		return CallbackResult{}, ErrInvalidOIDCState
-	}
-	ex := in.Exchanger
-	if ex == nil {
-		ex = HTTPCodeExchanger{}
-	}
-	tok, err := ex.ExchangeCode(ctx, TokenRequest{Code: in.Code, RedirectURI: in.RedirectURI, ClientID: cfg.ClientID, ClientSecret: cfg.ClientSecret, TokenEndpoint: cfg.TokenEndpoint})
+	verified, err := client.CompleteResponse(ctx, input.Response, attempt.Protected)
 	if err != nil {
 		return CallbackResult{}, ErrInvalidOIDCToken
 	}
-	if err := tok.ValidateNoUnsignedFallback(); err != nil {
-		return CallbackResult{}, err
+	identity := Identity{Issuer: verified.Issuer, Subject: verified.Subject, Name: verified.DisplayName, Groups: []string{}}
+	if verified.Email != nil {
+		identity.Email = *verified.Email
 	}
-	claims, err := ValidateIDToken(cfg, tok.IDToken, in.JWKS, st.Nonce)
+	sessionID, err := randomToken(32)
 	if err != nil {
 		return CallbackResult{}, err
 	}
-	identity := Identity{Subject: claims.Subject, Issuer: claims.Issuer, Email: claims.Email, Name: claims.Name, Groups: claims.Groups}
-	sid, err := randomToken(32)
+	csrfSecret, err := randomToken(32)
 	if err != nil {
 		return CallbackResult{}, err
 	}
-	csrf, err := randomToken(32)
-	if err != nil {
+	session := Session{
+		ID: sessionID, IdentityRefID: identity.Issuer + "|" + identity.Subject,
+		CreatedAt: now.UTC(), ExpiresAt: now.UTC().Add(12 * time.Hour), LastSeenAt: now.UTC(),
+		CSRFSecretHash: hashText(csrfSecret), AuthMethod: "oidc",
+	}
+	if err := store.PutSession(ctx, session); err != nil {
 		return CallbackResult{}, err
 	}
-	sess := Session{ID: sid, IdentityRefID: identity.Issuer + "|" + identity.Subject, CreatedAt: now, ExpiresAt: now.Add(12 * time.Hour), LastSeenAt: now, CSRFSecretHash: hashText(csrf), AuthMethod: "oidc"}
-	if err := store.putSession(sess); err != nil {
-		return CallbackResult{}, err
-	}
-	return CallbackResult{Identity: identity, Session: sess, RedirectAfterLogin: st.RedirectAfterLogin}, nil
+	return CallbackResult{Identity: identity, Session: session, RedirectAfterLogin: attempt.RedirectAfterLogin}, nil
 }
 
-func (h HTTPCodeExchanger) ExchangeCode(ctx context.Context, req TokenRequest) (TokenResponse, error) {
-	if req.TokenEndpoint == "" || req.Code == "" || req.RedirectURI == "" || req.ClientID == "" {
-		return TokenResponse{}, ErrInvalidOIDCState
+func localRedirect(value string) (string, error) {
+	if value == "" {
+		return "/", nil
 	}
-	form := url.Values{}
-	form.Set("grant_type", "authorization_code")
-	form.Set("code", req.Code)
-	form.Set("redirect_uri", req.RedirectURI)
-	form.Set("client_id", req.ClientID)
-	if req.ClientSecret != "" {
-		form.Set("client_secret", req.ClientSecret)
+	if len(value) > 2048 || !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return "", ErrInvalidOIDCState
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, req.TokenEndpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return TokenResponse{}, err
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/") || strings.HasPrefix(parsed.Path, "//") {
+		return "", ErrInvalidOIDCState
 	}
-	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	c := h.Client
-	if c == nil {
-		c = http.DefaultClient
-	}
-	resp, err := c.Do(httpReq)
-	if err != nil {
-		return TokenResponse{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return TokenResponse{}, ErrInvalidOIDCToken
-	}
-	var tr TokenResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tr); err != nil {
-		return TokenResponse{}, ErrInvalidOIDCToken
-	}
-	return tr, nil
+	return value, nil
 }
 
-type IDTokenClaims struct {
-	Issuer    string          `json:"iss"`
-	Subject   string          `json:"sub"`
-	Audience  json.RawMessage `json:"aud"`
-	Azp       string          `json:"azp,omitempty"`
-	Expiry    int64           `json:"exp"`
-	IssuedAt  int64           `json:"iat"`
-	NotBefore int64           `json:"nbf,omitempty"`
-	Nonce     string          `json:"nonce"`
-	Email     string          `json:"email,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Groups    []string        `json:"groups,omitempty"`
-}
-
-func ValidateIDToken(cfg OIDCConfig, token string, jwks JWKS, expectedNonce string) (IDTokenClaims, error) {
-	if err := cfg.validate(); err != nil {
-		return IDTokenClaims{}, err
-	}
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return IDTokenClaims{}, ErrInvalidOIDCToken
-	}
-	var hdr struct{ Alg, Kid, Typ string }
-	if err := decodeJSON(parts[0], &hdr); err != nil {
-		return IDTokenClaims{}, ErrInvalidOIDCToken
-	}
-	if hdr.Alg != "RS256" || hdr.Kid == "" {
-		return IDTokenClaims{}, ErrInvalidOIDCToken
-	}
-	key, err := jwks.rsaKey(hdr.Kid)
-	if err != nil {
-		return IDTokenClaims{}, ErrInvalidOIDCToken
-	}
-	signed := []byte(parts[0] + "." + parts[1])
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil {
-		return IDTokenClaims{}, ErrInvalidOIDCToken
-	}
-	digest := sha256.Sum256(signed)
-	if err := rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], sig); err != nil {
-		return IDTokenClaims{}, ErrInvalidOIDCToken
-	}
-	var claims IDTokenClaims
-	if err := decodeJSON(parts[1], &claims); err != nil {
-		return IDTokenClaims{}, ErrInvalidOIDCToken
-	}
-	if err := claims.validate(cfg, expectedNonce); err != nil {
-		return IDTokenClaims{}, err
-	}
-	return claims, nil
-}
-
-func (c IDTokenClaims) validate(cfg OIDCConfig, nonce string) error {
-	now := cfg.now()
-	skew := cfg.ClockSkew
-	if skew == 0 {
-		skew = time.Minute
-	}
-	if c.Issuer != cfg.Issuer || c.Subject == "" || c.Nonce != nonce {
-		return ErrInvalidOIDCToken
-	}
-	if !audContains(c.Audience, cfg.ClientID) {
-		return ErrInvalidOIDCToken
-	}
-	if c.Azp != "" && c.Azp != cfg.ClientID {
-		return ErrInvalidOIDCToken
-	}
-	if c.Expiry == 0 || now.After(time.Unix(c.Expiry, 0).Add(skew)) {
-		return ErrInvalidOIDCToken
-	}
-	if c.IssuedAt == 0 || time.Unix(c.IssuedAt, 0).After(now.Add(skew)) {
-		return ErrInvalidOIDCToken
-	}
-	if c.NotBefore != 0 && time.Unix(c.NotBefore, 0).After(now.Add(skew)) {
-		return ErrInvalidOIDCToken
-	}
-	return nil
-}
-
-func audContains(raw json.RawMessage, clientID string) bool {
-	var one string
-	if json.Unmarshal(raw, &one) == nil {
-		return one == clientID
-	}
-	var many []string
-	if json.Unmarshal(raw, &many) == nil {
-		for _, v := range many {
-			if v == clientID {
-				return true
-			}
-		}
-	}
-	return false
-}
-func (j JWKS) rsaKey(kid string) (*rsa.PublicKey, error) {
-	for _, k := range j.Keys {
-		if k.Kid == kid && k.Kty == "RSA" {
-			nBytes, err := base64.RawURLEncoding.DecodeString(k.N)
-			if err != nil {
-				return nil, err
-			}
-			eBytes, err := base64.RawURLEncoding.DecodeString(k.E)
-			if err != nil {
-				return nil, err
-			}
-			e := 0
-			for _, b := range eBytes {
-				e = e*256 + int(b)
-			}
-			if e == 0 {
-				return nil, errors.New("bad exponent")
-			}
-			return &rsa.PublicKey{N: new(big.Int).SetBytes(nBytes), E: e}, nil
-		}
-	}
-	return nil, errors.New("kid not found")
-}
-func decodeJSON(part string, v any) error {
-	b, err := base64.RawURLEncoding.DecodeString(part)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(b, v)
-}
-func (c OIDCConfig) validate() error {
-	if c.Issuer == "" || c.ClientID == "" || c.RedirectURI == "" {
-		return fmt.Errorf("oidc issuer, client id, and redirect uri required")
-	}
-	return nil
-}
-func (c OIDCConfig) now() time.Time {
-	if c.Now != nil {
-		return c.Now()
-	}
-	return time.Now().UTC()
-}
-func randomToken(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
+func randomToken(size int) (string, error) {
+	value := make([]byte, size)
+	if _, err := rand.Read(value); err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-func NewBrowserBinding() (string, error) {
-	return randomToken(32)
+	return base64.RawURLEncoding.EncodeToString(value), nil
 }
 
-func hashText(s string) string {
-	h := sha256.Sum256([]byte(s))
-	return base64.RawURLEncoding.EncodeToString(h[:])
+func NewBrowserBinding() (string, error) { return randomToken(32) }
+
+func hashText(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
 func SafeOIDCError(err error) string {
 	if err == nil {
 		return ""
 	}
-	s := err.Error()
-	if strings.Count(s, ".") >= 2 || strings.Contains(strings.ToLower(s), "token=") {
-		return ErrUnsafeTokenLogValue.Error()
+	switch {
+	case errors.Is(err, ErrInvalidOIDCState):
+		return ErrInvalidOIDCState.Error()
+	case errors.Is(err, ErrInvalidOIDCToken):
+		return ErrInvalidOIDCToken.Error()
+	default:
+		return "OIDC operation failed"
 	}
-	return s
-}
-
-type DiscoveryDocument struct {
-	Issuer                string   `json:"issuer"`
-	AuthorizationEndpoint string   `json:"authorization_endpoint"`
-	TokenEndpoint         string   `json:"token_endpoint"`
-	JWKSURI               string   `json:"jwks_uri"`
-	ResponseTypes         []string `json:"response_types_supported"`
-	SubjectTypes          []string `json:"subject_types_supported"`
-	IDTokenAlgs           []string `json:"id_token_signing_alg_values_supported"`
-}
-
-func ValidateDiscovery(cfg OIDCConfig, d DiscoveryDocument) error {
-	if err := cfg.validate(); err != nil {
-		return err
-	}
-	if d.Issuer != cfg.Issuer || d.AuthorizationEndpoint == "" || d.TokenEndpoint == "" || d.JWKSURI == "" {
-		return ErrInvalidOIDCToken
-	}
-	if !contains(d.ResponseTypes, "code") || !contains(d.IDTokenAlgs, "RS256") {
-		return ErrInvalidOIDCToken
-	}
-	return nil
-}
-
-func FetchDiscovery(ctx context.Context, client *http.Client, issuer string) (DiscoveryDocument, error) {
-	issuer = strings.TrimRight(issuer, "/") + "/"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, issuer+".well-known/openid-configuration", nil)
-	if err != nil {
-		return DiscoveryDocument{}, err
-	}
-	c := client
-	if c == nil {
-		c = http.DefaultClient
-	}
-	resp, err := c.Do(req)
-	if err != nil {
-		return DiscoveryDocument{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return DiscoveryDocument{}, ErrInvalidOIDCToken
-	}
-	var d DiscoveryDocument
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&d); err != nil {
-		return DiscoveryDocument{}, ErrInvalidOIDCToken
-	}
-	return d, nil
-}
-
-func FetchJWKS(ctx context.Context, client *http.Client, jwksURI string) (JWKS, error) {
-	if strings.TrimSpace(jwksURI) == "" {
-		return JWKS{}, ErrInvalidOIDCToken
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURI, nil)
-	if err != nil {
-		return JWKS{}, err
-	}
-	c := client
-	if c == nil {
-		c = http.DefaultClient
-	}
-	resp, err := c.Do(req)
-	if err != nil {
-		return JWKS{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return JWKS{}, ErrInvalidOIDCToken
-	}
-	var j JWKS
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&j); err != nil {
-		return JWKS{}, ErrInvalidOIDCToken
-	}
-	if len(j.Keys) == 0 {
-		return JWKS{}, ErrInvalidOIDCToken
-	}
-	return j, nil
-}
-
-func DiscoverProvider(ctx context.Context, client *http.Client, cfg OIDCConfig) (DiscoveryDocument, JWKS, error) {
-	d, err := FetchDiscovery(ctx, client, cfg.Issuer)
-	if err != nil {
-		return DiscoveryDocument{}, JWKS{}, err
-	}
-	if err := ValidateDiscovery(cfg, d); err != nil {
-		return DiscoveryDocument{}, JWKS{}, err
-	}
-	j, err := FetchJWKS(ctx, client, d.JWKSURI)
-	if err != nil {
-		return DiscoveryDocument{}, JWKS{}, err
-	}
-	return d, j, nil
-}
-
-type TokenResponse struct {
-	IDToken     string `json:"id_token"`
-	AccessToken string `json:"access_token,omitempty"`
-	TokenType   string `json:"token_type,omitempty"`
-	ExpiresIn   int64  `json:"expires_in,omitempty"`
-}
-
-func (tr TokenResponse) ValidateNoUnsignedFallback() error {
-	if strings.TrimSpace(tr.IDToken) == "" {
-		return ErrInvalidOIDCToken
-	}
-	parts := strings.Split(tr.IDToken, ".")
-	if len(parts) != 3 {
-		return ErrInvalidOIDCToken
-	}
-	var hdr struct {
-		Alg string `json:"alg"`
-	}
-	if err := decodeJSON(parts[0], &hdr); err != nil || hdr.Alg == "" || strings.EqualFold(hdr.Alg, "none") {
-		return ErrInvalidOIDCToken
-	}
-	return nil
-}
-
-func contains(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
-		}
-	}
-	return false
 }

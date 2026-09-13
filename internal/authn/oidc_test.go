@@ -2,229 +2,285 @@ package authn
 
 import (
 	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
-	"math/big"
-	"net/http"
-	"net/http/httptest"
-	"strings"
+	"errors"
+	"net/url"
+	"sync"
 	"testing"
 	"time"
+
+	gotthoidc "github.com/gotthboard/gotth-oidc/pkg/oidc"
 )
 
-func TestOIDCAuthCodeCallbackValidatesStateTokenAndCreatesSession(t *testing.T) {
-	key, jwks := testJWKS(t, "kid1")
-	now := time.Unix(2000, 0).UTC()
-	cfg := testOIDCConfig(now)
+func TestOIDCProtectedAttemptCreatesSessionAndRejectsReplay(t *testing.T) {
+	now := time.Unix(2_000, 0).UTC()
+	client := testOIDCClient("state-1", "nonce-1")
+	email := "alice@example.test"
+	client.identity = gotthoidc.Identity{Issuer: "https://auth.example.test/", Subject: "user-123", DisplayName: "Alice", Email: &email}
 	store := NewStore()
-	start, err := StartLogin(cfg, store, "https://auth.example.test/application/o/authorize/", "browser-hash", "/admin", time.Minute)
+	start, err := StartLogin(context.Background(), client, store, "browser-binding", "/admin", now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok := signToken(t, key, "kid1", map[string]any{"iss": cfg.Issuer, "sub": "user-123", "aud": []string{cfg.ClientID}, "azp": cfg.ClientID, "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "nbf": now.Add(-time.Second).Unix(), "nonce": start.Nonce, "email": "alice@example.test", "name": "Alice", "groups": []string{"gotth-mail-admins"}})
-	res, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser-hash", RedirectURI: cfg.RedirectURI, Code: "code-1", JWKS: jwks, Exchanger: fakeExchange{Token: tok}})
+	if start.StateID != "state-1" || start.Nonce != "nonce-1" {
+		t.Fatalf("bad login start %#v", start)
+	}
+	result, err := CompleteCallback(context.Background(), client, store, CallbackInput{Response: gotthoidc.AuthorizationResponse{State: start.StateID, Code: "code-1"}, BrowserBinding: "browser-binding"}, now.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Identity.Subject != "user-123" || res.Identity.Email != "alice@example.test" || res.Session.AuthMethod != "oidc" {
-		t.Fatalf("bad result %#v", res)
+	if result.Identity.Subject != "user-123" || result.Identity.Email != email || result.RedirectAfterLogin != "/admin" || len(result.Identity.Groups) != 0 {
+		t.Fatalf("bad callback result %#v", result)
 	}
-	if len(res.Identity.Groups) != 1 || res.Identity.Groups[0] != "gotth-mail-admins" {
-		t.Fatalf("groups not preserved %#v", res.Identity.Groups)
-	}
-	if _, ok := store.Session(res.Session.ID); !ok {
+	if _, ok := store.Session(context.Background(), result.Session.ID); !ok {
 		t.Fatal("session not stored")
 	}
-	if _, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser-hash", RedirectURI: cfg.RedirectURI, Code: "code-1", JWKS: jwks, Exchanger: fakeExchange{Token: tok}}); err != ErrInvalidOIDCState {
-		t.Fatalf("reused state err=%v", err)
+	if _, err := CompleteCallback(context.Background(), client, store, CallbackInput{Response: gotthoidc.AuthorizationResponse{State: start.StateID, Code: "code-1"}, BrowserBinding: "browser-binding"}, now.Add(2*time.Second)); err != ErrInvalidOIDCState {
+		t.Fatalf("replay error=%v", err)
 	}
 }
 
-func TestOIDCRejectsInvalidStateNonceRedirectAndUnsignedClaims(t *testing.T) {
-	key, jwks := testJWKS(t, "kid1")
-	now := time.Unix(3000, 0).UTC()
-	cfg := testOIDCConfig(now)
+func TestOIDCFailedExchangeSpendsAttempt(t *testing.T) {
+	now := time.Unix(3_000, 0).UTC()
+	client := testOIDCClient("state-2", "nonce-2")
+	client.completeErr = errors.New("provider rejected code")
 	store := NewStore()
-	start, _ := StartLogin(cfg, store, "https://auth.example.test/authorize", "browser", "", time.Minute)
-	validClaims := map[string]any{"iss": cfg.Issuer, "sub": "user-123", "aud": cfg.ClientID, "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "nonce": start.Nonce}
-	valid := signToken(t, key, "kid1", validClaims)
-	if _, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "wrong", RedirectURI: cfg.RedirectURI, Code: "code", JWKS: jwks, Exchanger: fakeExchange{Token: valid}}); err != ErrInvalidOIDCState {
-		t.Fatalf("wrong browser err=%v", err)
-	}
-	start, _ = StartLogin(cfg, store, "https://auth.example.test/authorize", "browser", "", time.Minute)
-	if _, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser", RedirectURI: "https://mail.example.test/wrong", Code: "code", JWKS: jwks, Exchanger: fakeExchange{Token: valid}}); err != ErrInvalidOIDCState {
-		t.Fatalf("wrong redirect err=%v", err)
-	}
-	start, _ = StartLogin(cfg, store, "https://auth.example.test/authorize", "browser", "", time.Minute)
-	badNonce := mapClone(validClaims)
-	badNonce["nonce"] = "bad"
-	if _, err := CompleteCallback(context.Background(), cfg, store, CallbackInput{StateID: start.StateID, BrowserBindingHash: "browser", RedirectURI: cfg.RedirectURI, Code: "code", JWKS: jwks, Exchanger: fakeExchange{Token: signToken(t, key, "kid1", badNonce)}}); err != ErrInvalidOIDCToken {
-		t.Fatalf("bad nonce err=%v", err)
-	}
-	unsigned := unsignedToken(t, validClaims)
-	if _, err := ValidateIDToken(cfg, unsigned, jwks, start.Nonce); err != ErrInvalidOIDCToken {
-		t.Fatalf("unsigned token err=%v", err)
-	}
-}
-
-func TestOIDCTokenClaimValidationMatrix(t *testing.T) {
-	key, jwks := testJWKS(t, "kid1")
-	now := time.Unix(4000, 0).UTC()
-	cfg := testOIDCConfig(now)
-	base := map[string]any{"iss": cfg.Issuer, "sub": "user-123", "aud": []string{"other", cfg.ClientID}, "azp": cfg.ClientID, "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "nbf": now.Add(-time.Second).Unix(), "nonce": "n"}
-	if _, err := ValidateIDToken(cfg, signToken(t, key, "kid1", base), jwks, "n"); err != nil {
+	start, err := StartLogin(context.Background(), client, store, "browser", "/", now, time.Minute)
+	if err != nil {
 		t.Fatal(err)
 	}
-	cases := []struct {
-		name   string
-		mutate func(map[string]any)
-	}{
-		{"issuer", func(m map[string]any) { m["iss"] = "https://evil.example.test" }},
-		{"subject", func(m map[string]any) { m["sub"] = "" }},
-		{"audience", func(m map[string]any) { m["aud"] = "other" }},
-		{"azp", func(m map[string]any) { m["azp"] = "other" }},
-		{"expired", func(m map[string]any) { m["exp"] = now.Add(-2 * time.Hour).Unix() }},
-		{"future_iat", func(m map[string]any) { m["iat"] = now.Add(2 * time.Hour).Unix() }},
-		{"future_nbf", func(m map[string]any) { m["nbf"] = now.Add(2 * time.Hour).Unix() }},
+	input := CallbackInput{Response: gotthoidc.AuthorizationResponse{State: start.StateID, Code: "bad-code"}, BrowserBinding: "browser"}
+	if _, err := CompleteCallback(context.Background(), client, store, input, now.Add(time.Second)); err != ErrInvalidOIDCToken {
+		t.Fatalf("first error=%v", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			m := mapClone(base)
-			tc.mutate(m)
-			if _, err := ValidateIDToken(cfg, signToken(t, key, "kid1", m), jwks, "n"); err != ErrInvalidOIDCToken {
-				t.Fatalf("err=%v", err)
+	client.completeErr = nil
+	if _, err := CompleteCallback(context.Background(), client, store, input, now.Add(2*time.Second)); err != ErrInvalidOIDCState {
+		t.Fatalf("spent attempt error=%v", err)
+	}
+}
+
+func TestOIDCRejectsWrongBrowserExpiredAttemptAndExternalReturn(t *testing.T) {
+	now := time.Unix(4_000, 0).UTC()
+	client := testOIDCClient("state-3", "nonce-3")
+	store := NewStore()
+	start, err := StartLogin(context.Background(), client, store, "browser", "/inside?x=1", now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CompleteCallback(context.Background(), client, store, CallbackInput{Response: gotthoidc.AuthorizationResponse{State: start.StateID, Code: "code"}, BrowserBinding: "wrong"}, now.Add(time.Second)); err != ErrInvalidOIDCState {
+		t.Fatalf("wrong browser error=%v", err)
+	}
+	if _, err := CompleteCallback(context.Background(), client, store, CallbackInput{Response: gotthoidc.AuthorizationResponse{State: start.StateID, Code: "code"}, BrowserBinding: "browser"}, now.Add(2*time.Minute)); err != ErrInvalidOIDCState {
+		t.Fatalf("expired attempt error=%v", err)
+	}
+	for _, target := range []string{"https://evil.example/", "//evil.example/", "/ok\nLocation: https://evil.example/"} {
+		if _, err := StartLogin(context.Background(), testOIDCClient("another-state", "another-nonce"), NewStore(), "browser", target, now, time.Minute); err != ErrInvalidOIDCState {
+			t.Fatalf("external return %q error=%v", target, err)
+		}
+	}
+}
+
+func TestOIDCMemoryStoreAdmitsOneConcurrentCallback(t *testing.T) {
+	now := time.Unix(5_000, 0).UTC()
+	client := testOIDCClient("state-4", "nonce-4")
+	store := NewStore()
+	start, err := StartLogin(context.Background(), client, store, "browser", "/", now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	winners := make(chan struct{}, 2)
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := CompleteCallback(context.Background(), client, store, CallbackInput{Response: gotthoidc.AuthorizationResponse{State: start.StateID, Code: "code"}, BrowserBinding: "browser"}, now.Add(time.Second)); err == nil {
+				winners <- struct{}{}
+			}
+		}()
+	}
+	wg.Wait()
+	close(winners)
+	if len(winners) != 1 {
+		t.Fatalf("concurrent callback winners=%d", len(winners))
+	}
+}
+
+func TestOIDCSafeErrorsAreFixedAndDoNotEchoProviderText(t *testing.T) {
+	if SafeOIDCError(nil) != "" {
+		t.Fatal("nil error was not empty")
+	}
+	if got := SafeOIDCError(ErrInvalidOIDCToken); got != ErrInvalidOIDCToken.Error() {
+		t.Fatalf("known error=%q", got)
+	}
+	if got := SafeOIDCError(errors.New("token=aaa.bbb.ccc")); got != "OIDC operation failed" {
+		t.Fatalf("provider text escaped: %q", got)
+	}
+}
+
+func TestOIDCStartBoundaryFailures(t *testing.T) {
+	now := time.Unix(6_000, 0).UTC()
+	valid := testOIDCClient("state-5", "nonce-5")
+	for name, run := range map[string]func() error{
+		"nil client": func() error {
+			_, err := StartLogin(context.Background(), nil, NewStore(), "browser", "/", now, time.Minute)
+			return err
+		},
+		"nil store": func() error {
+			_, err := StartLogin(context.Background(), valid, nil, "browser", "/", now, time.Minute)
+			return err
+		},
+		"empty browser": func() error {
+			_, err := StartLogin(context.Background(), valid, NewStore(), "", "/", now, time.Minute)
+			return err
+		},
+		"oversized browser": func() error {
+			_, err := StartLogin(context.Background(), valid, NewStore(), string(make([]byte, 1025)), "/", now, time.Minute)
+			return err
+		},
+		"zero ttl": func() error {
+			_, err := StartLogin(context.Background(), valid, NewStore(), "browser", "/", now, 0)
+			return err
+		},
+		"oversized ttl": func() error {
+			_, err := StartLogin(context.Background(), valid, NewStore(), "browser", "/", now, time.Hour)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := run(); err == nil {
+				t.Fatal("invalid login boundary accepted")
 			}
 		})
 	}
-}
-
-func TestOIDCSafeErrorsDoNotExposeToken(t *testing.T) {
-	if got := SafeOIDCError(ErrInvalidOIDCToken); got != ErrInvalidOIDCToken.Error() {
-		t.Fatalf("safe err %q", got)
+	beginFailure := testOIDCClient("state-6", "nonce-6")
+	beginFailure.beginErr = errors.New("entropy failed")
+	if _, err := StartLogin(context.Background(), beginFailure, NewStore(), "browser", "/", now, time.Minute); err == nil {
+		t.Fatal("begin failure accepted")
 	}
-	if got := SafeOIDCError(assertErr("token=aaa.bbb.ccc")); got != ErrUnsafeTokenLogValue.Error() {
-		t.Fatalf("unsafe err %q", got)
+	malformed := testOIDCClient("state-7", "nonce-7")
+	malformed.authorization.URL = "://bad"
+	if _, err := StartLogin(context.Background(), malformed, NewStore(), "browser", "/", now, time.Minute); err == nil {
+		t.Fatal("malformed authorization URL accepted")
+	}
+	inconsistent := testOIDCClient("state-8", "nonce-8")
+	inconsistent.authorization.Attempt.StateHash = sha256.Sum256([]byte("different"))
+	if _, err := StartLogin(context.Background(), inconsistent, NewStore(), "browser", "/", now, time.Minute); err == nil {
+		t.Fatal("inconsistent protected attempt accepted")
+	}
+	if _, err := StartLogin(context.Background(), valid, errorStateStore{putAttemptErr: errors.New("database down")}, "browser", "/", now, time.Minute); err == nil {
+		t.Fatal("store failure accepted")
 	}
 }
 
-type fakeExchange struct {
-	Token string
-	Err   error
-	Seen  TokenRequest
-}
-
-func (f fakeExchange) ExchangeCode(ctx context.Context, req TokenRequest) (TokenResponse, error) {
-	if f.Err != nil {
-		return TokenResponse{}, f.Err
+func TestOIDCCompletionBoundaryFailuresAndOptionalEmail(t *testing.T) {
+	now := time.Unix(7_000, 0).UTC()
+	if _, err := CompleteCallback(context.Background(), nil, NewStore(), CallbackInput{}, now); err != ErrInvalidOIDCState {
+		t.Fatalf("nil client error=%v", err)
 	}
-	return TokenResponse{IDToken: f.Token, TokenType: "Bearer"}, nil
-}
-
-type assertErr string
-
-func (e assertErr) Error() string { return string(e) }
-
-func testOIDCConfig(now time.Time) OIDCConfig {
-	return OIDCConfig{Issuer: "https://auth.example.test/application/o/gotth-mail/", ClientID: "gotth-mail", RedirectURI: "https://mail.example.test/api/v1/oidc/callback", ClockSkew: time.Minute, Now: func() time.Time { return now }}
-}
-func mapClone(in map[string]any) map[string]any {
-	out := map[string]any{}
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-func testJWKS(t *testing.T, kid string) (*rsa.PrivateKey, JWKS) {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	client := testOIDCClient("state-9", "nonce-9")
+	store := NewStore()
+	start, err := StartLogin(context.Background(), client, store, "browser", "/", now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := big.NewInt(int64(key.PublicKey.E)).Bytes()
-	return key, JWKS{Keys: []JWK{{Kty: "RSA", Kid: kid, Alg: "RS256", Use: "sig", N: base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()), E: base64.RawURLEncoding.EncodeToString(e)}}}
-}
-func signToken(t *testing.T, key *rsa.PrivateKey, kid string, claims map[string]any) string {
-	t.Helper()
-	header := map[string]any{"alg": "RS256", "kid": kid, "typ": "JWT"}
-	h := encJSON(t, header)
-	c := encJSON(t, claims)
-	signed := []byte(h + "." + c)
-	d := sha256.Sum256(signed)
-	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, d[:])
+	client.identity.Email = nil
+	result, err := CompleteCallback(context.Background(), client, store, CallbackInput{Response: gotthoidc.AuthorizationResponse{State: start.StateID, Code: "code"}, BrowserBinding: "browser"}, now.Add(time.Second))
+	if err != nil || result.Identity.Email != "" {
+		t.Fatalf("optional email result=%#v err=%v", result, err)
+	}
+	client = testOIDCClient("state-10", "nonce-10")
+	delegate := NewStore()
+	start, err = StartLogin(context.Background(), client, delegate, "browser", "/", now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return h + "." + c + "." + base64.RawURLEncoding.EncodeToString(sig)
-}
-func unsignedToken(t *testing.T, claims map[string]any) string {
-	return encJSON(t, map[string]any{"alg": "none", "typ": "JWT"}) + "." + encJSON(t, claims) + "."
-}
-func encJSON(t *testing.T, v any) string {
-	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-func TestStartLoginURLContainsOIDCParameters(t *testing.T) {
-	cfg := testOIDCConfig(time.Unix(1, 0))
-	st, err := StartLogin(cfg, NewStore(), "https://auth.example.test/authorize", "browser", "/", time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"response_type=code", "client_id=gotth-mail", "state=", "nonce=", "redirect_uri=https%3A%2F%2Fmail.example.test%2Fapi%2Fv1%2Foidc%2Fcallback"} {
-		if !strings.Contains(st.URL, want) {
-			t.Fatalf("url %q missing %q", st.URL, want)
-		}
+	failing := errorStateStore{StateStore: delegate, putSessionErr: errors.New("database down")}
+	if _, err := CompleteCallback(context.Background(), client, failing, CallbackInput{Response: gotthoidc.AuthorizationResponse{State: start.StateID, Code: "code"}, BrowserBinding: "browser"}, now.Add(time.Second)); err == nil {
+		t.Fatal("session persistence failure accepted")
 	}
 }
 
-func TestOIDCDiscoveryAndTokenResponseValidation(t *testing.T) {
-	cfg := testOIDCConfig(time.Unix(5000, 0))
-	d := DiscoveryDocument{Issuer: cfg.Issuer, AuthorizationEndpoint: "https://auth.example.test/authorize", TokenEndpoint: "https://auth.example.test/token", JWKSURI: "https://auth.example.test/jwks", ResponseTypes: []string{"code"}, IDTokenAlgs: []string{"RS256"}}
-	if err := ValidateDiscovery(cfg, d); err != nil {
-		t.Fatal(err)
-	}
-	d.Issuer = "https://evil.example.test/"
-	if err := ValidateDiscovery(cfg, d); err != ErrInvalidOIDCToken {
-		t.Fatalf("bad discovery err=%v", err)
-	}
-	if err := (TokenResponse{IDToken: unsignedToken(t, map[string]any{"sub": "x"})}).ValidateNoUnsignedFallback(); err != ErrInvalidOIDCToken {
-		t.Fatalf("unsigned fallback err=%v", err)
-	}
-	key, _ := testJWKS(t, "kid1")
-	if err := (TokenResponse{IDToken: signToken(t, key, "kid1", map[string]any{"sub": "x"})}).ValidateNoUnsignedFallback(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestDiscoverProviderFetchesDiscoveryAndJWKS(t *testing.T) {
-	key, jwks := testJWKS(t, "kid-live")
-	_ = key
-	var base string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/application/o/gotth-mail/.well-known/openid-configuration":
-			_ = json.NewEncoder(w).Encode(DiscoveryDocument{Issuer: base + "/application/o/gotth-mail/", AuthorizationEndpoint: base + "/application/o/authorize/", TokenEndpoint: base + "/application/o/token/", JWKSURI: base + "/application/o/gotth-mail/jwks/", ResponseTypes: []string{"code"}, IDTokenAlgs: []string{"RS256"}})
-		case "/application/o/gotth-mail/jwks/":
-			_ = json.NewEncoder(w).Encode(jwks)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	base = srv.URL
-	cfg := OIDCConfig{Issuer: base + "/application/o/gotth-mail/", ClientID: "gotth-mail", RedirectURI: "http://127.0.0.1:18080/api/v1/oidc/callback"}
-	d, got, err := DiscoverProvider(context.Background(), srv.Client(), cfg)
+func TestOIDCZeroValueMemoryStoreAndBrowserBinding(t *testing.T) {
+	var store Store
+	client := testOIDCClient("state-11", "nonce-11")
+	start, err := StartLogin(context.Background(), client, &store, "browser", "/", time.Unix(8_000, 0), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.TokenEndpoint == "" || len(got.Keys) != 1 || got.Keys[0].Kid != "kid-live" {
-		t.Fatalf("d=%#v jwks=%#v", d, got)
+	if err := store.PutAttempt(context.Background(), LoginAttempt{Protected: client.authorization.Attempt}); err == nil {
+		t.Fatalf("duplicate state %q replaced the original attempt", start.StateID)
 	}
+	binding, err := NewBrowserBinding()
+	if err != nil || len(binding) != 43 {
+		t.Fatalf("binding length=%d err=%v", len(binding), err)
+	}
+	var nilStore *Store
+	if err := nilStore.PutAttempt(context.Background(), LoginAttempt{}); err == nil {
+		t.Fatal("nil memory store accepted write")
+	}
+	if _, ok := nilStore.Session(context.Background(), "missing"); ok {
+		t.Fatal("nil memory store returned session")
+	}
+	if _, err := nilStore.ConsumeAttempt(context.Background(), "state", "browser", time.Now()); err != ErrInvalidOIDCState {
+		t.Fatalf("nil memory consume error=%v", err)
+	}
+	if err := nilStore.PutSession(context.Background(), Session{}); err == nil {
+		t.Fatal("nil memory store accepted session")
+	}
+}
+
+type fakeOIDCClient struct {
+	authorization gotthoidc.Authorization
+	identity      gotthoidc.Identity
+	beginErr      error
+	completeErr   error
+}
+
+func testOIDCClient(state, nonce string) *fakeOIDCClient {
+	attempt := gotthoidc.ProtectedAttempt{StateHash: sha256.Sum256([]byte(state)), ContextCiphertext: "protected-context"}
+	attempt.NonceCiphertext[0] = 1
+	attempt.PKCEVerifierCiphertext[0] = 2
+	query := url.Values{"state": {state}, "nonce": {nonce}, "code_challenge": {"challenge"}, "code_challenge_method": {"S256"}}
+	return &fakeOIDCClient{
+		authorization: gotthoidc.Authorization{URL: "https://auth.example.test/authorize?" + query.Encode(), Attempt: attempt},
+		identity:      gotthoidc.Identity{Issuer: "https://auth.example.test/", Subject: "subject"},
+	}
+}
+
+func (f *fakeOIDCClient) Begin() (gotthoidc.Authorization, error) {
+	if f.beginErr != nil {
+		return gotthoidc.Authorization{}, f.beginErr
+	}
+	return f.authorization, nil
+}
+
+func (f *fakeOIDCClient) CompleteResponse(_ context.Context, response gotthoidc.AuthorizationResponse, attempt gotthoidc.ProtectedAttempt) (gotthoidc.Identity, error) {
+	if f.completeErr != nil {
+		return gotthoidc.Identity{}, f.completeErr
+	}
+	if response.State == "" || (response.Code == "" && response.Error == nil) || attempt != f.authorization.Attempt {
+		return gotthoidc.Identity{}, errors.New("bad completion input")
+	}
+	return f.identity, nil
+}
+
+type errorStateStore struct {
+	StateStore
+	putAttemptErr error
+	putSessionErr error
+}
+
+func (store errorStateStore) PutAttempt(ctx context.Context, attempt LoginAttempt) error {
+	if store.putAttemptErr != nil {
+		return store.putAttemptErr
+	}
+	return store.StateStore.PutAttempt(ctx, attempt)
+}
+
+func (store errorStateStore) PutSession(ctx context.Context, session Session) error {
+	if store.putSessionErr != nil {
+		return store.putSessionErr
+	}
+	return store.StateStore.PutSession(ctx, session)
 }
