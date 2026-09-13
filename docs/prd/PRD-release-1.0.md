@@ -57,6 +57,12 @@ the public routes. This is implementation progress, not a stable claim:
 operator-reviewed legacy identity adoption, live Authentik lifecycle,
 backup/restore, and complete release evidence still gate promotion.
 
+The integration contract composes them through an exact durable relation:
+verified OIDC issuer/subject plus verified email must identify one active SCIM
+User `externalId` and mailbox projection. Sessions foreign-key that relation;
+SCIM deprovisioning revokes them. Authentik-specific token claims are not a
+shortcut around the libraries or product authorization state.
+
 ## Acceptance
 
 - Every published pre-stable version is an immutable `1.0.0-alpha.N` or

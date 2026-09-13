@@ -37,6 +37,12 @@ consumer adapter must:
    treating arbitrary token claims as authority; and
 6. create/rotate the application session with no token disclosure.
 
+Session creation additionally requires an exact active SCIM User binding:
+OIDC subject equals SCIM `externalId`, verified email equals projected mailbox,
+and the resulting identity reference is foreign-keyed by the session. Missing
+or ambiguous candidates fail closed. SCIM deprovisioning revokes dependent
+sessions transactionally.
+
 Existing public login and callback URLs remain unchanged during cutover.
 
 ## SCIM adoption

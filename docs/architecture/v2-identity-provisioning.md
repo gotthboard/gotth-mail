@@ -55,6 +55,21 @@ authorization-shaped claims. GOTTH Mail therefore does not grant a role from
 an ID-token `groups` claim. Role membership comes from the separately verified
 product mapping/provisioning path.
 
+After token verification, the SQL consumer resolves exactly one active
+`gotth-scim` User projection. The User `externalId` must equal the verified
+OIDC subject, and the projected mailbox address must equal the verified email.
+That check binds the exact issuer/subject pair to the mailbox UUID in
+`identity_refs`; session creation and its redacted success audit commit in the
+same transaction. Missing, duplicate, disabled, or email-mismatched candidates
+produce no identity row and no session.
+
+`sessions.identity_ref_id` is a real UUID foreign key. The adoption migration
+invalidates pre-binding application sessions and unproven Authentik identity
+rows instead of guessing provenance from the old `issuer|subject` text. Local
+identity rows and their role bindings remain intact. A live session resolves
+through the identity and active mailbox on every privileged browser request,
+so SCIM deprovisioning cannot leave a detached cookie authoritative.
+
 OIDC creates web sessions only. It does not authenticate IMAP/SMTP clients.
 
 ## Authentik role mapping architecture
@@ -149,6 +164,11 @@ email-keyed mailbox rows likewise require an operator-reviewed opaque-ID and
 Authentik-subject adoption record; provenance cannot be inferred from an
 address.
 
+SCIM disable/delete revokes sessions through the mailbox UUID inside the same
+transaction as the mailbox transition and SCIM audit. Changing an
+`externalId` after an OIDC identity has been bound is rejected; silently moving
+an authenticated subject to another mailbox is not a rename.
+
 ## GOTTH component allocation
 
 The authoritative allocation, exact inspected revisions, legal gates, and
@@ -209,6 +229,12 @@ invent an `Authorization` header for ordinary form posts. Until the durable
 OIDC subject-to-mailbox/role binding is admitted, those mutation forms remain
 absent and the UI states the blocker. The old in-process SCIM test shortcut is
 not an acceptable substitute for the real `gotth-scim` route.
+
+Once the binding is present, app-password API requests may authenticate with
+the HttpOnly application-session cookie. They receive only same-mailbox
+authority. Mutating requests additionally prove a separate CSRF secret bound
+to the stored session hash; bearer automation remains supported and does not
+use the browser CSRF mechanism.
 
 ## Plugin identity boundary
 

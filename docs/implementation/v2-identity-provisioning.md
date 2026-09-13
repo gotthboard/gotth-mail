@@ -95,6 +95,25 @@ OIDC sessions grant web/API session access only. They never authenticate IMAP/SM
 picture identity facts. It does not return authorization-shaped group claims.
 GOTTH Mail maps roles from its separately verified durable mapping path.
 
+The configured PostgreSQL store implements identity-session admission as one
+transaction:
+
+1. select active SCIM User projections whose `externalId` equals the verified
+   OIDC subject;
+2. require exactly one candidate and require its mailbox address to equal the
+   verified OIDC email after case folding;
+3. insert the exact `(provider, issuer, subject)` identity reference, or verify
+   that the existing reference still names the same mailbox UUID;
+4. insert the foreign-keyed application session and redacted login-success
+   audit event; and
+5. commit all three records together.
+
+The migration removes legacy Authentik identity rows and all pre-binding
+sessions because their issuer/mailbox provenance cannot be reconstructed.
+It preserves local identity rows, normalizes the historical scoped role name,
+adds exact identity uniqueness, prevents two Authentik subjects from owning the
+same mailbox, and makes `sessions.identity_ref_id` a UUID foreign key.
+
 ## Authentik role mapping
 
 Role mapping source is the required Authentik profile. Stored mapping includes:
@@ -216,6 +235,11 @@ Supported PATCH matrix:
 All other operations or paths fail explicitly. Empty Operations arrays fail explicitly.
 
 SCIM DELETE disables the mailbox by default and does not delete mail data.
+
+SCIM disable and delete also set `revoked_at` on every active session reached
+through that mailbox's `identity_refs` in the same transaction. A bound User's
+`externalId` is immutable; changing it requires an explicit adoption workflow,
+not an ordinary SCIM replace.
 
 Authentik is the first expected SCIM client. Authentik calls GOTTH Mail SCIM; GOTTH Mail validates, authorizes, writes canonical mailbox state, and audits mutations. Authentik never writes directly to DB or daemon config.
 
@@ -354,6 +378,13 @@ admitted, the browser UI renders an explicit unavailable status and no
 mutation forms. The scoped bearer API remains the only admitted management
 surface; expecting an HTML form to supply a bearer header is not a design.
 
+After binding, the app-password API accepts either its existing scoped bearer
+token or a live `gotth_mail_session` cookie resolved through the SQL identity
+store. Session actors receive only their bound mailbox. POST/DELETE requests
+must also supply the separate CSRF cookie value in `X-CSRF-Token`; the server
+compares its digest to the session record. Session and CSRF secrets never enter
+JSON responses, logs, audit data, or mail verifier storage.
+
 ## Plugin identity boundary
 
 Plugin service identity authenticates plugin admission only. It cannot grant roles, create users, or bypass core validation.
@@ -392,5 +423,11 @@ Required tests:
 - runtime UI uses the configured identity service and exposes no fake SCIM or
   unauthenticatable app-password mutation path
 - every identity/provisioning mutation audited
+- exact subject/externalId/email binding and ambiguous/missing/disabled
+  candidate rejection
+- session, identity reference, and login-success audit atomicity
+- session expiry and SCIM disable/delete revocation across restart
+- same-mailbox-only session app-password access and cross-mailbox denial
+- CSRF missing/mismatch rejection and session/CSRF secret non-disclosure
 - `git diff --check`
 - `go test ./...`

@@ -21,6 +21,33 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 17:37 CDT — Reconcile live OIDC/SCIM identity binding
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- identity/provisioning and release PRD, architecture, and implementation specs
+- GOTTH component adoption record
+- live Authentik feature contract and workflow manifest
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Defined the actual composition point between the admitted `gotth-oidc` and
+`gotth-scim` libraries. A verified issuer/subject and email must resolve to one
+active SCIM User external ID and mailbox before GOTTH Mail creates a
+foreign-keyed session. SCIM deprovisioning must revoke dependent sessions;
+same-mailbox app-password browser use requires a separate CSRF secret. The
+contract explicitly refuses provider-specific group-claim parsing and leaves
+unlicensed `gotth-authentik` outside the build.
+
+Verification:
+
+- `git diff --check`
+- contract layers agree on ownership, failure behavior, migration, and live
+  evidence still required
+
 ### 2026-09-13 17:51 CDT — Record app-password repair verification and review
 
 Commit: current commit; hash assigned by Git after commit

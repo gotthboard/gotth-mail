@@ -122,6 +122,20 @@ roles remains product policy and must be proven before browser mutation is
 enabled. `gotth-jobs` is excluded because credential creation, revocation, and
 success audit admission must be synchronous and atomic.
 
+The 1.0-alpha live-binding slice composes the two admitted libraries without
+making either one lie about its boundary: `gotth-oidc` supplies only verified
+issuer/subject/profile facts, while the `gotth-scim` User `externalId` and
+mailbox projection supply the authoritative provisioning side. GOTTH Mail
+requires exact subject and verified-email continuity, persists the resulting
+identity/mailbox relation, and foreign-keys sessions to it. It does not parse
+an Authentik-specific groups claim behind `gotth-oidc`'s back.
+
+`gotth-authentik` remains unimported in this slice. Its inspected source is a
+candidate for desired-state application/provider/group management, but it has
+no admitted license or release. Copying it or importing it merely to increase
+the `gotth-*` count would violate the same component contract this document is
+meant to enforce.
+
 The present Dovecot verifier projection is deliberately bounded to eight
 active app passwords per mailbox. That retains opaque random one-time secrets
 and caps PBKDF2 work without inventing a new reusable library or embedding a

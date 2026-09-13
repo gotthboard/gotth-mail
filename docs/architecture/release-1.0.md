@@ -50,6 +50,12 @@ persistent; email addresses remain mutable indexed attributes. A legacy
 migration must preserve provider IDs or record a deliberate one-time adoption
 mapping.
 
+The composition point is the database, not a provider-specific token parser.
+The exact verified OIDC subject must equal one active SCIM User `externalId`,
+and the verified email must equal that User's projected mailbox. The resulting
+identity reference owns the session; a SCIM disable/delete revokes it in the
+same transaction as deprovisioning.
+
 ## Failure boundaries
 
 - OIDC or SCIM unavailability blocks new login/provisioning; it never blocks

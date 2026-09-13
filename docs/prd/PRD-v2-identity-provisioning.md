@@ -54,6 +54,13 @@ mail-client tokens handle IMAP/SMTP clients. These concepts must stay separate.
 - Protected one-time attempt persistence: raw state, nonce, and PKCE verifier
   values are never stored.
 - Durable attempt and application-session behavior across process restart.
+- A verified OIDC identity may create a product session only when its exact
+  issuer and subject resolve to one active SCIM-provisioned mailbox whose
+  `externalId` equals the subject and whose address equals the verified OIDC
+  email after case folding. Missing, ambiguous, disabled, or mismatched
+  bindings fail closed.
+- Application sessions reference the durable `identity_refs` row by foreign
+  key. Concatenated `issuer|subject` strings are not identity records.
 
 ### Authentik role mapping
 
@@ -70,6 +77,9 @@ Requirements:
 - no local manual edits should be required to assign global admin/domain manager/scoped access.
 - Authentik is required for identity flows but remains adjacent, not embedded.
 - Authentik outage may break new SSO/provisioning actions but must not break mail delivery or daemon lookup paths.
+- ID-token `groups` claims are not role authority. `gotth-oidc` deliberately
+  excludes authorization-shaped claims; roles come only from durable role
+  bindings populated by the admitted provisioning/profile path.
 
 ### Permission simulator full coverage
 
@@ -163,3 +173,9 @@ Requirements:
   mailbox.
 - PostgreSQL app-password create/revoke and success audit admission are atomic.
 - Every identity/provisioning mutation is audited.
+- A SCIM disable or delete revokes every active application session bound to
+  that mailbox in the same database transaction. Re-enabling a mailbox never
+  revives an old session.
+- A bound OIDC session may list, create, and revoke app passwords only for its
+  own active mailbox. Browser mutations require the session cookie plus a
+  separate CSRF secret; neither value is accepted as an IMAP/SMTP credential.
