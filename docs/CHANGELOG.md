@@ -21,9 +21,33 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 17:09 CDT — Repair durable app-password and passdb behavior
+### 2026-09-13 17:14 CDT — Serialize app-password creators without transaction aborts
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/identity/identity.go`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+The real PostgreSQL concurrency gate exposed avoidable serialization failures
+when several control-plane instances created credentials for one mailbox.
+The design already holds that mailbox row through the active-count check and
+insert, which is the precise lock needed. Changed the transaction isolation to
+read committed and retained the explicit row lock, so creators serialize at
+the mailbox boundary without leaking PostgreSQL `40001` aborts to callers.
+
+Verification:
+
+- focused local identity tests pass;
+- the failed development-host concurrency gate is being rerun before any
+  admission claim.
+
+### 2026-09-13 17:09 CDT — Repair durable app-password and passdb behavior
+
+Commit: `03345463fb6b4879f92f393eef568cb36226733a`
 
 Affected files:
 
@@ -38,8 +62,9 @@ Explanation:
 Separated app-password public IDs from human labels in durable storage and
 backfilled the old overloaded field without rewriting verifiers. Creation now
 holds the mailbox row lock, enforces eight active credentials, and commits the
-credential plus normalized redacted success audit in one serializable
-transaction. Revocation uses the same atomic boundary. Startup rejects an
+credential plus normalized redacted success audit in one transaction while
+the mailbox row serializes concurrent creators. Revocation uses the same
+atomic boundary. Startup rejects an
 over-limit persisted verifier set, and the Dovecot path refuses an over-limit
 projection rather than performing attacker-controlled PBKDF2 work.
 

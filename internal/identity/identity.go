@@ -688,7 +688,7 @@ func (s *Service) persistAppPasswordCreateLocked(ctx context.Context, actor auth
 	if s.DB == nil {
 		return nil
 	}
-	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
@@ -725,7 +725,7 @@ func (s *Service) persistAppPasswordRevokeLocked(ctx context.Context, actor auth
 	if s.DB == nil {
 		return nil
 	}
-	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
