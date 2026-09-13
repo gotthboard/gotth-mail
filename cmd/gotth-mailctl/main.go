@@ -7,16 +7,16 @@ import (
 	"os"
 	"strings"
 
-	"forgejo/linus/gophermailforge/internal/apply"
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/config"
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/diag"
-	"forgejo/linus/gophermailforge/internal/ops"
-	"forgejo/linus/gophermailforge/internal/plugin"
-	"forgejo/linus/gophermailforge/internal/render"
-	"forgejo/linus/gophermailforge/internal/store"
+	"forgejo/gotthboard/gotth-mail/internal/apply"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/config"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/diag"
+	"forgejo/gotthboard/gotth-mail/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/render"
+	"forgejo/gotthboard/gotth-mail/internal/store"
 )
 
 func main() {
@@ -27,7 +27,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: gmf <config|render|diff|apply|migrate|authz|doctor>")
+		return fmt.Errorf("usage: gotth-mailctl <config|render|diff|apply|migrate|authz|doctor>")
 	}
 	switch args[0] {
 	case "config":

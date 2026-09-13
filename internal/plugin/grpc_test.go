@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	pluginv1 "forgejo/linus/gophermailforge/proto/gophermailforge/plugin/v1"
+	pluginv1 "forgejo/gotthboard/gotth-mail/proto/gotth/mail/plugin/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"

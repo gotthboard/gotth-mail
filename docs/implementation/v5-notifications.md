@@ -9,7 +9,7 @@ Implement the notification backend plugin seam with Telegram as the first requir
 
 ## Notification protobuf
 
-Package: `gophermailforge.notification.v1`
+Package: `gotth-mail.notification.v1`
 
 ```proto
 service NotificationBackend {
@@ -87,7 +87,7 @@ Telegram actor mapping is explicit. Chat membership is not authorization.
 Mapping sources may include:
 
 - configured chat/user IDs
-- linked GopherMailForge user accounts
+- linked GOTTH Mail user accounts
 - Authentik identities
 - explicit combination of the above
 

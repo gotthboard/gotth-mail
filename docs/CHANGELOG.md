@@ -21,6 +21,47 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 13:47 CDT — Rename the project to GOTTH Mail
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `README.md`, `LICENSE`, `go.mod`, and `Dockerfile`
+- `cmd/gotth-mail`, `cmd/gotth-mailctl`, and `cmd/gotth-mail-plugin`
+- current source, Compose configuration, scripts, tests, and fixtures
+- `proto/gotth/mail/plugin/v1/**`
+- current PRD, architecture, implementation, and reference documents
+- `workflow.toml`, `workflow/COVERAGE.md`, and
+  `workflow/features/project.identity/**`
+- `workflow.events.jsonl` and `docs/CHANGELOG.md`
+
+Explanation:
+
+Renamed the former pre-production GopherMailForge project to **GOTTH Mail**
+and admitted its identity contract into the canonical GOTTH project family.
+The canonical private repository is `gotthboard/gotth-mail` in Forgejo and the
+public distribution target is `gotthboard/gotth-mail` on GitHub. The Go module
+is `forgejo/gotthboard/gotth-mail`; command names are `gotth-mail`,
+`gotth-mailctl`, and `gotth-mail-plugin`; first-party configuration uses the
+`GOTTH_MAIL_` prefix; and protobuf contracts use `gotth.mail.*` under
+`proto/gotth/mail`.
+
+This commit changes project identity only. It does not import the unfinished
+v2-v5 development tree into `main`, complete unfinished features, deploy a
+mail server, or alter trust boundaries. Historical commits, tags, older
+changelog entries, dated workflow evidence, and append-only events retain the
+former name because rewriting them would falsify the record.
+
+Verification before the admission checkpoint:
+
+- protobuf Go and gRPC bindings regenerated with pinned plugin versions;
+- current-name audit found no accidental former-name identifiers outside
+  declared historical records and the rename contract itself;
+- full tests, race tests, vet, command builds, shell syntax, Compose rendering,
+  remote ref parity, and redirect checks are recorded in the final identity
+  evidence after execution.
+
 ### 2026-07-16 22:50 CDT — Add OpenPGP exact-sender drafts to PRD and specs
 
 Commit: current commit; hash assigned by Git after commit

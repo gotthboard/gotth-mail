@@ -5,15 +5,15 @@ import (
 	"net/http"
 	"strings"
 
-	"forgejo/linus/gophermailforge/internal/apply"
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/config"
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/diag"
-	"forgejo/linus/gophermailforge/internal/ops"
-	"forgejo/linus/gophermailforge/internal/plugin"
-	"forgejo/linus/gophermailforge/internal/render"
+	"forgejo/gotthboard/gotth-mail/internal/apply"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/config"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/diag"
+	"forgejo/gotthboard/gotth-mail/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/render"
 )
 
 type Server struct {
@@ -137,7 +137,7 @@ func (s Server) Handler() http.Handler {
 			cert = diag.CertCheck{Status: diag.CertUnknown, Reason: "not_configured"}
 		}
 		webmailOK := s.WebmailOK
-		writeJSON(w, ops.Doctor(r.Context(), ops.DoctorInput{ConfigOK: true, DatabaseOK: true, AuthentikOK: true, WebmailOK: webmailOK, Daemon: s.Daemon, DNSChecks: s.DNSChecks, CertCheck: cert, PluginRegistry: s.Plugins, PluginToken: r.Header.Get("X-GMF-Plugin-Token"), CorrelationID: r.Header.Get("X-Correlation-ID")}))
+		writeJSON(w, ops.Doctor(r.Context(), ops.DoctorInput{ConfigOK: true, DatabaseOK: true, AuthentikOK: true, WebmailOK: webmailOK, Daemon: s.Daemon, DNSChecks: s.DNSChecks, CertCheck: cert, PluginRegistry: s.Plugins, PluginToken: r.Header.Get("X-GOTTH-Mail-Plugin-Token"), CorrelationID: r.Header.Get("X-Correlation-ID")}))
 	})
 	mux.HandleFunc("/api/v1/debug/lookup", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {

@@ -12,7 +12,7 @@ v0 must not pretend the mail stack is complete.
 
 Minimum v0 topology:
 
-- `gophermailforge`: Go control-plane container
+- `gotth-mail`: Go control-plane container
 - database: development/reference database
 - `authentik`: required identity service/profile skeleton
 - plugin stub containers only where needed for gRPC contract tests
@@ -28,8 +28,8 @@ The control plane exposes:
 
 Suggested package boundaries:
 
-- `cmd/gophermailforge` — server entrypoint
-- `cmd/gmf` — CLI entrypoint
+- `cmd/gotth-mail` — server entrypoint
+- `cmd/gotth-mailctl` — CLI entrypoint
 - `internal/config` — typed config parsing/validation
 - `internal/store` — persistence and migrations
 - `internal/audit` — audit writer/redaction

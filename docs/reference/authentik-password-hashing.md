@@ -15,9 +15,9 @@ Relevant source facts:
 - `authentik/core/management/commands/hash_password.py` hashes passwords with Django `make_password(password)`.
 - Authentik's user API supports setting a pre-hashed Django password value and rejects invalid hash formats.
 
-## GopherMailForge requirement
+## GOTTH Mail requirement
 
-GopherMailForge mailbox-password and mail-client verifier storage must be compatible with Authentik's Django encoded password-hash format, not a private mail-only hash scheme.
+GOTTH Mail mailbox-password and mail-client verifier storage must be compatible with Authentik's Django encoded password-hash format, not a private mail-only hash scheme.
 
 The stored verifier string must carry the algorithm identifier and parameters in the Django encoded form, for example `pbkdf2_sha256$...` for the current default or another Django-recognized algorithm selected by the configured Authentik deployment.
 
@@ -35,4 +35,4 @@ Implementation must not assume a hard-coded algorithm forever. It must:
 - Do not store Authentik database rows directly.
 - Do not make Authentik the runtime dependency for IMAP/SMTP login.
 - Do not treat OIDC sessions as mail-client passwords.
-- Do not invent a GopherMailForge-only password hash if an Authentik-compatible Django hash is required.
+- Do not invent a GOTTH Mail-only password hash if an Authentik-compatible Django hash is required.

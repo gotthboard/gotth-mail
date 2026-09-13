@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"forgejo/linus/gophermailforge/internal/admin"
+	"forgejo/gotthboard/gotth-mail/internal/admin"
 )
 
 func TestMailAdminCRUDScreensRenderAndMutate(t *testing.T) {

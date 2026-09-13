@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.35.1
-// source: proto/gophermailforge/plugin/v1/plugin.proto
+// source: proto/gotth/mail/plugin/v1/plugin.proto
 
 package pluginv1
 
@@ -19,9 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PluginControl_Health_FullMethodName       = "/gophermailforge.plugin.v1.PluginControl/Health"
-	PluginControl_Version_FullMethodName      = "/gophermailforge.plugin.v1.PluginControl/Version"
-	PluginControl_Capabilities_FullMethodName = "/gophermailforge.plugin.v1.PluginControl/Capabilities"
+	PluginControl_Health_FullMethodName       = "/gotth.mail.plugin.v1.PluginControl/Health"
+	PluginControl_Version_FullMethodName      = "/gotth.mail.plugin.v1.PluginControl/Version"
+	PluginControl_Capabilities_FullMethodName = "/gotth.mail.plugin.v1.PluginControl/Capabilities"
 )
 
 // PluginControlClient is the client API for PluginControl service.
@@ -176,7 +176,7 @@ func _PluginControl_Capabilities_Handler(srv interface{}, ctx context.Context, d
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var PluginControl_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "gophermailforge.plugin.v1.PluginControl",
+	ServiceName: "gotth.mail.plugin.v1.PluginControl",
 	HandlerType: (*PluginControlServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -193,5 +193,5 @@ var PluginControl_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/gophermailforge/plugin/v1/plugin.proto",
+	Metadata: "proto/gotth/mail/plugin/v1/plugin.proto",
 }

@@ -6,7 +6,7 @@ func fixture() Service {
 	verifier := MakeDjangoPBKDF2SHA256("app-secret", "testsalt", 1200)
 	return Service{
 		Domains: map[string]Domain{
-			"example.test":  {Name: "example.test", Enabled: true, Transport: "virtual:", DKIMSelector: "mail", DKIMPrivateKeyPath: "/run/gmf/dkim/example.test.private"},
+			"example.test":  {Name: "example.test", Enabled: true, Transport: "virtual:", DKIMSelector: "mail", DKIMPrivateKeyPath: "/run/gotth-mail/dkim/example.test.private"},
 			"disabled.test": {Name: "disabled.test", Enabled: false},
 		},
 		Mailboxes: map[string]Mailbox{

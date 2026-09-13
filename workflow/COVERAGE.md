@@ -10,7 +10,7 @@ v0 foundation implementation now exists. New features still start with missing e
 
 | Subsystem | Required harnesses | Initial state | High-risk gaps |
 | --- | --- | --- | --- |
-| Config/render/apply | unit, golden render, audit integration | v0 config/render/apply tests, CLI staged/apply smoke in `cmd/gmf`, and v1 daemon config render/source-header tests in `internal/render` | future DNS/TLS/plugin-specific renderers still pending |
+| Config/render/apply | unit, golden render, audit integration | v0 config/render/apply tests, CLI staged/apply smoke in `cmd/gotth-mailctl`, and v1 daemon config render/source-header tests in `internal/render` | future DNS/TLS/plugin-specific renderers still pending |
 | Store/migrations | migration, constraint, upgrade/downgrade where safe | v0 migration/schema helper tests plus embedded Postgres SQL execution tests in `internal/store`, including enum/check constraints and SQL audit persistence | downgrade path deferred beyond v0 |
 | Audit/authz | unit, negative, fail-closed integration | v0 audit redaction, SQL audit source persistence, and authz explain tests in `internal/audit`, `internal/store`, and `internal/authz` | richer integration coverage required as mutations expand |
 | Plugin runtime | protobuf contract, authenticated/unauthenticated gRPC, failure isolation | v0 generated protobuf bindings, metadata/deadline/status-code plugin control tests, v1 first-plugin capability/auth tests in `internal/plugin`, and reference Compose plugin container checks in `test/contract` | seam-specific plugin APIs and live plugin integration still pending |
@@ -35,6 +35,6 @@ For v1 admission, run a fresh cold root review over the reference runtime smoke 
 
 ## v1 root completion coverage note — 2026-07-16
 
-The v1 completion pass added coverage for `gmf doctor --format text|json`, domain/user/alias admin CRUD backing behavior, server-rendered admin screens, seam-specific first-plugin contracts, deterministic SMTP smoke, and live reference doctor output for loud ACME/manual-certificate failure. Remaining hostile-content webmail security and production public-domain ACME issuance are explicitly later-version/deployment-scope work, not hidden v1 gaps.
+The v1 completion pass added coverage for `gotth-mailctl doctor --format text|json`, domain/user/alias admin CRUD backing behavior, server-rendered admin screens, seam-specific first-plugin contracts, deterministic SMTP smoke, and live reference doctor output for loud ACME/manual-certificate failure. Remaining hostile-content webmail security and production public-domain ACME issuance are explicitly later-version/deployment-scope work, not hidden v1 gaps.
 
 | OpenPGP outbound signing | Exact-user OpenPGP/MIME signatures for every outbound email, key state failures, audit fingerprints | planned v5 feature `v5.notifications.openpgp-signed-email`; docs/spec requirement recorded | implementation pending; unsigned fallback must remain blocked |

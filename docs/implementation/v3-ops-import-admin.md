@@ -32,8 +32,8 @@ Export preserves redaction. UI must not expose secrets or unredacted before/afte
 Retention tooling:
 
 ```text
-gmf audit retention preview --policy <policy>
-gmf audit retention apply --policy <policy> --confirm <preview-id>
+gotth-mailctl audit retention preview --policy <policy>
+gotth-mailctl audit retention apply --policy <policy> --confirm <preview-id>
 ```
 
 Retention apply is a mutation and must be audited.

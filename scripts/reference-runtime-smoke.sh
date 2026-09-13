@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 COMPOSE="$ROOT/compose/reference/docker-compose.yml"
-PROJECT=${GMF_SMOKE_PROJECT:-gmf-v1-smoke}
+PROJECT=${GOTTH_MAIL_SMOKE_PROJECT:-gotth-mail-v1-smoke}
 DOCKER=${DOCKER:-docker}
 if ! $DOCKER info >/dev/null 2>&1; then
   DOCKER="sudo docker"
@@ -13,7 +13,7 @@ cleanup() {
   rc=$?
   if [ "$rc" -ne 0 ]; then
     $DOCKER compose -p "$PROJECT" -f "$COMPOSE" ps >&2 || true
-    $DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color --tail=160 gophermailforge postfix dovecot rspamd >&2 || true
+    $DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color --tail=160 gotth-mail postfix dovecot rspamd >&2 || true
   fi
   $DOCKER compose -p "$PROJECT" -f "$COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
 }
@@ -21,7 +21,7 @@ trap cleanup EXIT
 
 cleanup
 
-$DOCKER compose -p "$PROJECT" -f "$COMPOSE" up -d --build gophermailforge postfix dovecot rspamd webmail external-webmail-plugin manual-dns-plugin cert-plugin backup-plugin
+$DOCKER compose -p "$PROJECT" -f "$COMPOSE" up -d --build gotth-mail postfix dovecot rspamd webmail external-webmail-plugin manual-dns-plugin cert-plugin backup-plugin
 
 wait_http() {
   local url=$1
@@ -51,9 +51,9 @@ wait_tcp webmail 80
 
 curl -fsS -H 'X-Correlation-ID: smoke' http://127.0.0.1:8080/internal/v1/postfix/recipients/smoke@example.test | grep '"decision":"ok"' >/dev/null
 curl -fsS -H 'X-Correlation-ID: smoke' http://127.0.0.1:8080/internal/v1/rspamd/dkim/example.test | grep '"decision":"ok"' >/dev/null
-curl -fsS -H 'X-Correlation-ID: smoke' -H 'X-GMF-Plugin-Token: dev-plugin-token' http://127.0.0.1:8080/api/v1/doctor -o /tmp/gmf-doctor.json
-grep 'acme_not_configured_reference_manual_mode' /tmp/gmf-doctor.json >/dev/null
-grep '"category":"plugin"' /tmp/gmf-doctor.json >/dev/null
+curl -fsS -H 'X-Correlation-ID: smoke' -H 'X-GOTTH-Mail-Plugin-Token: dev-plugin-token' http://127.0.0.1:8080/api/v1/doctor -o /tmp/gotth-mail-doctor.json
+grep 'acme_not_configured_reference_manual_mode' /tmp/gotth-mail-doctor.json >/dev/null
+grep '"category":"plugin"' /tmp/gotth-mail-doctor.json >/dev/null
 
 python3 - <<'PYSMTPREJECT'
 import smtplib
@@ -79,7 +79,7 @@ from email.message import EmailMessage
 import smtplib
 
 message = EmailMessage()
-message["Subject"] = "GopherMailForge smoke"
+message["Subject"] = "GOTTH Mail smoke"
 message["From"] = "smoke@example.test"
 message["To"] = "alias@example.test"  # RCPT TO:<alias@example.test>
 message.set_content("smoke-body-20260716")
@@ -114,16 +114,16 @@ $DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T dovecot sh -lc '(
   printf "d logout\r\n"
 ) | nc 127.0.0.1 143 | tee /tmp/imap.out
 grep "a OK" /tmp/imap.out >/dev/null
-grep "GopherMailForge smoke" /tmp/imap.out >/dev/null'
+grep "GOTTH Mail smoke" /tmp/imap.out >/dev/null'
 
 msg_path=$($DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T postfix sh -lc 'find /mail/example.test/smoke -type f | head -1')
-$DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T postfix sh -lc "cat '$msg_path'" | tee /tmp/gmf-smoke-message.out | grep 'smoke-body-20260716' >/dev/null
-grep '^DKIM-Signature:' /tmp/gmf-smoke-message.out >/dev/null
+$DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T postfix sh -lc "cat '$msg_path'" | tee /tmp/gotth-mail-smoke-message.out | grep 'smoke-body-20260716' >/dev/null
+grep '^DKIM-Signature:' /tmp/gotth-mail-smoke-message.out >/dev/null
 
-curl -fsS -c /tmp/gmf-roundcube.cookie http://127.0.0.1:8081/ -o /tmp/gmf-roundcube-login.html
-roundcube_token=$(sed -n 's/.*name="_token" value="\([^"]*\)".*/\1/p' /tmp/gmf-roundcube-login.html | head -1)
+curl -fsS -c /tmp/gotth-mail-roundcube.cookie http://127.0.0.1:8081/ -o /tmp/gotth-mail-roundcube-login.html
+roundcube_token=$(sed -n 's/.*name="_token" value="\([^"]*\)".*/\1/p' /tmp/gotth-mail-roundcube-login.html | head -1)
 test -n "$roundcube_token"
-curl -fsS -L -b /tmp/gmf-roundcube.cookie -c /tmp/gmf-roundcube.cookie \
+curl -fsS -L -b /tmp/gotth-mail-roundcube.cookie -c /tmp/gotth-mail-roundcube.cookie \
   -d "_token=$roundcube_token" \
   -d "_task=login" \
   -d "_action=login" \
@@ -131,27 +131,27 @@ curl -fsS -L -b /tmp/gmf-roundcube.cookie -c /tmp/gmf-roundcube.cookie \
   -d "_url=" \
   -d "_user=smoke@example.test" \
   -d "_pass=smoke-secret" \
-  'http://127.0.0.1:8081/?_task=login' -o /tmp/gmf-roundcube-mail.html
+  'http://127.0.0.1:8081/?_task=login' -o /tmp/gotth-mail-roundcube-mail.html
 
 for _ in $(seq 1 30); do
-  curl -fsS -b /tmp/gmf-roundcube.cookie 'http://127.0.0.1:8081/?_task=mail&_mbox=INBOX' -o /tmp/gmf-roundcube-inbox.html
-  if grep 'GopherMailForge smoke' /tmp/gmf-roundcube-inbox.html >/dev/null; then break; fi
-  curl -fsS -b /tmp/gmf-roundcube.cookie 'http://127.0.0.1:8081/?_task=mail&_action=list&_mbox=INBOX&_remote=1' -o /tmp/gmf-roundcube-list.json || true
-  if grep 'GopherMailForge smoke' /tmp/gmf-roundcube-list.json >/dev/null; then break; fi
+  curl -fsS -b /tmp/gotth-mail-roundcube.cookie 'http://127.0.0.1:8081/?_task=mail&_mbox=INBOX' -o /tmp/gotth-mail-roundcube-inbox.html
+  if grep 'GOTTH Mail smoke' /tmp/gotth-mail-roundcube-inbox.html >/dev/null; then break; fi
+  curl -fsS -b /tmp/gotth-mail-roundcube.cookie 'http://127.0.0.1:8081/?_task=mail&_action=list&_mbox=INBOX&_remote=1' -o /tmp/gotth-mail-roundcube-list.json || true
+  if grep 'GOTTH Mail smoke' /tmp/gotth-mail-roundcube-list.json >/dev/null; then break; fi
   sleep 1
 done
-grep -E 'GopherMailForge smoke' /tmp/gmf-roundcube-inbox.html /tmp/gmf-roundcube-list.json >/dev/null
+grep -E 'GOTTH Mail smoke' /tmp/gotth-mail-roundcube-inbox.html /tmp/gotth-mail-roundcube-list.json >/dev/null
 
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T rspamd sh -lc 'test -s /run/rspamd/dkim/example.test.mail.key && test -s /run/rspamd/dkim/example.test.mail.txt && rspamadm configtest >/tmp/rspamd-configtest.out && grep -i "syntax OK" /tmp/rspamd-configtest.out >/dev/null'
-$DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color gophermailforge | grep 'postfix policy recipient=alias@example.test decision=ok' >/dev/null
-$DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color gophermailforge | grep 'postfix policy recipient=nobody@example.test decision=not_found' >/dev/null
+$DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color gotth-mail | grep 'postfix policy recipient=alias@example.test decision=ok' >/dev/null
+$DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color gotth-mail | grep 'postfix policy recipient=nobody@example.test decision=not_found' >/dev/null
 
 cat <<'OK'
 reference runtime smoke passed:
-- GopherMailForge daemon contracts reachable
+- GOTTH Mail daemon contracts reachable
 - doctor output exposes loud ACME/manual-certificate reference failure and plugin health
-- real Postfix queried the GopherMailForge policy socket, rejected an unknown recipient, accepted SMTP, and delivered alias mail to Maildir
-- real Dovecot used generated GopherMailForge-derived auth/userdb material and IMAP login/read succeeded
+- real Postfix queried the GOTTH Mail policy socket, rejected an unknown recipient, accepted SMTP, and delivered alias mail to Maildir
+- real Dovecot used generated GOTTH Mail-derived auth/userdb material and IMAP login/read succeeded
 - Roundcube external webmail provider exposed the delivered message through its IMAP-backed mail view
 - real Rspamd ran in the Postfix milter path, DKIM-signed the delivered message, and validated config
 OK

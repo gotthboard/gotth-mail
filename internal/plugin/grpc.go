@@ -3,7 +3,7 @@ package plugin
 import (
 	"context"
 
-	pluginv1 "forgejo/linus/gophermailforge/proto/gophermailforge/plugin/v1"
+	pluginv1 "forgejo/gotthboard/gotth-mail/proto/gotth/mail/plugin/v1"
 	"google.golang.org/grpc"
 )
 

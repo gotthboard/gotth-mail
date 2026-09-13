@@ -5,7 +5,7 @@ Source architecture: [architecture/v4-webmail.md](../architecture/v4-webmail.md)
 
 ## Goal
 
-If the v4 cutline is explicitly accepted, implement a custom GopherMailForge webmail provider. Until then, supported external webmail remains required.
+If the v4 cutline is explicitly accepted, implement a custom GOTTH Mail webmail provider. Until then, supported external webmail remains required.
 
 Custom webmail must remain separate from the control-plane product and must not replace Dovecot, SMTP submission, or core policy.
 

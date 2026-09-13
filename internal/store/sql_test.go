@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"forgejo/linus/gophermailforge/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	_ "github.com/lib/pq"
 )
@@ -17,9 +17,9 @@ func TestMigrateSQLOnEmbeddedPostgres(t *testing.T) {
 	port := freePort(t)
 	root := t.TempDir()
 	cfg := embeddedpostgres.DefaultConfig().
-		Username("gmf").
-		Password("gmf-dev-only").
-		Database("gophermailforge").
+		Username("gotth-mail").
+		Password("gotth-mail-dev-only").
+		Database("gotth-mail").
 		Port(uint32(port)).
 		DataPath(filepath.Join(root, "data")).
 		RuntimePath(filepath.Join(root, "runtime")).

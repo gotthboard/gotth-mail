@@ -14,8 +14,8 @@ v0 must not implement production Postfix/Dovecot/Rspamd behavior or pretend the 
 Required packages:
 
 ```text
-cmd/gophermailforge
-cmd/gmf
+cmd/gotth-mail
+cmd/gotth-mailctl
 internal/api
 internal/apply
 internal/audit
@@ -27,14 +27,14 @@ internal/plugin
 internal/render
 internal/store
 internal/version
-proto/gophermailforge/plugin/v1
+proto/gotth/mail/plugin/v1
 compose/reference
 migrations
 test/contract
 ```
 
-`cmd/gophermailforge` starts HTTP, migrations if configured, health, and plugin client runtime.
-`cmd/gmf` exposes config validation, migration, render, diff, apply, and permission-simulator commands.
+`cmd/gotth-mail` starts HTTP, migrations if configured, health, and plugin client runtime.
+`cmd/gotth-mailctl` exposes config validation, migration, render, diff, apply, and permission-simulator commands.
 
 ## Database schema
 
@@ -215,10 +215,10 @@ Rules:
 CLI commands:
 
 ```text
-gmf config validate --config <path>
-gmf render --config <path>
-gmf diff --config <path>
-gmf apply --config <path> --confirm <staged-id>
+gotth-mailctl config validate --config <path>
+gotth-mailctl render --config <path>
+gotth-mailctl diff --config <path>
+gotth-mailctl apply --config <path> --confirm <staged-id>
 ```
 
 ## HTTP/API shell
@@ -290,7 +290,7 @@ Bootstrap/recovery must work when Authentik is unavailable through local admin o
 
 ## Plugin protobuf skeleton
 
-Package: `gophermailforge.plugin.v1`
+Package: `gotth.mail.plugin.v1`
 
 ```proto
 service PluginControl {

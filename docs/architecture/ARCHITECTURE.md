@@ -1,10 +1,10 @@
-# GopherMailForge Architecture
+# GOTTH Mail Architecture
 
 ## Purpose
 
-This document defines the system-wide architecture for GopherMailForge. Version-specific architecture details live in this directory and must remain traceable to the matching PRD files.
+This document defines the system-wide architecture for GOTTH Mail. Version-specific architecture details live in this directory and must remain traceable to the matching PRD files.
 
-GopherMailForge is a Docker/Compose-deployed Go control plane for a self-hosted mail stack. It uses Mailu as the reference architecture, but replaces Mailu's Python control plane with explicit Go services, typed configuration, containerized plugin mechanisms, audited mutations, and daemon-facing contracts that are testable without guessing.
+GOTTH Mail is a Docker/Compose-deployed Go control plane for a self-hosted mail stack. It uses Mailu as the reference architecture, but replaces Mailu's Python control plane with explicit Go services, typed configuration, containerized plugin mechanisms, audited mutations, and daemon-facing contracts that are testable without guessing.
 
 ## Architecture documents
 
@@ -28,7 +28,7 @@ The core profile controls signing, exact identity binding, delegation, and fail-
 
 ### Control plane container
 
-The GopherMailForge control plane is a Go service shipped as a Docker container. It owns:
+The GOTTH Mail control plane is a Go service shipped as a Docker container. It owns:
 
 - typed configuration parsing and validation
 - database migrations
@@ -52,11 +52,11 @@ The mail path remains built on proven daemons:
 - Rspamd for local-domain/DKIM/spam-related decisions
 - selected external webmail provider until v4 custom webmail is accepted
 
-GopherMailForge does not reimplement SMTP, IMAP, spam filtering, DKIM signing, or webmail in early versions.
+GOTTH Mail does not reimplement SMTP, IMAP, spam filtering, DKIM signing, or webmail in early versions.
 
 ### Identity service
 
-Authentik is a required adjacent service/profile for identity flows. It is not embedded. GopherMailForge integrates with it through:
+Authentik is a required adjacent service/profile for identity flows. It is not embedded. GOTTH Mail integrates with it through:
 
 - OIDC for web/session login
 - SCIM for provisioning
@@ -163,7 +163,7 @@ The first supported deployment target is Docker/Compose. Kubernetes or arbitrary
 
 Reference topology includes:
 
-- `gophermailforge` control-plane container
+- `gotth-mail` control-plane container
 - database container or configured external DB
 - front/proxy container
 - Postfix container

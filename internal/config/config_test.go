@@ -15,7 +15,7 @@ tls:
 authentik:
   enabled: true
   base_url: "https://auth.example.test"
-  oidc_client_id: "gmf"
+  oidc_client_id: "gotth-mail"
   scim_base_url: "https://auth.example.test/scim"
 roles:
   global_admin_group: "admins"

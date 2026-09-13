@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package gophermailforge.plugin.v1;
+package gotth.mail.plugin.v1;
 
-option go_package = "forgejo/linus/gophermailforge/proto/gophermailforge/plugin/v1;pluginv1";
+option go_package = "forgejo/gotthboard/gotth-mail/proto/gotth/mail/plugin/v1;pluginv1";
 
 service PluginControl {
   rpc Health(HealthRequest) returns (HealthResponse);

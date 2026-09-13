@@ -1,4 +1,4 @@
-module forgejo/linus/gophermailforge
+module forgejo/gotthboard/gotth-mail
 
 go 1.25.0
 

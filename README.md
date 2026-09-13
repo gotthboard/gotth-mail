@@ -1,6 +1,6 @@
-# GopherMailForge
+# GOTTH Mail
 
-GopherMailForge is a Docker/Compose-deployed Go control plane and deployment system for a self-hosted mail stack. It uses Mailu as the reference architecture and executable behavioral specification, while keeping the control plane explicit: typed configuration, audited mutations, daemon-facing contracts, and containerized plugin mechanisms.
+GOTTH Mail is a Docker/Compose-deployed Go control plane and deployment system for a self-hosted mail stack. It uses Mailu as the reference architecture and executable behavioral specification, while keeping the control plane explicit: typed configuration, audited mutations, daemon-facing contracts, and containerized plugin mechanisms.
 
 This repository is currently in the planning/specification phase. Do not jump straight into implementation; follow the documented sequence.
 
@@ -9,6 +9,7 @@ This repository is currently in the planning/specification phase. Do not jump st
 - [Product requirements](docs/prd/PRD.md)
 - [Architecture](docs/architecture/ARCHITECTURE.md)
 - [Implementation specifications](docs/implementation/IMPLEMENTATION.md)
+- [Project identity contract](docs/prd/PRD-project-identity.md)
 - [Changelog](docs/CHANGELOG.md)
 - [Authentik password hashing compatibility](docs/reference/authentik-password-hashing.md)
 - [Workflow manifest](workflow.toml)
@@ -37,7 +38,7 @@ The intended sequence is:
 6. Tests/verification
 7. Evidence/handoff
 
-Root implementation worktrees are created under `/tmp/gophermailforge-worktrees` and recorded in `workflow.toml`. Every meaningful repository change must update [docs/CHANGELOG.md](docs/CHANGELOG.md) in the same commit.
+Root implementation worktrees are created under `/tmp/gotth-mail-worktrees` and recorded in `workflow.toml`. Every meaningful repository change must update [docs/CHANGELOG.md](docs/CHANGELOG.md) in the same commit.
 
 ## License
 

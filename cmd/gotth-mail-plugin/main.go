@@ -5,7 +5,7 @@ import (
 	"net"
 	"os"
 
-	"forgejo/linus/gophermailforge/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"google.golang.org/grpc"
 )
 
@@ -17,15 +17,15 @@ func main() {
 }
 
 func run() error {
-	name := os.Getenv("GMF_PLUGIN_NAME")
+	name := os.Getenv("GOTTH_MAIL_PLUGIN_NAME")
 	if name == "" {
-		return fmt.Errorf("GMF_PLUGIN_NAME required")
+		return fmt.Errorf("GOTTH_MAIL_PLUGIN_NAME required")
 	}
-	token := os.Getenv("GMF_PLUGIN_SERVICE_TOKEN")
+	token := os.Getenv("GOTTH_MAIL_PLUGIN_SERVICE_TOKEN")
 	if token == "" {
-		return fmt.Errorf("GMF_PLUGIN_SERVICE_TOKEN required")
+		return fmt.Errorf("GOTTH_MAIL_PLUGIN_SERVICE_TOKEN required")
 	}
-	listen := os.Getenv("GMF_PLUGIN_LISTEN")
+	listen := os.Getenv("GOTTH_MAIL_PLUGIN_LISTEN")
 	if listen == "" {
 		listen = ":9443"
 	}

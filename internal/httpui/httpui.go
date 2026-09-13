@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"forgejo/linus/gophermailforge/internal/admin"
+	"forgejo/gotthboard/gotth-mail/internal/admin"
 )
 
 func Handler() http.Handler { return HandlerWithAdmin(admin.NewStore()) }
@@ -116,7 +116,7 @@ func renderPage(w http.ResponseWriter, store *admin.Store, msg string) {
 }
 
 var page = template.Must(template.New("page").Parse(`<!doctype html><html><body><main id="app">
-<h1>GopherMailForge</h1>
+<h1>GOTTH Mail</h1>
 <nav>Dashboard Config Audit Authentik Plugins Doctor DNS DKIM Lookup Queue Mail Admin</nav>
 {{if .Message}}<p role="status">{{.Message}}</p>{{end}}
 <section id="mail-admin"><h2>Mail admin UI</h2>

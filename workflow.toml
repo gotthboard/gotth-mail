@@ -1,7 +1,7 @@
 schema_version = 1
-project = "GopherMailForge"
+project = "GOTTH Mail"
 profile = "medium"
-active_feature = "v1.mail-core"
+active_feature = "project.identity.rename-gotth-mail"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -9,8 +9,8 @@ changelog = "docs/CHANGELOG.md"
 [repository]
 main_branch = "main"
 remote = "origin"
-canonical_remote_url = "forgejo:linus/GopherMailForge.git"
-worktree_root = "/tmp/gophermailforge-worktrees"
+canonical_remote_url = "forgejo:gotthboard/gotth-mail.git"
+worktree_root = "/tmp/gotth-mail-worktrees"
 source_root = "."
 workflow_root = "workflow"
 
@@ -31,7 +31,7 @@ implementation_spec = "docs/implementation/v0-foundation.md"
 path = "workflow/features/v0.foundation"
 source_path = "."
 branch = "workflow/root/v0.foundation"
-worktree = "/tmp/gophermailforge-worktrees/v0.foundation"
+worktree = "/tmp/gotth-mail-worktrees/v0.foundation"
 dependencies = []
 required_verification = ["git diff --check", "go test ./..."]
 
@@ -45,7 +45,7 @@ implementation_spec = "docs/implementation/v1-mail-core.md"
 path = "workflow/features/v1.mail-core"
 source_path = "."
 branch = "workflow/root/v1.mail-core"
-worktree = "/tmp/gophermailforge-worktrees/v1.mail-core"
+worktree = "/tmp/gotth-mail-worktrees/v1.mail-core"
 dependencies = ["v0.foundation"]
 required_verification = ["git diff --check", "go test ./...", "reference compose smoke test"]
 
@@ -59,7 +59,7 @@ implementation_spec = "docs/implementation/v2-identity-provisioning.md"
 path = "workflow/features/v2.identity-provisioning"
 source_path = "."
 branch = "workflow/root/v2.identity-provisioning"
-worktree = "/tmp/gophermailforge-worktrees/v2.identity-provisioning"
+worktree = "/tmp/gotth-mail-worktrees/v2.identity-provisioning"
 dependencies = ["v1.mail-core"]
 required_verification = ["git diff --check", "go test ./...", "OIDC/SCIM/app-password/password-hash compatibility contract tests"]
 
@@ -73,7 +73,7 @@ implementation_spec = "docs/implementation/v3-ops-import-admin.md"
 path = "workflow/features/v3.ops-import-admin"
 source_path = "."
 branch = "workflow/root/v3.ops-import-admin"
-worktree = "/tmp/gophermailforge-worktrees/v3.ops-import-admin"
+worktree = "/tmp/gotth-mail-worktrees/v3.ops-import-admin"
 dependencies = ["v2.identity-provisioning"]
 required_verification = ["git diff --check", "go test ./...", "backup/import/bulk-operation contract tests"]
 
@@ -87,7 +87,7 @@ implementation_spec = "docs/implementation/v4-webmail.md"
 path = "workflow/features/v4.webmail"
 source_path = "."
 branch = "workflow/root/v4.webmail"
-worktree = "/tmp/gophermailforge-worktrees/v4.webmail"
+worktree = "/tmp/gotth-mail-worktrees/v4.webmail"
 dependencies = ["v3.ops-import-admin"]
 required_verification = ["git diff --check", "go test ./...", "IMAP/SMTP/MIME/XSS webmail tests"]
 
@@ -101,9 +101,23 @@ implementation_spec = "docs/implementation/v5-notifications.md"
 path = "workflow/features/v5.notifications"
 source_path = "."
 branch = "workflow/root/v5.notifications"
-worktree = "/tmp/gophermailforge-worktrees/v5.notifications"
+worktree = "/tmp/gotth-mail-worktrees/v5.notifications"
 dependencies = ["v3.ops-import-admin"]
 required_verification = ["git diff --check", "go test ./...", "notification plugin/approval binding tests", "OpenPGP/MIME signed outbound email tests"]
+
+[[root_features]]
+id = "project.identity"
+title = "GOTTH Mail Project Identity"
+state = "in_progress"
+prd = "docs/prd/PRD-project-identity.md"
+architecture = "docs/architecture/project-identity.md"
+implementation_spec = "docs/implementation/project-identity.md"
+path = "workflow/features/project.identity"
+source_path = "."
+branch = "workflow/feature/project.rename-gotth-mail-main"
+worktree = "/tmp/gotth-mail-worktrees/project.identity"
+dependencies = []
+required_verification = ["git diff --check", "go test ./...", "renamed command builds", "current-name audit", "Forgejo ref and redirect proof"]
 
 [[features]]
 id = "v0.foundation.repo-skeleton"
@@ -116,6 +130,18 @@ branch = "workflow/feature/v0.foundation.repo-skeleton"
 dependencies = []
 implementation_spec_sections = ["Source layout", "GOTTH shell"]
 verification = ["container build smoke test", "go test ./...", "git diff --check"]
+
+[[features]]
+id = "project.identity.rename-gotth-mail"
+root = "project.identity"
+title = "Rename the product and admit it to the GOTTH project series"
+state = "in_progress"
+path = "workflow/features/project.identity/rename-gotth-mail"
+source_path = "."
+branch = "workflow/feature/project.rename-gotth-mail-main"
+dependencies = []
+implementation_spec_sections = ["Required changes", "Verification"]
+verification = ["git diff --check", "go test ./...", "renamed command builds", "protobuf regeneration", "current-name audit", "Forgejo ref and redirect proof"]
 
 [[features]]
 id = "v0.foundation.store-migrations"
@@ -171,7 +197,7 @@ root = "v0.foundation"
 title = "Plugin registry, service identity, gRPC control contract"
 state = "done"
 path = "workflow/features/v0.foundation/plugin-runtime"
-source_path = "proto/gophermailforge/plugin/v1"
+source_path = "proto/gotth/mail/plugin/v1"
 branch = "workflow/feature/v0.foundation.plugin-runtime"
 dependencies = ["v0.foundation.store-migrations", "v0.foundation.audit-authz"]
 implementation_spec_sections = ["Plugin protobuf skeleton"]
@@ -363,7 +389,7 @@ root = "v5.notifications"
 title = "Telegram notification plugin and operational alerts"
 state = "planned"
 path = "workflow/features/v5.notifications/telegram-plugin-alerts"
-source_path = "proto/gophermailforge/notification/v1"
+source_path = "proto/gotth/mail/notification/v1"
 branch = "workflow/feature/v5.notifications.telegram-plugin-alerts"
 dependencies = ["v3.ops-import-admin", "v0.foundation.plugin-runtime"]
 implementation_spec_sections = ["Notification protobuf", "Telegram plugin", "Alerts"]

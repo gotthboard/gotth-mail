@@ -9,28 +9,28 @@ import (
 	"os"
 	"strings"
 
-	"forgejo/linus/gophermailforge/internal/admin"
-	"forgejo/linus/gophermailforge/internal/api"
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/diag"
-	"forgejo/linus/gophermailforge/internal/httpui"
-	"forgejo/linus/gophermailforge/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/admin"
+	"forgejo/gotthboard/gotth-mail/internal/api"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/diag"
+	"forgejo/gotthboard/gotth-mail/internal/httpui"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
 )
 
 func main() {
 	mux := http.NewServeMux()
 	server := api.Server{Authz: authz.StaticAuthorizer{}}
-	if os.Getenv("GMF_REFERENCE_FIXTURE") == "1" {
+	if os.Getenv("GOTTH_MAIL_REFERENCE_FIXTURE") == "1" {
 		server = referenceServer()
-		go servePostfixPolicy(os.Getenv("GMF_POSTFIX_POLICY_LISTEN"), server.Daemon)
+		go servePostfixPolicy(os.Getenv("GOTTH_MAIL_POSTFIX_POLICY_LISTEN"), server.Daemon)
 	}
 	mux.Handle("/api/", server.Handler())
 	mux.Handle("/internal/", server.Handler())
 	mux.Handle("/healthz", server.Handler())
 	mux.Handle("/readyz", server.Handler())
 	mux.Handle("/", httpui.HandlerWithAdmin(referenceAdminStore()))
-	addr := os.Getenv("GMF_LISTEN")
+	addr := os.Getenv("GOTTH_MAIL_LISTEN")
 	if addr == "" {
 		addr = ":8080"
 	}

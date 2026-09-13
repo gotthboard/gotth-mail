@@ -5,11 +5,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"forgejo/linus/gophermailforge/internal/authz"
-	"forgejo/linus/gophermailforge/internal/config"
-	"forgejo/linus/gophermailforge/internal/daemon"
-	"forgejo/linus/gophermailforge/internal/ops"
-	"forgejo/linus/gophermailforge/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/config"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
 )
 
 func TestV0APIShellRoutes(t *testing.T) {
@@ -26,7 +26,7 @@ tls:
 authentik:
   enabled: true
   base_url: "https://auth.example.test"
-  oidc_client_id: "gmf"
+  oidc_client_id: "gotth-mail"
   scim_base_url: "https://auth.example.test/scim"
 roles:
   global_admin_group: "admins"

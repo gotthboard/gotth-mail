@@ -2,8 +2,8 @@ package apply
 
 import (
 	"context"
-	"forgejo/linus/gophermailforge/internal/audit"
-	"forgejo/linus/gophermailforge/internal/render"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/render"
 	"testing"
 )
 
