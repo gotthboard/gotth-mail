@@ -80,6 +80,34 @@ func TestSQLServicePersistsMailboxAppPasswordAndTokensAcrossRestart(t *testing.T
 	}
 }
 
+func TestSQLServiceLoadsEnabledDomainPolicy(t *testing.T) {
+	db := identityTestDB(t)
+	emptyService, err := NewSQLService(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := emptyService.ValidateMailbox("user@unmanaged.test"); err == nil {
+		t.Fatal("empty durable domain policy admitted an unmanaged domain")
+	}
+	if _, err := db.Exec(`INSERT INTO domains(id, name, enabled, created_at, updated_at) VALUES ($1,$2,true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),($3,$4,false,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+		"00000000-0000-4000-8000-000000000701", "example.test",
+		"00000000-0000-4000-8000-000000000702", "disabled.test"); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewSQLService(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ValidateMailbox("user@example.test"); err != nil {
+		t.Fatalf("enabled persisted domain rejected: %v", err)
+	}
+	for _, address := range []string{"user@disabled.test", "user@unmanaged.test"} {
+		if err := service.ValidateMailbox(address); err == nil {
+			t.Fatalf("mailbox outside enabled durable domain policy accepted: %s", address)
+		}
+	}
+}
+
 func identityTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	return testpg.DB(t, store.MigrateSQL)

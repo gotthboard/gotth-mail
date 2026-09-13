@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "v2.identity-provisioning.oidc-sessions"
+active_feature = "v2.identity-provisioning.scim"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"

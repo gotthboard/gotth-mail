@@ -150,6 +150,53 @@ func (s *Service) GetUser(id string) (Mailbox, bool) {
 	return m, ok
 }
 
+func (s *Service) ValidateMailbox(email string) error { return s.validateMailbox(email) }
+
+func (s *Service) AuthorizeProvision(ctx context.Context, actor authz.Actor, email string) error {
+	return s.authorize(ctx, actor, "mailbox:provision", authz.Resource{Type: "mailbox", ID: email})
+}
+
+// ApplySCIMMailbox updates the runtime mailbox/passdb projection after the
+// canonical SQL transaction commits. It performs no I/O and cannot reject an
+// already committed resource mutation.
+func (s *Service) ApplySCIMMailbox(previousEmail string, mailbox Mailbox) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := strings.ToLower(mailbox.Email)
+	previousKey := strings.ToLower(previousEmail)
+	if current, exists := s.Mailboxes[previousKey]; mailbox.Verifier == "" && exists {
+		mailbox.Verifier = current.Verifier
+	}
+	if previousKey != "" && previousKey != key {
+		delete(s.Mailboxes, previousKey)
+		if s.Daemon != nil {
+			delete(s.Daemon.Mailboxes, previousKey)
+			delete(s.Daemon.AppPasswordVerifiers, previousKey)
+		}
+		for id, appPassword := range s.AppPasswords {
+			if appPassword.MailboxID == previousKey {
+				appPassword.MailboxID = key
+				s.AppPasswords[id] = appPassword
+			}
+		}
+	}
+	s.Mailboxes[key] = mailbox
+	s.syncDaemonMailboxLocked(mailbox)
+	s.syncDaemonAppPasswordsLocked(key)
+}
+
+func (s *Service) BindDaemon(service *daemon.Service) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Daemon = service
+	for _, mailbox := range s.Mailboxes {
+		s.syncDaemonMailboxLocked(mailbox)
+	}
+	for mailboxID := range s.Mailboxes {
+		s.syncDaemonAppPasswordsLocked(mailboxID)
+	}
+}
+
 func (s *Service) CreateOrReplaceUser(ctx context.Context, actor authz.Actor, m Mailbox, password string) (Mailbox, error) {
 	if err := s.authorize(ctx, actor, "mailbox:provision", authz.Resource{Type: "mailbox", ID: m.Email}); err != nil {
 		_ = s.audit(ctx, actor, "scim.user.write", m.Email, "denied", err)
@@ -173,8 +220,9 @@ func (s *Service) CreateOrReplaceUser(ctx context.Context, actor authz.Actor, m 
 		m.ID = m.Email
 	}
 	m.UpdatedAt = now
+	key := strings.ToLower(m.Email)
 	s.mu.Lock()
-	old, exists := s.Mailboxes[m.ID]
+	old, exists := s.Mailboxes[key]
 	if exists && m.Verifier == "" {
 		m.Verifier = old.Verifier
 	}
@@ -191,7 +239,7 @@ func (s *Service) CreateOrReplaceUser(ctx context.Context, actor authz.Actor, m 
 		s.mu.Unlock()
 		return Mailbox{}, err
 	}
-	s.Mailboxes[m.ID] = m
+	s.Mailboxes[key] = m
 	s.syncDaemonMailboxLocked(m)
 	s.mu.Unlock()
 	return m, nil
@@ -374,10 +422,13 @@ func (s *Service) VerifyDovecot(mailboxID, secret string) bool {
 }
 
 func HashSecret(secret string) (string, error) {
+	return HashSecretBytes([]byte(secret))
+}
+func HashSecretBytes(secret []byte) (string, error) {
 	if len(secret) < 8 {
 		return "", errors.New("password too short")
 	}
-	return daemon.MakeDjangoPBKDF2SHA256(secret, safeToken(10), 120000), nil
+	return daemon.MakeDjangoPBKDF2SHA256Bytes(secret, safeToken(10), 120000), nil
 }
 func (s *Service) validateMailbox(email string) error {
 	a, err := mail.ParseAddress(email)
@@ -388,7 +439,7 @@ func (s *Service) validateMailbox(email string) error {
 	if !store.ValidateDomainName(parts[1]) {
 		return errors.New("invalid domain")
 	}
-	if len(s.KnownDomains) > 0 && !s.KnownDomains[parts[1]] {
+	if (s.DB != nil || len(s.KnownDomains) > 0) && !s.KnownDomains[parts[1]] {
 		return errors.New("domain outside allowed policy")
 	}
 	return nil
@@ -436,20 +487,43 @@ func (s *Service) loadSQL(ctx context.Context) error {
 	if s.DB == nil {
 		return nil
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT d.name, m.local_part, COALESCE(m.display_name,''), m.enabled, COALESCE(m.verifier,''), m.created_at, m.updated_at FROM mailboxes m JOIN domains d ON d.id=m.domain_id`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT name FROM domains WHERE enabled=true`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			rows.Close()
+			return err
+		}
+		s.KnownDomains[strings.ToLower(domain)] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	rows, err = s.DB.QueryContext(ctx, `SELECT d.name, m.local_part, COALESCE(m.display_name,''), m.enabled, COALESCE(m.verifier,''), COALESCE(m.scim_resource_id,''), m.created_at, m.updated_at FROM mailboxes m JOIN domains d ON d.id=m.domain_id`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var domain, local, display, verifier string
+		var domain, local, display, verifier, scimID string
 		var active bool
 		var created, updated time.Time
-		if err := rows.Scan(&domain, &local, &display, &active, &verifier, &created, &updated); err != nil {
+		if err := rows.Scan(&domain, &local, &display, &active, &verifier, &scimID, &created, &updated); err != nil {
 			return err
 		}
 		email := strings.ToLower(local + "@" + domain)
-		s.Mailboxes[email] = Mailbox{ID: email, Email: email, DisplayName: display, Active: active, Verifier: verifier, CreatedAt: created, UpdatedAt: updated}
+		id := email
+		if scimID != "" {
+			id = scimID
+		}
+		s.Mailboxes[email] = Mailbox{ID: id, Email: email, DisplayName: display, Active: active, Verifier: verifier, CreatedAt: created, UpdatedAt: updated}
 	}
 	if err := rows.Err(); err != nil {
 		return err

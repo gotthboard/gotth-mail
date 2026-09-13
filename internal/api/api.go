@@ -46,6 +46,7 @@ type Server struct {
 	WebmailClient        *webmail.Client
 	WebmailSender        *webmail.Sender
 	NotificationRecorder notification.Recorder
+	SCIM                 http.Handler
 }
 
 func (s Server) Handler() http.Handler {
@@ -181,7 +182,17 @@ func (s Server) Handler() http.Handler {
 		writeJSON(w, map[string]any{"identity": res.Identity, "session": map[string]any{"expires_at": res.Session.ExpiresAt, "auth_method": res.Session.AuthMethod}})
 	})
 	identitySvc := s.identityService(auditLog)
-	s.registerSCIM(mux, auditLog, identitySvc)
+	if s.SCIM != nil {
+		mux.Handle("/scim/v2", s.SCIM)
+		mux.Handle("/scim/v2/", s.SCIM)
+	} else {
+		mux.HandleFunc("/scim/v2", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "SCIM unavailable", http.StatusServiceUnavailable)
+		})
+		mux.HandleFunc("/scim/v2/", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "SCIM unavailable", http.StatusServiceUnavailable)
+		})
+	}
 	s.registerIdentityAPI(mux, auditLog, identitySvc)
 	s.registerV3(mux, auditLog, identitySvc)
 	s.registerWebmail(mux, identitySvc)

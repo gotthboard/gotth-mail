@@ -219,6 +219,35 @@ SCIM DELETE disables the mailbox by default and does not delete mail data.
 
 Authentik is the first expected SCIM client. Authentik calls GOTTH Mail SCIM; GOTTH Mail validates, authorizes, writes canonical mailbox state, and audits mutations. Authentik never writes directly to DB or daemon config.
 
+Runtime enablement uses `GOTTH_MAIL_SCIM_EXTERNAL_URL`, which must identify the
+external `/scim/v2` base. SCIM cannot start without the migrated PostgreSQL
+identity store. Every request, including discovery, requires a verifier-backed
+`scim_client` bearer. The stable token actor ID, not its rotatable secret,
+derives the opaque storage scope.
+
+Migration `0004_scim_resources` stores resources, ordered search indexes,
+immutable index contracts, permanent tombstones, and the mailbox-to-resource
+binding. Nanosecond timestamps are stored as integers because the imported
+store contract requires exact round trips. A User create/replace/patch/delete,
+optional `PasswordTransaction.SetPassword`, mailbox projection, and success
+audit row execute in one serializable transaction with no application retry of
+the callback. SQL uniqueness failures become SCIM conflicts. Password bytes
+are cleared by the protocol library after the consumer hashes them; only the
+Django PBKDF2-SHA256 verifier and a non-secret credential revision persist.
+
+The process mutex deliberately orders commits with the current process-local
+daemon/passdb projection. PostgreSQL constraints remain authoritative across
+processes, but multiple control-plane writers are not admitted because their
+memory views would diverge until restart. Startup reloads SQL mailboxes and
+rebuilds the daemon view. The deployment must run one control-plane writer
+until explicit cache propagation replaces this constraint.
+
+Legacy email-keyed mailbox rows are not automatically converted. The future
+adoption operation must take an explicit reviewed mapping from existing
+mailbox to opaque SCIM ID and authoritative Authentik subject, prove rollback,
+and reject ambiguous ownership. Until that subject binding exists, Groups and
+SCIM-driven web-session invalidation remain explicitly unavailable.
+
 ## SCIM error contract
 
 Use SCIM error shape:

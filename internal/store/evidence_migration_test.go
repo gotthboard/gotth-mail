@@ -105,6 +105,26 @@ func TestOIDCProtectedAttemptsMigrationInvalidatesLegacyInflightState(t *testing
 	assertProtectedOIDCAttemptColumns(t, db)
 }
 
+func TestSCIMResourcesMigrationCreatesOpaqueDurableStore(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	for _, relation := range []string{"scim_resources", "scim_index_contracts", "scim_resource_indexes", "scim_tombstones"} {
+		var exists bool
+		if err := db.QueryRow(`SELECT to_regclass('public.' || $1) IS NOT NULL`, relation).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Fatalf("migration did not create %s", relation)
+		}
+	}
+	var dataType, nullable string
+	if err := db.QueryRow(`SELECT data_type, is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='mailboxes' AND column_name='scim_resource_id'`).Scan(&dataType, &nullable); err != nil {
+		t.Fatal(err)
+	}
+	if dataType != "text" || nullable != "YES" {
+		t.Fatalf("mailboxes.scim_resource_id type=%s nullable=%s", dataType, nullable)
+	}
+}
+
 func TestMigrateSQLRejectsInvalidBaseLedgerBeforeUpgrade(t *testing.T) {
 	tests := []struct {
 		name    string

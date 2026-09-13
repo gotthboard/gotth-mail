@@ -66,7 +66,7 @@ func TestNotificationDeliveryEvidenceMigrationFileMatchesRuntime(t *testing.T) {
 	if fileSQL != notificationDeliveryEvidenceMigrationSQL {
 		t.Fatalf("migration file/runtime drift\nfile: %q\nruntime: %q", fileSQL, notificationDeliveryEvidenceMigrationSQL)
 	}
-	if len(upgradeMigrations) != 2 || upgradeMigrations[0].Version != notificationDeliveryEvidenceMigrationVersion || upgradeMigrations[0].SQL != fileSQL {
+	if len(upgradeMigrations) != 3 || upgradeMigrations[0].Version != notificationDeliveryEvidenceMigrationVersion || upgradeMigrations[0].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -81,11 +81,26 @@ func TestOIDCProtectedAttemptsMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 2 || upgradeMigrations[1].Version != oidcProtectedAttemptsMigrationVersion || upgradeMigrations[1].SQL != fileSQL {
+	if len(upgradeMigrations) != 3 || upgradeMigrations[1].Version != oidcProtectedAttemptsMigrationVersion || upgradeMigrations[1].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
 	if got, want := upgradeMigrations[1].Checksum, hex.EncodeToString(sum[:]); got != want {
+		t.Fatalf("runtime checksum=%q file checksum=%q", got, want)
+	}
+}
+
+func TestSCIMResourcesMigrationFileMatchesRuntime(t *testing.T) {
+	data, err := os.ReadFile("../../migrations/0004_scim_resources.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileSQL := strings.TrimSpace(string(data))
+	if len(upgradeMigrations) != 3 || upgradeMigrations[2].Version != scimResourcesMigrationVersion || upgradeMigrations[2].SQL != fileSQL {
+		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
+	}
+	sum := sha256.Sum256([]byte(fileSQL))
+	if got, want := upgradeMigrations[2].Checksum, hex.EncodeToString(sum[:]); got != want {
 		t.Fatalf("runtime checksum=%q file checksum=%q", got, want)
 	}
 }

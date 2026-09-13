@@ -12,6 +12,9 @@ import (
 
 	"forgejo/gotthboard/gotth-mail/internal/api"
 	"forgejo/gotthboard/gotth-mail/internal/authn"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
 
@@ -50,6 +53,43 @@ func TestConfigureOIDCFromEnvDiscoversProvider(t *testing.T) {
 	}
 	if server.OIDCClient == nil || server.OIDCStore == nil || server.OIDCRedirectURI != "http://127.0.0.1:18080/api/v1/oidc/callback" {
 		t.Fatalf("server=%#v", server)
+	}
+}
+
+func TestConfigureSCIMFromEnvRequiresDurabilityAndBuildsHandler(t *testing.T) {
+	t.Setenv("GOTTH_MAIL_SCIM_EXTERNAL_URL", "https://mail.example.test/scim/v2")
+	if err := configureSCIMFromEnv(&api.Server{}); err == nil {
+		t.Fatal("SCIM accepted missing durable database")
+	}
+	db := testpg.DB(t, store.MigrateSQL)
+	ids, err := identity.NewSQLService(context.Background(), db, "example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ids.AddToken("scim-runtime", "scim_client", "runtime-secret"); err != nil {
+		t.Fatal(err)
+	}
+	server := api.Server{AuditDB: db, Identity: ids, Authz: authz.StaticAuthorizer{}}
+	if err := configureSCIMFromEnv(&server); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/scim/v2/ServiceProviderConfig", nil)
+	request.Header.Set("Authorization", "Bearer runtime-secret")
+	response := httptest.NewRecorder()
+	server.SCIM.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "ServiceProviderConfig") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestRuntimeMuxRoutesSCIMToAPIServer(t *testing.T) {
+	server := api.Server{SCIM: http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusTeapot)
+	})}
+	response := httptest.NewRecorder()
+	runtimeMux(server).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/scim/v2/Users", nil))
+	if response.Code != http.StatusTeapot {
+		t.Fatalf("SCIM route escaped API server: status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

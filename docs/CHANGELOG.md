@@ -21,9 +21,60 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 15:48 CDT — Adopt gotth-oidc with protected durable attempts
+### 2026-09-13 16:29 CDT — Adopt gotth-scim with atomic PostgreSQL projection
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/scimstore`, `internal/api`, `internal/identity`, and
+  `internal/daemon`
+- `cmd/gotth-mail`, migration `0004_scim_resources`, and migration tests
+- GOTTH stack reference, identity and release PRD/architecture/implementation
+  specifications, README, workflow manifest, and SCIM evidence
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Removed the handwritten runtime SCIM router and delegated SCIM protocol,
+validation, ETag, PATCH/search, opaque-ID, tombstone, conformance, and
+write-only password mechanics to the exact pinned `gotth-scim` library. Added
+a conformant PostgreSQL adapter whose serializable transaction atomically
+admits the SCIM resource, ordered indexes, password verifier, mailbox state,
+and success audit record. The executable now routes `/scim/` to the API server
+and refuses configured SCIM without migrated durable identity storage.
+
+Each durable `scim_client` actor ID derives an opaque storage scope. Passwords
+are hashed from bytes into the existing Django PBKDF2-SHA256 verifier contract;
+the plaintext and password field are never stored. Opaque resource IDs survive
+mailbox rename and restart, while tombstones permanently reserve deleted IDs
+and external IDs. A restarted service now binds and rebuilds its daemon/passdb
+view and enabled-domain policy from SQL; disabled and unmanaged domains fail
+closed instead of being created by provisioning. Mailbox rename also moves
+email-keyed app-password ownership atomically, removes the obsolete daemon
+entry, and preserves the credentials at the new address across restart.
+
+The documents explicitly retain the honest limits: Groups and SCIM-driven web
+session invalidation wait for authoritative Authentik subject binding; legacy
+email-keyed mailboxes require an operator-reviewed adoption mapping; and the
+current process-local daemon projection admits only one control-plane writer.
+Other `gotth-*` components are used only where their licensed public contracts
+fit, not imported as branding theater.
+
+Verification:
+
+- `scim.CheckStore` and focused PostgreSQL store/API/runtime/migration/
+  identity/daemon tests pass on the development host;
+- focused tests cover restart, concurrency, rollback, tombstones, opaque IDs,
+  password replacement, routing, malformed input, and explicit Groups
+  rejection;
+- final full, race, serialized coverage, vet, command-build, module, Graphify,
+  and cold-review gates pass as recorded in the feature evidence; admission is
+  limited to the unfinished 1.0-alpha development line.
+
+### 2026-09-13 15:48 CDT — Adopt gotth-oidc with protected durable attempts
+
+Commit: `ebdba59a51d157a77acab089ff5c7c3d89835ed9`
 
 Affected files:
 

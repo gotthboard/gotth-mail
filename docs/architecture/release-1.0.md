@@ -41,11 +41,14 @@ authenticated provisioning client to an opaque scope. Password changes use
 the optional atomic password transaction and never enter resource JSON or
 logs.
 
-The adapter projects admitted SCIM Users and Groups into mailbox, role, and
-domain state through the existing authorization, audit, and daemon-sync
-services. SCIM resource IDs become opaque persistent IDs; email addresses
-remain mutable indexed attributes. A migration must preserve provider IDs or
-record a deliberate one-time adoption mapping.
+The adapter projects admitted SCIM Users into mailbox and domain state through
+the existing authorization and audit services, then updates the single
+process's daemon/passdb view after commit. SCIM Groups, role projection, and
+web-session invalidation remain disabled until opaque User membership is bound
+to authoritative Authentik OIDC subjects. SCIM resource IDs are opaque and
+persistent; email addresses remain mutable indexed attributes. A legacy
+migration must preserve provider IDs or record a deliberate one-time adoption
+mapping.
 
 ## Failure boundaries
 
@@ -55,8 +58,8 @@ record a deliberate one-time adoption mapping.
   once or its browser binding fails.
 - A SCIM transaction rolls back if product validation, authorization, password
   delegation, audit, or persistence fails.
-- Duplicate in-tree protocol code is removed only after route-compatible
-  integration tests pass against Authentik.
+- Duplicate in-tree protocol code is removed only with route-compatible
+  consumer tests; live Authentik integration still blocks promotion.
 - Missing GitHub distribution, library license decisions, or exact dependency
   provenance blocks release promotion but does not weaken runtime checks.
 

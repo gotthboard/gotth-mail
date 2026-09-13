@@ -431,7 +431,14 @@ func normalizeAddress(v string) string {
 }
 
 func MakeDjangoPBKDF2SHA256(secret, salt string, iterations int) string {
-	dk := pbkdf2.Key([]byte(secret), []byte(salt), iterations, 32, sha256.New)
+	return MakeDjangoPBKDF2SHA256Bytes([]byte(secret), salt, iterations)
+}
+
+// MakeDjangoPBKDF2SHA256Bytes avoids an immutable string copy for callers
+// handling write-only credentials. It does not retain secret.
+func MakeDjangoPBKDF2SHA256Bytes(secret []byte, salt string, iterations int) string {
+	dk := pbkdf2.Key(secret, []byte(salt), iterations, 32, sha256.New)
+	defer clear(dk)
 	return fmt.Sprintf("pbkdf2_sha256$%d$%s$%s", iterations, salt, base64.StdEncoding.EncodeToString(dk))
 }
 
