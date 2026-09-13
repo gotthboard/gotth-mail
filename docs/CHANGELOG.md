@@ -52,6 +52,41 @@ Verification:
   rendering, workflow manifest/path checks, exact dependency provenance, and
   Forgejo/GitHub library ref parity passed on the development host.
 
+### 2026-09-13 14:58 CDT — Pin licensed GOTTH identity-library mains
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `go.mod` and `go.sum`
+- identity-library release workflow record and evidence
+- `workflow.events.jsonl` and `docs/CHANGELOG.md`
+
+Explanation:
+
+Updated the unfinished GOTTH Mail development line to the exact MIT-admitted
+`gotth-oidc` and `gotth-scim` main revisions. The public module pins now
+resolve to the same commits independently verified on canonical Forgejo and
+public GitHub. No runtime API changed; the dependency content adds only the
+admitted license and its library workflow evidence.
+
+This does not claim that the consumer adapters exist or that either library is
+ready for an immutable tag. Protected OIDC attempt/session persistence,
+transactional SCIM persistence and product projection, opaque resource-ID
+migration, and live Authentik lifecycle proof remain blocking work. Nothing
+was tagged, released, merged to product `main`, or deployed.
+
+Verification:
+
+- focused consumer contract tests passed;
+- full and race test suites, vet, and all command builds passed on the
+  development host;
+- exact module-version assertions and Forgejo/GitHub main-ref assertions were
+  run separately and passed; and
+- the generic repository manifest/path audit failed on the pre-existing
+  missing source path `proto/gotth/mail/notification/v1`; this pin-only change
+  does not repair or conceal that unrelated repository defect.
+
 ### 2026-09-13 15:08 CDT — Define the 1.0 release line and pin GOTTH identity libraries
 
 Commit: current commit; hash assigned by Git after commit

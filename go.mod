@@ -4,8 +4,8 @@ go 1.26.6
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
-	github.com/gotthboard/gotth-oidc v0.0.0-20260906064525-1b84c0780850
-	github.com/gotthboard/gotth-scim v0.0.0-20260906064525-774fe1bc2057
+	github.com/gotthboard/gotth-oidc v0.0.0-20260913195135-1ae119e52f8e
+	github.com/gotthboard/gotth-scim v0.0.0-20260913195137-255629e27f7d
 	github.com/lib/pq v1.12.3
 	golang.org/x/crypto v0.54.0
 	google.golang.org/grpc v1.82.1
