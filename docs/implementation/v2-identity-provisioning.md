@@ -314,9 +314,16 @@ Storage:
 - never return secret after creation
 - revocation sets `revoked_at`
 - Dovecot passdb validates against the same stored verifier string
+- configured runtime passdb success requires durable audit admission; an audit
+  failure returns a temporary failure instead of accepting unaudited use
 - enforce a maximum of eight active app passwords per mailbox while holding
   the mailbox row lock; a ninth concurrent or sequential create fails
 - reject startup when persisted active app-password state violates that bound
+
+Migration preflight must reject, rather than truncate, a legacy app-password
+label outside the new 1–128 byte contract. Operators must rename such labels
+before retrying the migration; the verifier and revocation state are never
+rewritten merely to make the schema apply.
 
 Configured PostgreSQL create/revoke uses a database transaction that contains
 the token mutation and normalized success audit insert. The process-local

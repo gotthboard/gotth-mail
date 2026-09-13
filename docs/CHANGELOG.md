@@ -21,6 +21,43 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 17:09 CDT — Repair durable app-password and passdb behavior
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/identity`, `internal/daemon`, `internal/audit`, `internal/httpui`,
+  `internal/store`, and `cmd/gotth-mail`
+- migration `0005_app_password_contract` and focused migration/runtime tests
+- identity architecture/implementation docs, README, and superseded evidence
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Separated app-password public IDs from human labels in durable storage and
+backfilled the old overloaded field without rewriting verifiers. Creation now
+holds the mailbox row lock, enforces eight active credentials, and commits the
+credential plus normalized redacted success audit in one serializable
+transaction. Revocation uses the same atomic boundary. Startup rejects an
+over-limit persisted verifier set, and the Dovecot path refuses an over-limit
+projection rather than performing attacker-controlled PBKDF2 work.
+
+Configured database startup now gives identity and passdb a durable SQL audit
+writer. Otherwise-successful mailbox or app-password authentication defers
+when that audit write fails. The runtime UI now receives the same configured
+identity service as the API, but it no longer leaks mailbox/app-password
+metadata or exposes fake SCIM and bearer-header-dependent mutation forms.
+Those browser mutations remain unavailable until a verified OIDC session is
+authoritatively bound to mailbox and role state.
+
+Verification:
+
+- focused store, identity, daemon, API, command, audit, and UI tests pass on
+  the local constrained host;
+- PostgreSQL concurrency/rollback, full, race, coverage, build, graph, and
+  cold-review gates remain pending on the development host.
+
 ### 2026-09-13 17:05 CDT — Reconcile app-password and Dovecot admission contract
 
 Commit: current commit; hash assigned by Git after commit

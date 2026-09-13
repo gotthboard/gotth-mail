@@ -154,20 +154,6 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 		renderPage(w, store, ids, "alias deleted", "")
 	})
 
-	mux.HandleFunc("/identity/scim-test", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		_ = r.ParseForm()
-		actor, ok := requireUIActor(w, r, ids, az, "mailbox:provision", authz.Resource{Type: "mailbox", ID: r.Form.Get("userName")})
-		if !ok {
-			return
-		}
-		m, err := ids.CreateOrReplaceUser(r.Context(), actor, identity.Mailbox{Email: r.Form.Get("userName"), DisplayName: r.Form.Get("displayName"), Active: true}, r.Form.Get("password"))
-		renderPage(w, store, ids, message(err, "SCIM test user provisioned: "+m.Email), "")
-	})
-
 	mux.HandleFunc("/ops/backup-verify", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -233,36 +219,6 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 		_, err := bulkStore.Apply(r.Context(), ids.Audit, actor, r.Form.Get("operation"), r.Form.Get("id"), r.Form.Get("confirm"), r.Form.Get("hash"), time.Now())
 		renderPage(w, store, ids, message(err, "bulk operation applied"), "")
 	})
-	mux.HandleFunc("/identity/app-passwords", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			_ = r.ParseForm()
-			actor, ok := requireUIActor(w, r, ids, az, "mailbox:app_password.create", authz.Resource{Type: "mailbox", ID: r.Form.Get("mailbox")})
-			if !ok {
-				return
-			}
-			created, err := ids.CreateAppPassword(r.Context(), actor, r.Form.Get("mailbox"), r.Form.Get("label"))
-			msg := message(err, "app password created; secret_once="+created.SecretOnce)
-			renderPage(w, store, ids, msg, "")
-		case http.MethodGet:
-			renderPage(w, store, ids, "", "")
-		default:
-			w.WriteHeader(http.StatusMethodNotAllowed)
-		}
-	})
-	mux.HandleFunc("/identity/app-passwords/revoke", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		_ = r.ParseForm()
-		actor, ok := requireUIActor(w, r, ids, az, "mailbox:app_password.revoke", authz.Resource{Type: "mailbox", ID: r.Form.Get("mailbox")})
-		if !ok {
-			return
-		}
-		err := ids.RevokeAppPassword(r.Context(), actor, r.Form.Get("mailbox"), r.Form.Get("token_id"))
-		renderPage(w, store, ids, message(err, "app password revoked"), "")
-	})
 	mux.HandleFunc("/identity/simulator", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -293,13 +249,8 @@ func splitTargets(raw string) []string {
 
 func renderPage(w http.ResponseWriter, store *admin.Store, ids *identity.Service, msg, simulation string) {
 	domains, users, aliases := store.Lists()
-	mailboxes := ids.ListUsers()
-	apps := map[string][]identity.AppPassword{}
-	for _, m := range mailboxes {
-		apps[m.ID] = ids.ListAppPasswords(m.ID)
-	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = page.Execute(w, map[string]any{"Message": msg, "Simulation": simulation, "Domains": domains, "Users": users, "Aliases": aliases, "Mailboxes": mailboxes, "AppPasswords": apps})
+	_ = page.Execute(w, map[string]any{"Message": msg, "Simulation": simulation, "Domains": domains, "Users": users, "Aliases": aliases})
 }
 
 var page = template.Must(template.New("page").Parse(`<!doctype html><html><body><main id="app">
@@ -309,8 +260,8 @@ var page = template.Must(template.New("page").Parse(`<!doctype html><html><body>
 
 <section id="identity-status"><h3>OIDC/Auth status</h3><p>OIDC login uses browser-bound authorization-code state, nonce, redirect URI, issuer, audience, azp, and token-signature validation.</p></section>
 <section id="authentik-role-mapping"><h3>Authentik role/group mapping</h3><p>Mappings assign global admin, domain manager, and scoped domain access through Authentik groups. Local manual role edits are not the expected path.</p></section>
-<section id="scim-status"><h3>SCIM status/test</h3><form method="post" action="/identity/scim-test"><input name="userName" placeholder="user@example.test"><input name="displayName" placeholder="User"><input name="password" placeholder="mail password"><button>Provision SCIM test user</button></form><p>Provisioned users visible to identity service:</p><ul>{{range .Mailboxes}}<li>{{.Email}} active={{.Active}} display={{.DisplayName}}</li>{{else}}<li>No SCIM users provisioned.</li>{{end}}</ul></section>
-<section id="app-passwords"><h3>App-password list/create/revoke</h3><form method="post" action="/identity/app-passwords"><input name="mailbox" placeholder="user@example.test"><input name="label" placeholder="phone"><button>Create app password</button></form>{{range .Mailboxes}}{{$mb := .}}<h4>{{.Email}}</h4><ul>{{range index $.AppPasswords .ID}}<li>{{.ID}} {{.Label}} revoked={{if .RevokedAt}}yes{{else}}no{{end}} <form method="post" action="/identity/app-passwords/revoke"><input type="hidden" name="mailbox" value="{{$mb.Email}}"><input type="hidden" name="token_id" value="{{.ID}}"><button>Revoke</button></form></li>{{else}}<li>No app passwords.</li>{{end}}</ul>{{end}}</section>
+<section id="scim-status"><h3>SCIM capability/status</h3><p>Provisioning uses the authenticated <a href="/scim/v2/ServiceProviderConfig">gotth-scim service endpoint</a>. Browser test provisioning is unavailable because it would bypass the canonical SCIM protocol and transaction.</p></section>
+<section id="app-passwords"><h3>App passwords</h3><p>Browser self-service is unavailable until the verified gotth-oidc session is durably bound to mailbox and role state. Authorized automation may use the scoped <code>/api/v1/mailboxes/{id}/app-passwords</code> API.</p></section>
 <section id="permission-simulator"><h3>Permission simulator UI</h3><form method="post" action="/identity/simulator"><input name="actor_type" value="local_admin"><input name="actor_id" value="ui"><input name="action" value="status:read"><input name="resource_type" value="system"><input name="resource_id" value="self"><button>Explain permission</button></form>{{if .Simulation}}<pre>{{.Simulation}}</pre>{{end}}</section>
 
 <section id="audit-ui"><h3>Audit UI/search/export</h3><p>Audit viewer supports actor/action/resource/result filtering and redacted export through API routes.</p><a href="/api/v1/audit/export?format=jsonl">Export audit JSONL</a></section>

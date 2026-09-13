@@ -1,5 +1,11 @@
 # App passwords and identity UI evidence
 
+> Superseded on 2026-09-13. This record proved only the old in-memory happy
+> path. It did not prove stable label persistence, atomic SQL audit admission,
+> bounded PBKDF2 work, durable runtime audit wiring, or an authentically usable
+> browser identity. The feature remains `in_progress`; current evidence is
+> recorded separately after the repaired gates run.
+
 Feature: `v2.identity-provisioning.app-passwords-ui`
 Timestamp: 2026-07-16 12:05 CDT
 

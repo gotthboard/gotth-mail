@@ -2,6 +2,8 @@ package identity
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +108,33 @@ func TestAppPasswordsSecretOnceRevokeAndVerifier(t *testing.T) {
 	}
 }
 
+func TestAppPasswordLimitAndDisabledMailboxFailClosed(t *testing.T) {
+	s := testService()
+	actor := authz.Actor{Type: "local_admin", ID: "admin"}
+	if _, err := s.CreateOrReplaceUser(context.Background(), actor, Mailbox{Email: "user@example.test", Active: true}, "mail-password"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < MaxActiveAppPasswords; i++ {
+		if _, err := s.CreateAppPassword(context.Background(), actor, "user@example.test", fmt.Sprintf("client-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.CreateAppPassword(context.Background(), actor, "user@example.test", "one-too-many"); !errors.Is(err, ErrAppPasswordLimit) {
+		t.Fatalf("ninth app password error=%v", err)
+	}
+	listed := s.ListAppPasswords("user@example.test")
+	if len(listed) != MaxActiveAppPasswords {
+		t.Fatalf("listed=%d", len(listed))
+	}
+	secret := "generated-client-secret"
+	m := s.Mailboxes["user@example.test"]
+	m.Active = false
+	s.Mailboxes["user@example.test"] = m
+	if s.VerifyDovecot("user@example.test", secret) {
+		t.Fatal("disabled mailbox accepted an app password")
+	}
+}
+
 func TestBearerTokensAndFailureAuditing(t *testing.T) {
 	s := testService()
 	if err := s.AddToken("scim", "scim_client", "scim-secret"); err != nil {
@@ -150,6 +179,33 @@ func TestIdentityMutationsFailClosedWhenAuditWriteFails(t *testing.T) {
 	}
 	if _, ok := s.GetUser("user@example.test"); ok {
 		t.Fatal("mailbox mutated despite audit failure")
+	}
+}
+
+func TestVolatileAppPasswordMutationsFailClosedWhenAuditWriteFails(t *testing.T) {
+	s := testService()
+	actor := authz.Actor{Type: "local_admin", ID: "admin"}
+	if _, err := s.CreateOrReplaceUser(context.Background(), actor, Mailbox{Email: "user@example.test", Active: true}, "mail-password"); err != nil {
+		t.Fatal(err)
+	}
+	s.Audit = failingAudit{}
+	if _, err := s.CreateAppPassword(context.Background(), actor, "user@example.test", "phone"); err == nil || !strings.Contains(err.Error(), "audit down") {
+		t.Fatalf("create audit failure=%v", err)
+	}
+	if len(s.ListAppPasswords("user@example.test")) != 0 {
+		t.Fatal("app password created despite audit failure")
+	}
+	s.Audit = &audit.MemoryWriter{}
+	created, err := s.CreateAppPassword(context.Background(), actor, "user@example.test", "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Audit = failingAudit{}
+	if err := s.RevokeAppPassword(context.Background(), actor, "user@example.test", created.ID); err == nil || !strings.Contains(err.Error(), "audit down") {
+		t.Fatalf("revoke audit failure=%v", err)
+	}
+	if !s.VerifyDovecot("user@example.test", created.SecretOnce) {
+		t.Fatal("app password revoked despite audit failure")
 	}
 }
 

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -16,6 +17,8 @@ import (
 
 	"golang.org/x/crypto/pbkdf2"
 )
+
+const MaxAppPasswordVerifiers = 8
 
 type Decision string
 
@@ -229,12 +232,21 @@ func (s Service) DovecotPassdb(correlationID string, req PassdbRequest) Response
 	}
 	addr := normalizeAddress(req.Username)
 	if VerifyDjangoPBKDF2SHA256(m.Verifier, req.Secret) == nil {
-		s.auditPassdb(correlationID, req, "mailbox_password", "success", "")
+		if err := s.auditPassdb(correlationID, req, "mailbox_password", "success", ""); err != nil {
+			return resp(correlationID, Defer, "audit_unavailable")
+		}
 		return resp(correlationID, OK, "passdb_authenticated")
 	}
-	for _, verifier := range s.appPasswordVerifiers()[addr] {
+	appVerifiers := s.appPasswordVerifiers()[addr]
+	if len(appVerifiers) > MaxAppPasswordVerifiers {
+		s.auditPassdb(correlationID, req, "mail_secret", "failure", "app_password_verifier_limit_exceeded")
+		return resp(correlationID, Error, "app_password_verifier_limit_exceeded")
+	}
+	for _, verifier := range appVerifiers {
 		if VerifyDjangoPBKDF2SHA256(verifier, req.Secret) == nil {
-			s.auditPassdb(correlationID, req, "app_password", "success", "")
+			if err := s.auditPassdb(correlationID, req, "app_password", "success", ""); err != nil {
+				return resp(correlationID, Defer, "audit_unavailable")
+			}
 			return resp(correlationID, OK, "passdb_authenticated")
 		}
 	}
@@ -387,11 +399,11 @@ func (s Service) rateLimits() map[string]RateLimit {
 	return out
 }
 
-func (s Service) auditPassdb(correlationID string, req PassdbRequest, method, result, code string) {
+func (s Service) auditPassdb(correlationID string, req PassdbRequest, method, result, code string) error {
 	if s.Audit == nil {
-		return
+		return nil
 	}
-	_ = s.Audit.Write(nil, audit.Event{
+	return s.Audit.Write(context.Background(), audit.Event{
 		Actor:         audit.ActorRef{Type: "dovecot", ID: req.Protocol},
 		Action:        passdbAuditAction(method),
 		Resource:      audit.ResourceRef{Type: "mailbox", ID: normalizeAddress(req.Username)},

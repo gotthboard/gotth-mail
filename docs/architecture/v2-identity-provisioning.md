@@ -178,6 +178,8 @@ App passwords/mail-client tokens:
   Dovecot lookup to one mailbox-password verifier plus eight app-password
   verifiers instead of an attacker-controlled unbounded PBKDF2 scan
 - emit audit events for create/revoke/use metadata
+- defer an otherwise successful passdb authentication when its configured
+  durable audit writer fails; accepted credential use is never silently lost
 
 On PostgreSQL, credential create/revoke and the matching success audit record
 share one transaction. The mailbox row is locked while the active-count gate
