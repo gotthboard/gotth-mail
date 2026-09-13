@@ -21,9 +21,35 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 17:14 CDT — Serialize app-password creators without transaction aborts
+### 2026-09-13 17:23 CDT — Make live passdb projection race-free and bounded-copy
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/daemon/daemon.go`
+- `internal/identity/identity.go` and concurrency tests
+- identity architecture and `docs/CHANGELOG.md`
+
+Explanation:
+
+Cold source review found that the former daemon projection mutated public maps
+while concurrent passdb requests cloned them without synchronization. That was
+a real concurrent-map panic and stale-auth risk hidden by sequential tests.
+The live identity binding now installs a daemon state lock; mailbox and
+app-verifier projection writes use it, while passdb takes one coherent snapshot
+of only the requested mailbox and its bounded verifier slice. This also removes
+the absurd whole-map copy from every authentication attempt.
+
+Verification:
+
+- focused local identity, daemon, API, and command tests pass, including
+  concurrent create/revoke projection against passdb readers;
+- the development-host race and full gates will be rerun on this exact commit.
+
+### 2026-09-13 17:14 CDT — Serialize app-password creators without transaction aborts
+
+Commit: `2506f7093a4ff5e8679f76f6d6ba01dc6dd074df`
 
 Affected files:
 

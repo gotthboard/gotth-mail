@@ -186,7 +186,10 @@ share one transaction. The mailbox row is locked while the active-count gate
 and mutation are admitted, so concurrent creators cannot exceed the limit.
 The committed SQL row is authoritative; the single control-plane process
 updates its Dovecot verifier projection only after commit and rebuilds it on
-startup.
+startup. Mailbox and app-verifier projection writes share the daemon state's
+read/write lock with passdb snapshots. A passdb request copies only the target
+mailbox's bounded verifier slice; it does not clone the entire mailbox/token
+map per authentication or race a concurrent create/revoke projection.
 
 ## Identity UI
 

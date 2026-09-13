@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
 )
 
 func testService() *Service {
@@ -207,6 +209,39 @@ func TestVolatileAppPasswordMutationsFailClosedWhenAuditWriteFails(t *testing.T)
 	if !s.VerifyDovecot("user@example.test", created.SecretOnce) {
 		t.Fatal("app password revoked despite audit failure")
 	}
+}
+
+func TestConcurrentDovecotReadsAndAppPasswordProjection(t *testing.T) {
+	s := testService()
+	d := &daemon.Service{}
+	s.BindDaemon(d)
+	actor := authz.Actor{Type: "local_admin", ID: "admin"}
+	if _, err := s.CreateOrReplaceUser(context.Background(), actor, Mailbox{Email: "user@example.test", Active: true}, "mail-password"); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				got := d.DovecotPassdb("concurrent", daemon.PassdbRequest{Username: "user@example.test", Secret: "generated-client-secret", Protocol: "imap"})
+				if got.Decision != daemon.OK && got.Decision != daemon.Reject {
+					t.Errorf("unexpected passdb decision during projection: %#v", got)
+				}
+			}
+		}()
+	}
+	for i := 0; i < 4; i++ {
+		created, err := s.CreateAppPassword(context.Background(), actor, "user@example.test", fmt.Sprintf("concurrent-%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.RevokeAppPassword(context.Background(), actor, "user@example.test", created.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wg.Wait()
 }
 
 func TestAPITokenScopeCannotCrossMailbox(t *testing.T) {

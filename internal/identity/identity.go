@@ -175,8 +175,7 @@ func (s *Service) ApplySCIMMailbox(previousEmail string, mailbox Mailbox) {
 	if previousKey != "" && previousKey != key {
 		delete(s.Mailboxes, previousKey)
 		if s.Daemon != nil {
-			delete(s.Daemon.Mailboxes, previousKey)
-			delete(s.Daemon.AppPasswordVerifiers, previousKey)
+			s.Daemon.DeleteIdentityMailbox(previousKey)
 		}
 		for id, appPassword := range s.AppPasswords {
 			if appPassword.MailboxID == previousKey {
@@ -193,6 +192,7 @@ func (s *Service) ApplySCIMMailbox(previousEmail string, mailbox Mailbox) {
 func (s *Service) BindDaemon(service *daemon.Service) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	service.EnableConcurrentState()
 	s.Daemon = service
 	for _, mailbox := range s.Mailboxes {
 		s.syncDaemonMailboxLocked(mailbox)
@@ -426,18 +426,8 @@ func (s *Service) syncDaemonMailboxLocked(m Mailbox) {
 	if s.Daemon.Audit == nil && s.Audit != nil {
 		s.Daemon.Audit = s.Audit
 	}
-	if s.Daemon.Mailboxes == nil {
-		s.Daemon.Mailboxes = map[string]daemon.Mailbox{}
-	}
 	addr := strings.ToLower(m.Email)
-	s.Daemon.Mailboxes[addr] = daemon.Mailbox{Address: addr, Enabled: m.Active, Home: "/mail/" + strings.ReplaceAll(addr, "@", "/"), UID: 5000, GID: 5000, Verifier: m.Verifier}
-	domain := addr[strings.LastIndex(addr, "@")+1:]
-	if s.Daemon.Domains == nil {
-		s.Daemon.Domains = map[string]daemon.Domain{}
-	}
-	if _, ok := s.Daemon.Domains[domain]; !ok {
-		s.Daemon.Domains[domain] = daemon.Domain{Name: domain, Enabled: true}
-	}
+	s.Daemon.UpsertIdentityMailbox(daemon.Mailbox{Address: addr, Enabled: m.Active, Home: "/mail/" + strings.ReplaceAll(addr, "@", "/"), UID: 5000, GID: 5000, Verifier: m.Verifier})
 }
 
 func (s *Service) syncDaemonAppPasswordsLocked(mailboxID string) {
@@ -447,16 +437,13 @@ func (s *Service) syncDaemonAppPasswordsLocked(mailboxID string) {
 	if s.Daemon.Audit == nil && s.Audit != nil {
 		s.Daemon.Audit = s.Audit
 	}
-	if s.Daemon.AppPasswordVerifiers == nil {
-		s.Daemon.AppPasswordVerifiers = map[string][]string{}
-	}
 	var verifiers []string
 	for _, p := range s.AppPasswords {
 		if p.MailboxID == mailboxID && p.RevokedAt == nil {
 			verifiers = append(verifiers, p.Verifier)
 		}
 	}
-	s.Daemon.AppPasswordVerifiers[mailboxID] = verifiers
+	s.Daemon.SetAppPasswordVerifiers(mailboxID, verifiers)
 }
 
 func (s *Service) VerifyDovecot(mailboxID, secret string) bool {
