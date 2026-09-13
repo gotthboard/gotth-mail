@@ -98,6 +98,11 @@ Requirements:
 ### App passwords / mail-client tokens
 
 - Create/revoke/list app passwords.
+- Preserve a stable opaque public credential ID and a separate human label
+  across process restart; neither may be reconstructed from the other.
+- Permit at most eight active app passwords per mailbox. This bounds the
+  current Dovecot PBKDF2 verification cost while preserving the existing
+  opaque one-time secret format.
 - Scoped use where practical.
 - Dovecot integration.
 - Store mailbox-password and app-password/mail-client token secrets as the
@@ -105,6 +110,9 @@ Requirements:
   password-hash/verifier strings where password sync or Dovecot verification
   is intended; never plaintext.
 - Audit events for create/revoke/use metadata.
+- On the configured PostgreSQL path, create/revoke state and the corresponding
+  success audit event commit in one transaction. A success event may never
+  outlive a rolled-back credential mutation.
 - Never expose token values after creation.
 - OIDC is not IMAP/SMTP auth; mail clients need app passwords or compatible credentials.
 
@@ -112,8 +120,12 @@ Requirements:
 
 - OIDC/Auth status.
 - Authentik role/group mapping screens.
-- SCIM status/test page.
-- App-password screens.
+- Read-only SCIM capability/status page linked to the real `gotth-scim`
+  endpoint; no browser-only shortcut may bypass that endpoint.
+- App-password screens only after a durable OIDC session is authoritatively
+  bound to its mailbox and roles. Until then the UI must say unavailable and
+  direct authenticated automation to the scoped API instead of presenting
+  mutation forms an ordinary browser cannot authenticate.
 - Permission simulator UI.
 
 ### Identity-related plugin checks
@@ -146,4 +158,8 @@ Requirements:
   current GOTTH Mail 1.0 Authentik/Django `pbkdf2_sha256` encoded
   password-hash/verifier strings or explicitly documented verifier-only
   records; never plaintext.
+- App-password ID, label, verifier, mailbox ownership, creation time, and
+  revocation survive restart; active credentials are bounded to eight per
+  mailbox.
+- PostgreSQL app-password create/revoke and success audit admission are atomic.
 - Every identity/provisioning mutation is audited.

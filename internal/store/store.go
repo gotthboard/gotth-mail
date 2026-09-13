@@ -156,10 +156,33 @@ CREATE UNIQUE INDEX scim_tombstones_external_id_unique
     ON scim_tombstones(scope, resource_type, external_id)
     WHERE external_id <> '';`
 
+const appPasswordContractMigrationVersion = "0005_app_password_contract"
+const appPasswordContractMigrationSQL = `ALTER TABLE tokens
+    ADD COLUMN public_id text NULL;
+
+UPDATE tokens
+SET public_id = label
+WHERE kind = 'app_password';
+
+ALTER TABLE tokens
+    ADD CONSTRAINT tokens_app_password_public_id_contract CHECK (
+        (kind = 'app_password'
+            AND public_id IS NOT NULL
+            AND length(public_id) BETWEEN 5 AND 128
+            AND length(label) BETWEEN 1 AND 128)
+        OR
+        (kind <> 'app_password' AND public_id IS NULL)
+    );
+
+CREATE UNIQUE INDEX tokens_app_password_public_id_unique
+    ON tokens (public_id)
+    WHERE kind = 'app_password';`
+
 var upgradeMigrations = []Migration{
 	newMigration(notificationDeliveryEvidenceMigrationVersion, notificationDeliveryEvidenceMigrationSQL),
 	newMigration(oidcProtectedAttemptsMigrationVersion, oidcProtectedAttemptsMigrationSQL),
 	newMigration(scimResourcesMigrationVersion, scimResourcesMigrationSQL),
+	newMigration(appPasswordContractMigrationVersion, appPasswordContractMigrationSQL),
 }
 
 func newMigration(version, sql string) Migration {

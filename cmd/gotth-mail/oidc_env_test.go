@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"forgejo/gotthboard/gotth-mail/internal/api"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/authn"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
@@ -93,6 +94,25 @@ func TestRuntimeMuxRoutesSCIMToAPIServer(t *testing.T) {
 	}
 }
 
+func TestRuntimeMuxSharesConfiguredIdentityServiceWithUI(t *testing.T) {
+	ids := identity.NewService("example.test")
+	if _, err := ids.CreateOrReplaceUser(context.Background(), authz.Actor{Type: "local_admin", ID: "seed"}, identity.Mailbox{Email: "private@example.test", Active: true}, "mail-password"); err != nil {
+		t.Fatal(err)
+	}
+	h := runtimeMux(api.Server{Identity: ids, Authz: authz.StaticAuthorizer{}})
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Browser self-service is unavailable") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "private@example.test") {
+		t.Fatal("runtime UI leaked configured identity state before subject binding")
+	}
+	if ids.Daemon == nil || ids.Authorizer == nil || ids.Audit == nil {
+		t.Fatalf("runtime API did not initialize the shared configured identity service: %#v", ids)
+	}
+}
+
 func TestConfigureOIDCFromEnvRequiresAllFieldsTogether(t *testing.T) {
 	t.Setenv("GOTTH_MAIL_AUTHENTIK_ISSUER", "https://auth.example.test/application/o/gotth-mail/")
 	if err := configureOIDCFromEnv(context.Background(), &api.Server{}, http.DefaultClient); err == nil {
@@ -157,6 +177,9 @@ func TestConfigureDatabaseFromEnvMigratesAndWiresDurableServices(t *testing.T) {
 	defer db.Close()
 	if server.AuditDB == nil || server.OIDCStore == nil || server.Identity == nil {
 		t.Fatalf("database services not wired: %#v", server)
+	}
+	if _, ok := server.Identity.Audit.(audit.SQLWriter); !ok {
+		t.Fatalf("configured identity/passdb audit is not durable: %T", server.Identity.Audit)
 	}
 	if server.Identity.Daemon != nil {
 		t.Fatal("database configuration bound identity to a daemon copy before handler construction")

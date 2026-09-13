@@ -21,9 +21,177 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 16:29 CDT — Adopt gotth-scim with atomic PostgreSQL projection
+### 2026-09-13 17:51 CDT — Record app-password repair verification and review
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- current app-password/Dovecot feature evidence
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Recorded the exact reviewed head, GOTTH component allocation, migration and
+runtime behavior, PostgreSQL rollback/concurrency proof, full and race suites,
+coverage detail and honest gaps, Graphify artifact, cold-review findings, and
+remaining live-integration constraints. The old July happy-path record remains
+explicitly superseded.
+
+Verification:
+
+- the reviewed `cd172cb4dc2a9a6ff3491073faeba06a7f8f6b16` worktree is clean;
+- focused, full, race, vet, three builds, module, diff, PostgreSQL, Graphify,
+  and cold-review gates pass as enumerated in the feature evidence.
+
+### 2026-09-13 17:36 CDT — Close app-password validation coverage gaps
+
+Commit: `cd172cb4dc2a9a6ff3491073faeba06a7f8f6b16`
+
+Affected files:
+
+- app-password identity and Dovecot daemon tests
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added explicit rejection evidence for empty and oversized labels, missing
+mailboxes, entropy failure, invalid generated secrets, missing credentials,
+and repeated revocation. Added the legacy mixed-case projection-key test so
+the new bounded mailbox snapshot preserves normalization userspace instead of
+silently rejecting old in-memory fixtures.
+
+Verification:
+
+- focused local identity and daemon tests pass;
+- final development-host coverage and race gates remain required on this exact
+  test commit.
+
+### 2026-09-13 17:23 CDT — Make live passdb projection race-free and bounded-copy
+
+Commit: `41cc4b3d6afa086ad9037e45d7dd8c1f1ba09535`
+
+Affected files:
+
+- `internal/daemon/daemon.go`
+- `internal/identity/identity.go` and concurrency tests
+- identity architecture and `docs/CHANGELOG.md`
+
+Explanation:
+
+Cold source review found that the former daemon projection mutated public maps
+while concurrent passdb requests cloned them without synchronization. That was
+a real concurrent-map panic and stale-auth risk hidden by sequential tests.
+The live identity binding now installs a daemon state lock; mailbox and
+app-verifier projection writes use it, while passdb takes one coherent snapshot
+of only the requested mailbox and its bounded verifier slice. This also removes
+the absurd whole-map copy from every authentication attempt.
+
+Verification:
+
+- focused local identity, daemon, API, and command tests pass, including
+  concurrent create/revoke projection against passdb readers;
+- the development-host race and full gates will be rerun on this exact commit.
+
+### 2026-09-13 17:14 CDT — Serialize app-password creators without transaction aborts
+
+Commit: `2506f7093a4ff5e8679f76f6d6ba01dc6dd074df`
+
+Affected files:
+
+- `internal/identity/identity.go`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+The real PostgreSQL concurrency gate exposed avoidable serialization failures
+when several control-plane instances created credentials for one mailbox.
+The design already holds that mailbox row through the active-count check and
+insert, which is the precise lock needed. Changed the transaction isolation to
+read committed and retained the explicit row lock, so creators serialize at
+the mailbox boundary without leaking PostgreSQL `40001` aborts to callers.
+
+Verification:
+
+- focused local identity tests pass;
+- the failed development-host concurrency gate is being rerun before any
+  admission claim.
+
+### 2026-09-13 17:09 CDT — Repair durable app-password and passdb behavior
+
+Commit: `03345463fb6b4879f92f393eef568cb36226733a`
+
+Affected files:
+
+- `internal/identity`, `internal/daemon`, `internal/audit`, `internal/httpui`,
+  `internal/store`, and `cmd/gotth-mail`
+- migration `0005_app_password_contract` and focused migration/runtime tests
+- identity architecture/implementation docs, README, and superseded evidence
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Separated app-password public IDs from human labels in durable storage and
+backfilled the old overloaded field without rewriting verifiers. Creation now
+holds the mailbox row lock, enforces eight active credentials, and commits the
+credential plus normalized redacted success audit in one transaction while
+the mailbox row serializes concurrent creators. Revocation uses the same
+atomic boundary. Startup rejects an
+over-limit persisted verifier set, and the Dovecot path refuses an over-limit
+projection rather than performing attacker-controlled PBKDF2 work.
+
+Configured database startup now gives identity and passdb a durable SQL audit
+writer. Otherwise-successful mailbox or app-password authentication defers
+when that audit write fails. The runtime UI now receives the same configured
+identity service as the API, but it no longer leaks mailbox/app-password
+metadata or exposes fake SCIM and bearer-header-dependent mutation forms.
+Those browser mutations remain unavailable until a verified OIDC session is
+authoritatively bound to mailbox and role state.
+
+Verification:
+
+- focused store, identity, daemon, API, command, audit, and UI tests pass on
+  the local constrained host;
+- PostgreSQL concurrency/rollback, full, race, coverage, build, graph, and
+  cold-review gates remain pending on the development host.
+
+### 2026-09-13 17:05 CDT — Reconcile app-password and Dovecot admission contract
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- identity PRD, architecture, implementation specification, and GOTTH stack
+  adoption contract
+- app-password feature README and workflow manifest
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Corrected the app-password slice before implementation. The contract now
+separates opaque public credential IDs from human labels, bounds active
+credentials to eight per mailbox, requires atomic PostgreSQL credential and
+success-audit admission, and makes the post-commit Dovecot projection and
+startup validation explicit.
+
+The browser contract no longer pretends ordinary HTML forms can provide API
+bearer headers or that an in-process mailbox helper is a SCIM test. Until a
+verified `gotth-oidc` session is durably bound to mailbox and role state, the
+identity UI must remain read-only and direct authorized automation to the
+scoped API. The GOTTH adoption record now states exactly why `gotth-oidc` and
+`gotth-scim` are relevant and why no unrelated `gotth-*` package belongs in
+the synchronous credential path.
+
+Verification:
+
+- documentation and workflow references were reconciled against the current
+  runtime, SQL schema, adopted library boundaries, and dependent live
+  Authentik feature;
+- implementation and full verification remain pending in this feature branch.
+
+### 2026-09-13 16:29 CDT — Adopt gotth-scim with atomic PostgreSQL projection
+
+Commit: `78b11594abdbb89a37c39151cf6a88ebd17ef833`
 
 Affected files:
 

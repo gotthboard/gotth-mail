@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -13,9 +14,12 @@ import (
 	"net/mail"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/pbkdf2"
 )
+
+const MaxAppPasswordVerifiers = 8
 
 type Decision string
 
@@ -82,6 +86,70 @@ type Service struct {
 	RateLimits           map[string]RateLimit
 	AppPasswordVerifiers map[string][]string
 	Audit                audit.Writer
+	stateMu              *sync.RWMutex
+}
+
+// EnableConcurrentState installs the lock used by a live identity projection.
+// It must be called during startup, before the service is published.
+func (s *Service) EnableConcurrentState() {
+	if s.stateMu == nil {
+		s.stateMu = &sync.RWMutex{}
+	}
+}
+
+func (s *Service) UpsertIdentityMailbox(mailbox Mailbox) {
+	s.lockState()
+	defer s.unlockState()
+	if s.Mailboxes == nil {
+		s.Mailboxes = map[string]Mailbox{}
+	}
+	if s.Domains == nil {
+		s.Domains = map[string]Domain{}
+	}
+	address := normalizeAddress(mailbox.Address)
+	mailbox.Address = address
+	s.Mailboxes[address] = mailbox
+	domain := address[strings.LastIndex(address, "@")+1:]
+	if _, ok := s.Domains[domain]; !ok {
+		s.Domains[domain] = Domain{Name: domain, Enabled: true}
+	}
+}
+
+func (s *Service) DeleteIdentityMailbox(address string) {
+	s.lockState()
+	defer s.unlockState()
+	address = normalizeAddress(address)
+	delete(s.Mailboxes, address)
+	delete(s.AppPasswordVerifiers, address)
+}
+
+func (s *Service) SetAppPasswordVerifiers(address string, verifiers []string) {
+	s.lockState()
+	defer s.unlockState()
+	if s.AppPasswordVerifiers == nil {
+		s.AppPasswordVerifiers = map[string][]string{}
+	}
+	s.AppPasswordVerifiers[normalizeAddress(address)] = append([]string(nil), verifiers...)
+}
+
+func (s *Service) lockState() {
+	if s.stateMu != nil {
+		s.stateMu.Lock()
+	}
+}
+
+func (s *Service) unlockState() {
+	if s.stateMu != nil {
+		s.stateMu.Unlock()
+	}
+}
+
+func (s Service) readStateLock() func() {
+	if s.stateMu == nil {
+		return func() {}
+	}
+	s.stateMu.RLock()
+	return s.stateMu.RUnlock
 }
 
 type SenderLoginRequest struct {
@@ -217,7 +285,8 @@ func (s Service) DovecotPassdb(correlationID string, req PassdbRequest) Response
 	if req.Protocol != "imap" && req.Protocol != "submission" {
 		return resp(correlationID, Error, "unsupported_protocol")
 	}
-	m, ok := s.mailboxes()[normalizeAddress(req.Username)]
+	addr := normalizeAddress(req.Username)
+	m, appVerifiers, ok := s.mailboxAuth(addr)
 	if !ok {
 		return resp(correlationID, NotFound, "mailbox_not_found")
 	}
@@ -227,14 +296,21 @@ func (s Service) DovecotPassdb(correlationID string, req PassdbRequest) Response
 	if strings.HasPrefix(req.Secret, "oidc:") || strings.Count(req.Secret, ".") == 2 && strings.HasPrefix(req.Secret, "eyJ") {
 		return resp(correlationID, Reject, "oidc_token_not_mail_secret")
 	}
-	addr := normalizeAddress(req.Username)
 	if VerifyDjangoPBKDF2SHA256(m.Verifier, req.Secret) == nil {
-		s.auditPassdb(correlationID, req, "mailbox_password", "success", "")
+		if err := s.auditPassdb(correlationID, req, "mailbox_password", "success", ""); err != nil {
+			return resp(correlationID, Defer, "audit_unavailable")
+		}
 		return resp(correlationID, OK, "passdb_authenticated")
 	}
-	for _, verifier := range s.appPasswordVerifiers()[addr] {
+	if len(appVerifiers) > MaxAppPasswordVerifiers {
+		s.auditPassdb(correlationID, req, "mail_secret", "failure", "app_password_verifier_limit_exceeded")
+		return resp(correlationID, Error, "app_password_verifier_limit_exceeded")
+	}
+	for _, verifier := range appVerifiers {
 		if VerifyDjangoPBKDF2SHA256(verifier, req.Secret) == nil {
-			s.auditPassdb(correlationID, req, "app_password", "success", "")
+			if err := s.auditPassdb(correlationID, req, "app_password", "success", ""); err != nil {
+				return resp(correlationID, Defer, "audit_unavailable")
+			}
 			return resp(correlationID, OK, "passdb_authenticated")
 		}
 	}
@@ -350,6 +426,8 @@ func correlation(v string) string {
 }
 
 func (s Service) domains() map[string]Domain {
+	unlock := s.readStateLock()
+	defer unlock()
 	out := map[string]Domain{}
 	for k, v := range s.Domains {
 		if v.Name == "" {
@@ -360,6 +438,8 @@ func (s Service) domains() map[string]Domain {
 	return out
 }
 func (s Service) mailboxes() map[string]Mailbox {
+	unlock := s.readStateLock()
+	defer unlock()
 	out := map[string]Mailbox{}
 	for k, v := range s.Mailboxes {
 		if v.Address == "" {
@@ -387,11 +467,11 @@ func (s Service) rateLimits() map[string]RateLimit {
 	return out
 }
 
-func (s Service) auditPassdb(correlationID string, req PassdbRequest, method, result, code string) {
+func (s Service) auditPassdb(correlationID string, req PassdbRequest, method, result, code string) error {
 	if s.Audit == nil {
-		return
+		return nil
 	}
-	_ = s.Audit.Write(nil, audit.Event{
+	return s.Audit.Write(context.Background(), audit.Event{
 		Actor:         audit.ActorRef{Type: "dovecot", ID: req.Protocol},
 		Action:        passdbAuditAction(method),
 		Resource:      audit.ResourceRef{Type: "mailbox", ID: normalizeAddress(req.Username)},
@@ -413,12 +493,32 @@ func passdbAuditAction(method string) string {
 	}
 }
 
-func (s Service) appPasswordVerifiers() map[string][]string {
-	out := map[string][]string{}
-	for k, vs := range s.AppPasswordVerifiers {
-		out[normalizeAddress(k)] = append([]string(nil), vs...)
+func (s Service) mailboxAuth(address string) (Mailbox, []string, bool) {
+	unlock := s.readStateLock()
+	defer unlock()
+	address = normalizeAddress(address)
+	mailbox, ok := s.Mailboxes[address]
+	if !ok {
+		for key, candidate := range s.Mailboxes {
+			if normalizeAddress(key) == address {
+				mailbox, ok = candidate, true
+				break
+			}
+		}
 	}
-	return out
+	if !ok {
+		return Mailbox{}, nil, false
+	}
+	verifiers := s.AppPasswordVerifiers[address]
+	if verifiers == nil {
+		for key, candidate := range s.AppPasswordVerifiers {
+			if normalizeAddress(key) == address {
+				verifiers = candidate
+				break
+			}
+		}
+	}
+	return mailbox, append([]string(nil), verifiers...), true
 }
 
 func normalizeDomain(v string) string { return strings.ToLower(strings.TrimSpace(v)) }

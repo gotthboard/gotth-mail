@@ -167,11 +167,29 @@ App passwords/mail-client tokens:
 
 - are created/revoked/listed through core services
 - integrate with Dovecot auth
+- have a stable opaque public ID distinct from the operator-supplied label
 - are stored as the current GOTTH Mail 1.0 Authentik/Django `pbkdf2_sha256`
   encoded password-hash/verifier strings where password sync or Dovecot
   verification is intended; never plaintext
 - expose the secret value only at creation
+- retain the existing opaque random secret format; secrets do not embed
+  database identifiers
+- permit at most eight active credentials per mailbox, bounding a failed
+  Dovecot lookup to one mailbox-password verifier plus eight app-password
+  verifiers instead of an attacker-controlled unbounded PBKDF2 scan
 - emit audit events for create/revoke/use metadata
+- defer an otherwise successful passdb authentication when its configured
+  durable audit writer fails; accepted credential use is never silently lost
+
+On PostgreSQL, credential create/revoke and the matching success audit record
+share one transaction. The mailbox row is locked while the active-count gate
+and mutation are admitted, so concurrent creators cannot exceed the limit.
+The committed SQL row is authoritative; the single control-plane process
+updates its Dovecot verifier projection only after commit and rebuilds it on
+startup. Mailbox and app-verifier projection writes share the daemon state's
+read/write lock with passdb snapshots. A passdb request copies only the target
+mailbox's bounded verifier slice; it does not clone the entire mailbox/token
+map per authentication or race a concurrent create/revoke projection.
 
 ## Identity UI
 
@@ -179,11 +197,18 @@ GOTTH UI surfaces:
 
 - OIDC/Auth status
 - Authentik role/group mapping screens
-- SCIM status/test page
-- app-password screens
+- a read-only SCIM capability/status page that points at the real
+  `gotth-scim` endpoint
+- app-password self-service only after a verified OIDC session resolves
+  through durable `identity_refs` and role bindings to the target mailbox
 - permission simulator UI
 
-UI mutations go through service/auth/audit layers.
+UI mutations go through the same service/auth/audit layers as the API. The
+current bearer-token API cannot be smuggled into HTML forms: browsers do not
+invent an `Authorization` header for ordinary form posts. Until the durable
+OIDC subject-to-mailbox/role binding is admitted, those mutation forms remain
+absent and the UI states the blocker. The old in-process SCIM test shortcut is
+not an acceptable substitute for the real `gotth-scim` route.
 
 ## Plugin identity boundary
 

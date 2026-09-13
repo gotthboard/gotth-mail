@@ -1,11 +1,18 @@
 package daemon
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
 )
+
+type failingPassdbAudit struct{}
+
+func (failingPassdbAudit) Write(context.Context, audit.Event) error { return errors.New("audit down") }
 
 func fixture() Service {
 	verifier := MakeDjangoPBKDF2SHA256("app-secret", "testsalt", 1200)
@@ -124,6 +131,42 @@ func TestDovecotPassdbAuditsAppPasswordUse(t *testing.T) {
 	}
 	if len(w.Events) != 2 || w.Events[1].Result != "failure" || w.Events[1].ErrorCode != "invalid_secret" {
 		t.Fatalf("events %#v", w.Events)
+	}
+}
+
+func TestDovecotPassdbRejectsUnboundedVerifierProjection(t *testing.T) {
+	s := fixture()
+	verifiers := make([]string, MaxAppPasswordVerifiers+1)
+	for i := range verifiers {
+		verifiers[i] = MakeDjangoPBKDF2SHA256("bounded-app-secret", fmt.Sprintf("salt-%d", i), 1200)
+	}
+	s.AppPasswordVerifiers = map[string][]string{"user@example.test": verifiers}
+	got := s.DovecotPassdb("c", PassdbRequest{Username: "user@example.test", Secret: "bounded-app-secret", Protocol: "imap"})
+	if got.Decision != Error || got.Reason != "app_password_verifier_limit_exceeded" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
+func TestDovecotPassdbDefersSuccessfulAuthWhenAuditFails(t *testing.T) {
+	s := fixture()
+	s.Audit = failingPassdbAudit{}
+	got := s.DovecotPassdb("c", PassdbRequest{Username: "user@example.test", Secret: "app-secret", Protocol: "imap"})
+	if got.Decision != Defer || got.Reason != "audit_unavailable" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
+func TestDovecotPassdbNormalizesLegacyProjectionKeys(t *testing.T) {
+	s := Service{
+		Mailboxes: map[string]Mailbox{
+			"User@Example.Test": {Address: "User@Example.Test", Enabled: true, Verifier: MakeDjangoPBKDF2SHA256("mail-secret", "mail-salt", 1200)},
+		},
+		AppPasswordVerifiers: map[string][]string{
+			"User@Example.Test": {MakeDjangoPBKDF2SHA256("app-secret", "app-salt", 1200)},
+		},
+	}
+	if got := s.DovecotPassdb("c", PassdbRequest{Username: "user@example.test", Secret: "app-secret", Protocol: "imap"}); got.Decision != OK {
+		t.Fatalf("legacy normalized projection rejected: %#v", got)
 	}
 }
 

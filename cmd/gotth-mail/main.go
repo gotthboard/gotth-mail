@@ -60,6 +60,13 @@ func main() {
 }
 
 func runtimeMux(server api.Server) http.Handler {
+	if server.Identity == nil {
+		var domains []string
+		for name := range server.Daemon.Domains {
+			domains = append(domains, name)
+		}
+		server.Identity = identity.NewService(domains...)
+	}
 	mux := http.NewServeMux()
 	serverHandler := server.Handler()
 	mux.Handle("/api/", serverHandler)
@@ -68,7 +75,7 @@ func runtimeMux(server api.Server) http.Handler {
 	mux.Handle("/healthz", serverHandler)
 	mux.Handle("/readyz", serverHandler)
 	mux.Handle("/webmail", serverHandler)
-	mux.Handle("/", httpui.HandlerWithAdmin(referenceAdminStore()))
+	mux.Handle("/", httpui.HandlerWithAdminAndIdentity(referenceAdminStore(), server.Identity, server.Authz))
 	return mux
 }
 
@@ -153,6 +160,7 @@ func configureDatabaseFromEnv(ctx context.Context, server *api.Server) (*sql.DB,
 		return closeOnError(fmt.Errorf("load identity state: %w", err))
 	}
 	server.AuditDB = db
+	identityService.Audit = audit.SQLWriter{DB: db}
 	server.OIDCStore = authn.SQLStore{DB: db}
 	server.Identity = identityService
 	return db, nil

@@ -61,6 +61,16 @@ func (w *MemoryWriter) Write(ctx context.Context, e Event) error {
 type SQLWriter struct{ DB *sql.DB }
 
 func (w SQLWriter) Write(ctx context.Context, e Event) error {
+	return WriteSQL(ctx, w.DB, e)
+}
+
+type SQLExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+// WriteSQL admits one normalized, redacted audit event through either a
+// database handle or an existing caller-owned transaction.
+func WriteSQL(ctx context.Context, execer SQLExecer, e Event) error {
 	e = Normalize(e)
 	before, err := json.Marshal(e.BeforeRedacted)
 	if err != nil {
@@ -75,7 +85,7 @@ func (w SQLWriter) Write(ctx context.Context, e Event) error {
 		sourceIP = sql.NullString{String: e.Source.IP, Valid: e.Source.IP != ""}
 		sourceUA = sql.NullString{String: e.Source.UserAgent, Valid: e.Source.UserAgent != ""}
 	}
-	_, err = w.DB.ExecContext(ctx, `INSERT INTO audit_events(id, timestamp, actor_type, actor_id, source_ip, source_user_agent, action, resource_type, resource_id, before_redacted_json, after_redacted_json, correlation_id, result, error_code) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, e.ID, e.Time, e.Actor.Type, e.Actor.ID, sourceIP, sourceUA, e.Action, e.Resource.Type, e.Resource.ID, string(before), string(after), e.CorrelationID, e.Result, nullString(e.ErrorCode))
+	_, err = execer.ExecContext(ctx, `INSERT INTO audit_events(id, timestamp, actor_type, actor_id, source_ip, source_user_agent, action, resource_type, resource_id, before_redacted_json, after_redacted_json, correlation_id, result, error_code) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, e.ID, e.Time, e.Actor.Type, e.Actor.ID, sourceIP, sourceUA, e.Action, e.Resource.Type, e.Resource.ID, string(before), string(after), e.CorrelationID, e.Result, nullString(e.ErrorCode))
 	return err
 }
 

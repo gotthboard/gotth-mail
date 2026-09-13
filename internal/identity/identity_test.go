@@ -2,12 +2,16 @@ package identity
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
 )
 
 func testService() *Service {
@@ -106,6 +110,73 @@ func TestAppPasswordsSecretOnceRevokeAndVerifier(t *testing.T) {
 	}
 }
 
+func TestAppPasswordLimitAndDisabledMailboxFailClosed(t *testing.T) {
+	s := testService()
+	actor := authz.Actor{Type: "local_admin", ID: "admin"}
+	if _, err := s.CreateOrReplaceUser(context.Background(), actor, Mailbox{Email: "user@example.test", Active: true}, "mail-password"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < MaxActiveAppPasswords; i++ {
+		if _, err := s.CreateAppPassword(context.Background(), actor, "user@example.test", fmt.Sprintf("client-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.CreateAppPassword(context.Background(), actor, "user@example.test", "one-too-many"); !errors.Is(err, ErrAppPasswordLimit) {
+		t.Fatalf("ninth app password error=%v", err)
+	}
+	listed := s.ListAppPasswords("user@example.test")
+	if len(listed) != MaxActiveAppPasswords {
+		t.Fatalf("listed=%d", len(listed))
+	}
+	secret := "generated-client-secret"
+	m := s.Mailboxes["user@example.test"]
+	m.Active = false
+	s.Mailboxes["user@example.test"] = m
+	if s.VerifyDovecot("user@example.test", secret) {
+		t.Fatal("disabled mailbox accepted an app password")
+	}
+}
+
+func TestAppPasswordValidationAndIdempotentRevoke(t *testing.T) {
+	s := testService()
+	admin := authz.Actor{Type: "local_admin", ID: "admin"}
+	if _, err := s.CreateOrReplaceUser(context.Background(), admin, Mailbox{Email: "user@example.test", Active: true}, "mail-password"); err != nil {
+		t.Fatal(err)
+	}
+	for name, label := range map[string]string{"empty": "  ", "too-long": strings.Repeat("x", 129)} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := s.CreateAppPassword(context.Background(), admin, "user@example.test", label); err == nil {
+				t.Fatal("invalid label accepted")
+			}
+		})
+	}
+	if _, err := s.CreateAppPassword(context.Background(), admin, "missing@example.test", "phone"); err == nil || !strings.Contains(err.Error(), "mailbox not found") {
+		t.Fatalf("missing mailbox error=%v", err)
+	}
+	s.Secret = func() (string, error) { return "", errors.New("entropy unavailable") }
+	if _, err := s.CreateAppPassword(context.Background(), admin, "user@example.test", "phone"); err == nil || !strings.Contains(err.Error(), "entropy unavailable") {
+		t.Fatalf("entropy failure=%v", err)
+	}
+	s.Secret = func() (string, error) { return "short", nil }
+	if _, err := s.CreateAppPassword(context.Background(), admin, "user@example.test", "phone"); err == nil || !strings.Contains(err.Error(), "password too short") {
+		t.Fatalf("short generated secret failure=%v", err)
+	}
+	s.Secret = func() (string, error) { return "generated-client-secret", nil }
+	created, err := s.CreateAppPassword(context.Background(), admin, "user@example.test", "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeAppPassword(context.Background(), admin, "user@example.test", "app_missing"); err == nil || !strings.Contains(err.Error(), "app password not found") {
+		t.Fatalf("missing revoke error=%v", err)
+	}
+	if err := s.RevokeAppPassword(context.Background(), admin, "user@example.test", created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeAppPassword(context.Background(), admin, "user@example.test", created.ID); err != nil {
+		t.Fatalf("idempotent revoke failed: %v", err)
+	}
+}
+
 func TestBearerTokensAndFailureAuditing(t *testing.T) {
 	s := testService()
 	if err := s.AddToken("scim", "scim_client", "scim-secret"); err != nil {
@@ -151,6 +222,66 @@ func TestIdentityMutationsFailClosedWhenAuditWriteFails(t *testing.T) {
 	if _, ok := s.GetUser("user@example.test"); ok {
 		t.Fatal("mailbox mutated despite audit failure")
 	}
+}
+
+func TestVolatileAppPasswordMutationsFailClosedWhenAuditWriteFails(t *testing.T) {
+	s := testService()
+	actor := authz.Actor{Type: "local_admin", ID: "admin"}
+	if _, err := s.CreateOrReplaceUser(context.Background(), actor, Mailbox{Email: "user@example.test", Active: true}, "mail-password"); err != nil {
+		t.Fatal(err)
+	}
+	s.Audit = failingAudit{}
+	if _, err := s.CreateAppPassword(context.Background(), actor, "user@example.test", "phone"); err == nil || !strings.Contains(err.Error(), "audit down") {
+		t.Fatalf("create audit failure=%v", err)
+	}
+	if len(s.ListAppPasswords("user@example.test")) != 0 {
+		t.Fatal("app password created despite audit failure")
+	}
+	s.Audit = &audit.MemoryWriter{}
+	created, err := s.CreateAppPassword(context.Background(), actor, "user@example.test", "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Audit = failingAudit{}
+	if err := s.RevokeAppPassword(context.Background(), actor, "user@example.test", created.ID); err == nil || !strings.Contains(err.Error(), "audit down") {
+		t.Fatalf("revoke audit failure=%v", err)
+	}
+	if !s.VerifyDovecot("user@example.test", created.SecretOnce) {
+		t.Fatal("app password revoked despite audit failure")
+	}
+}
+
+func TestConcurrentDovecotReadsAndAppPasswordProjection(t *testing.T) {
+	s := testService()
+	d := &daemon.Service{}
+	s.BindDaemon(d)
+	actor := authz.Actor{Type: "local_admin", ID: "admin"}
+	if _, err := s.CreateOrReplaceUser(context.Background(), actor, Mailbox{Email: "user@example.test", Active: true}, "mail-password"); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				got := d.DovecotPassdb("concurrent", daemon.PassdbRequest{Username: "user@example.test", Secret: "generated-client-secret", Protocol: "imap"})
+				if got.Decision != daemon.OK && got.Decision != daemon.Reject {
+					t.Errorf("unexpected passdb decision during projection: %#v", got)
+				}
+			}
+		}()
+	}
+	for i := 0; i < 4; i++ {
+		created, err := s.CreateAppPassword(context.Background(), actor, "user@example.test", fmt.Sprintf("concurrent-%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.RevokeAppPassword(context.Background(), actor, "user@example.test", created.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wg.Wait()
 }
 
 func TestAPITokenScopeCannotCrossMailbox(t *testing.T) {

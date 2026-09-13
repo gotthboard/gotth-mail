@@ -110,6 +110,24 @@ requires an operator-reviewed mapping that records the existing mailbox, new
 opaque resource ID, authoritative Authentik subject, and rollback evidence.
 Fresh SCIM-created resources and renames never use an email address as their ID.
 
+## App-password and Dovecot allocation
+
+No reusable `gotth-*` repository currently owns app-password generation,
+Django PBKDF2 verification, or Dovecot passdb policy. GOTTH Mail therefore
+keeps those mechanisms in core instead of importing a decorative dependency.
+The already-adopted `gotth-oidc` library will supply the verified browser
+identity facts used by future self-service; `gotth-scim` supplies the mailbox
+provisioning identity. Binding those two opaque identities to a mailbox and
+roles remains product policy and must be proven before browser mutation is
+enabled. `gotth-jobs` is excluded because credential creation, revocation, and
+success audit admission must be synchronous and atomic.
+
+The present Dovecot verifier projection is deliberately bounded to eight
+active app passwords per mailbox. That retains opaque random one-time secrets
+and caps PBKDF2 work without inventing a new reusable library or embedding a
+database identifier in the credential. A different secret-index mechanism
+would be a userspace and migration change and requires its own reviewed slice.
+
 ## Admission rule
 
 Compatibility tests prove only that a library can be called. Runtime adoption

@@ -1,11 +1,15 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"os"
 	"strings"
 	"testing"
+
+	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
 
 var d432e5bBaselineChecksums = map[string]string{
@@ -66,7 +70,7 @@ func TestNotificationDeliveryEvidenceMigrationFileMatchesRuntime(t *testing.T) {
 	if fileSQL != notificationDeliveryEvidenceMigrationSQL {
 		t.Fatalf("migration file/runtime drift\nfile: %q\nruntime: %q", fileSQL, notificationDeliveryEvidenceMigrationSQL)
 	}
-	if len(upgradeMigrations) != 3 || upgradeMigrations[0].Version != notificationDeliveryEvidenceMigrationVersion || upgradeMigrations[0].SQL != fileSQL {
+	if len(upgradeMigrations) != 4 || upgradeMigrations[0].Version != notificationDeliveryEvidenceMigrationVersion || upgradeMigrations[0].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -81,7 +85,7 @@ func TestOIDCProtectedAttemptsMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 3 || upgradeMigrations[1].Version != oidcProtectedAttemptsMigrationVersion || upgradeMigrations[1].SQL != fileSQL {
+	if len(upgradeMigrations) != 4 || upgradeMigrations[1].Version != oidcProtectedAttemptsMigrationVersion || upgradeMigrations[1].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -96,11 +100,81 @@ func TestSCIMResourcesMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 3 || upgradeMigrations[2].Version != scimResourcesMigrationVersion || upgradeMigrations[2].SQL != fileSQL {
+	if len(upgradeMigrations) != 4 || upgradeMigrations[2].Version != scimResourcesMigrationVersion || upgradeMigrations[2].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
 	if got, want := upgradeMigrations[2].Checksum, hex.EncodeToString(sum[:]); got != want {
 		t.Fatalf("runtime checksum=%q file checksum=%q", got, want)
+	}
+}
+
+func TestAppPasswordContractMigrationFileMatchesRuntime(t *testing.T) {
+	data, err := os.ReadFile("../../migrations/0005_app_password_contract.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileSQL := strings.TrimSpace(string(data))
+	if len(upgradeMigrations) != 4 || upgradeMigrations[3].Version != appPasswordContractMigrationVersion || upgradeMigrations[3].SQL != fileSQL {
+		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
+	}
+	sum := sha256.Sum256([]byte(fileSQL))
+	if got, want := upgradeMigrations[3].Checksum, hex.EncodeToString(sum[:]); got != want {
+		t.Fatalf("runtime checksum=%q file checksum=%q", got, want)
+	}
+}
+
+func TestAppPasswordContractMigrationBackfillsLegacyPublicIDAndSeparatesLabel(t *testing.T) {
+	db := testpg.DB(t, func(ctx context.Context, db *sql.DB) error {
+		var runner Runner
+		if err := runner.MigrateEmpty(); err != nil {
+			return err
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, migration := range runner.Applied {
+			if _, err := tx.ExecContext(ctx, migration.SQL); err != nil {
+				return err
+			}
+		}
+		for _, migration := range runner.Applied {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at, checksum, dirty) VALUES ($1,$2,$3,false)`, migration.Version, migration.AppliedAt, migration.Checksum); err != nil {
+				return err
+			}
+		}
+		for _, migration := range upgradeMigrations[:3] {
+			if _, err := tx.ExecContext(ctx, migration.SQL); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at, checksum, dirty) VALUES ($1,CURRENT_TIMESTAMP,$2,false)`, migration.Version, migration.Checksum); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tokens(id, subject_type, subject_id, kind, verifier, label, scope_json, created_at) VALUES ('00000000-0000-4000-8000-000000000501','mailbox','user@example.test','app_password','pbkdf2_sha256$1$salt$YQ==','app_legacy_public_id','[]',CURRENT_TIMESTAMP)`); err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
+	if err := MigrateSQL(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	var publicID, label string
+	if err := db.QueryRow(`SELECT public_id, label FROM tokens WHERE kind='app_password'`).Scan(&publicID, &label); err != nil {
+		t.Fatal(err)
+	}
+	if publicID != "app_legacy_public_id" || label != "app_legacy_public_id" {
+		t.Fatalf("public_id=%q label=%q", publicID, label)
+	}
+	if _, err := db.Exec(`UPDATE tokens SET label='phone' WHERE public_id='app_legacy_public_id'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT public_id, label FROM tokens WHERE kind='app_password'`).Scan(&publicID, &label); err != nil {
+		t.Fatal(err)
+	}
+	if publicID != "app_legacy_public_id" || label != "phone" {
+		t.Fatalf("separated public_id=%q label=%q", publicID, label)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,10 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/daemon"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 )
+
+const MaxActiveAppPasswords = daemon.MaxAppPasswordVerifiers
+
+var ErrAppPasswordLimit = errors.New("active app password limit reached")
 
 type Mailbox struct {
 	ID          string    `json:"id"`
@@ -170,8 +175,7 @@ func (s *Service) ApplySCIMMailbox(previousEmail string, mailbox Mailbox) {
 	if previousKey != "" && previousKey != key {
 		delete(s.Mailboxes, previousKey)
 		if s.Daemon != nil {
-			delete(s.Daemon.Mailboxes, previousKey)
-			delete(s.Daemon.AppPasswordVerifiers, previousKey)
+			s.Daemon.DeleteIdentityMailbox(previousKey)
 		}
 		for id, appPassword := range s.AppPasswords {
 			if appPassword.MailboxID == previousKey {
@@ -188,6 +192,7 @@ func (s *Service) ApplySCIMMailbox(previousEmail string, mailbox Mailbox) {
 func (s *Service) BindDaemon(service *daemon.Service) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	service.EnableConcurrentState()
 	s.Daemon = service
 	for _, mailbox := range s.Mailboxes {
 		s.syncDaemonMailboxLocked(mailbox)
@@ -286,6 +291,12 @@ func (s *Service) ListAppPasswords(mailboxID string) []AppPassword {
 			out = append(out, p)
 		}
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
 	return out
 }
 
@@ -303,17 +314,28 @@ func (s *Service) CreateAppPassword(ctx context.Context, actor authz.Actor, mail
 		_ = s.audit(ctx, actor, "app_password.create", mailboxID, "failure", err)
 		return AppPasswordCreated{}, err
 	}
+	if len(label) > 128 {
+		err := errors.New("label exceeds 128 bytes")
+		_ = s.audit(ctx, actor, "app_password.create", mailboxID, "failure", err)
+		return AppPasswordCreated{}, err
+	}
 	if err := s.authorize(ctx, actor, "mailbox:app_password.create", authz.Resource{Type: "mailbox", ID: mailboxID}); err != nil {
 		_ = s.audit(ctx, actor, "app_password.create", mailboxID, "denied", err)
 		return AppPasswordCreated{}, err
 	}
+	mailboxID = strings.ToLower(mailboxID)
 	s.mu.Lock()
-	_, ok := s.Mailboxes[strings.ToLower(mailboxID)]
+	_, mailboxExists := s.Mailboxes[mailboxID]
+	atLimit := s.activeAppPasswordCountLocked(mailboxID) >= MaxActiveAppPasswords
 	s.mu.Unlock()
-	if !ok {
+	if !mailboxExists {
 		err := errors.New("mailbox not found")
 		_ = s.audit(ctx, actor, "app_password.create", mailboxID, "failure", err)
 		return AppPasswordCreated{}, err
+	}
+	if atLimit {
+		_ = s.audit(ctx, actor, "app_password.create", mailboxID, "failure", ErrAppPasswordLimit)
+		return AppPasswordCreated{}, ErrAppPasswordLimit
 	}
 	secret, err := s.secret()
 	if err != nil {
@@ -324,20 +346,34 @@ func (s *Service) CreateAppPassword(ctx context.Context, actor authz.Actor, mail
 		return AppPasswordCreated{}, err
 	}
 	now := s.now()
-	id := "app_" + safeToken(12)
-	s.mu.Lock()
-	if err := s.audit(ctx, actor, "app_password.create", mailboxID, "success", nil); err != nil {
-		s.mu.Unlock()
+	idToken, err := randomToken(12)
+	if err != nil {
 		return AppPasswordCreated{}, err
 	}
-	p := AppPassword{ID: id, MailboxID: strings.ToLower(mailboxID), Label: label, Verifier: verifier, CreatedAt: now}
-	if err := s.persistAppPasswordLocked(ctx, p); err != nil {
-		s.mu.Unlock()
+	id := "app_" + idToken
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.Mailboxes[mailboxID]; !ok {
+		err := errors.New("mailbox not found")
+		_ = s.audit(ctx, actor, "app_password.create", mailboxID, "failure", err)
 		return AppPasswordCreated{}, err
+	}
+	if s.activeAppPasswordCountLocked(mailboxID) >= MaxActiveAppPasswords {
+		_ = s.audit(ctx, actor, "app_password.create", mailboxID, "failure", ErrAppPasswordLimit)
+		return AppPasswordCreated{}, ErrAppPasswordLimit
+	}
+	p := AppPassword{ID: id, MailboxID: mailboxID, Label: label, Verifier: verifier, CreatedAt: now}
+	if err := s.persistAppPasswordCreateLocked(ctx, actor, p); err != nil {
+		_ = s.audit(ctx, actor, "app_password.create", mailboxID, "failure", err)
+		return AppPasswordCreated{}, err
+	}
+	if s.DB == nil {
+		if err := s.audit(ctx, actor, "app_password.create", mailboxID, "success", nil); err != nil {
+			return AppPasswordCreated{}, err
+		}
 	}
 	s.AppPasswords[id] = p
-	s.syncDaemonAppPasswordsLocked(strings.ToLower(mailboxID))
-	s.mu.Unlock()
+	s.syncDaemonAppPasswordsLocked(mailboxID)
 	return AppPasswordCreated{ID: id, Label: label, SecretOnce: secret, CreatedAt: now}, nil
 }
 func (s *Service) RevokeAppPassword(ctx context.Context, actor authz.Actor, mailboxID, tokenID string) error {
@@ -345,28 +381,42 @@ func (s *Service) RevokeAppPassword(ctx context.Context, actor authz.Actor, mail
 		_ = s.audit(ctx, actor, "app_password.revoke", mailboxID, "denied", err)
 		return err
 	}
+	mailboxID = strings.ToLower(mailboxID)
 	now := s.now()
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	p, ok := s.AppPasswords[tokenID]
-	if !ok || p.MailboxID != strings.ToLower(mailboxID) {
-		s.mu.Unlock()
+	if !ok || p.MailboxID != mailboxID {
 		err := errors.New("app password not found")
 		_ = s.audit(ctx, actor, "app_password.revoke", mailboxID, "failure", err)
 		return err
 	}
+	if p.RevokedAt != nil {
+		return nil
+	}
 	p.RevokedAt = &now
-	if err := s.audit(ctx, actor, "app_password.revoke", mailboxID, "success", nil); err != nil {
-		s.mu.Unlock()
+	if err := s.persistAppPasswordRevokeLocked(ctx, actor, p); err != nil {
+		_ = s.audit(ctx, actor, "app_password.revoke", mailboxID, "failure", err)
 		return err
 	}
-	if err := s.persistAppPasswordLocked(ctx, p); err != nil {
-		s.mu.Unlock()
-		return err
+	if s.DB == nil {
+		if err := s.audit(ctx, actor, "app_password.revoke", mailboxID, "success", nil); err != nil {
+			return err
+		}
 	}
 	s.AppPasswords[tokenID] = p
-	s.syncDaemonAppPasswordsLocked(strings.ToLower(mailboxID))
-	s.mu.Unlock()
+	s.syncDaemonAppPasswordsLocked(mailboxID)
 	return nil
+}
+
+func (s *Service) activeAppPasswordCountLocked(mailboxID string) int {
+	count := 0
+	for _, p := range s.AppPasswords {
+		if p.MailboxID == mailboxID && p.RevokedAt == nil {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *Service) syncDaemonMailboxLocked(m Mailbox) {
@@ -376,18 +426,8 @@ func (s *Service) syncDaemonMailboxLocked(m Mailbox) {
 	if s.Daemon.Audit == nil && s.Audit != nil {
 		s.Daemon.Audit = s.Audit
 	}
-	if s.Daemon.Mailboxes == nil {
-		s.Daemon.Mailboxes = map[string]daemon.Mailbox{}
-	}
 	addr := strings.ToLower(m.Email)
-	s.Daemon.Mailboxes[addr] = daemon.Mailbox{Address: addr, Enabled: m.Active, Home: "/mail/" + strings.ReplaceAll(addr, "@", "/"), UID: 5000, GID: 5000, Verifier: m.Verifier}
-	domain := addr[strings.LastIndex(addr, "@")+1:]
-	if s.Daemon.Domains == nil {
-		s.Daemon.Domains = map[string]daemon.Domain{}
-	}
-	if _, ok := s.Daemon.Domains[domain]; !ok {
-		s.Daemon.Domains[domain] = daemon.Domain{Name: domain, Enabled: true}
-	}
+	s.Daemon.UpsertIdentityMailbox(daemon.Mailbox{Address: addr, Enabled: m.Active, Home: "/mail/" + strings.ReplaceAll(addr, "@", "/"), UID: 5000, GID: 5000, Verifier: m.Verifier})
 }
 
 func (s *Service) syncDaemonAppPasswordsLocked(mailboxID string) {
@@ -397,28 +437,35 @@ func (s *Service) syncDaemonAppPasswordsLocked(mailboxID string) {
 	if s.Daemon.Audit == nil && s.Audit != nil {
 		s.Daemon.Audit = s.Audit
 	}
-	if s.Daemon.AppPasswordVerifiers == nil {
-		s.Daemon.AppPasswordVerifiers = map[string][]string{}
-	}
 	var verifiers []string
 	for _, p := range s.AppPasswords {
 		if p.MailboxID == mailboxID && p.RevokedAt == nil {
 			verifiers = append(verifiers, p.Verifier)
 		}
 	}
-	s.Daemon.AppPasswordVerifiers[mailboxID] = verifiers
+	s.Daemon.SetAppPasswordVerifiers(mailboxID, verifiers)
 }
 
 func (s *Service) VerifyDovecot(mailboxID, secret string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	mailboxID = strings.ToLower(mailboxID)
+	m, ok := s.Mailboxes[mailboxID]
+	if !ok || !m.Active {
+		return false
+	}
+	if daemon.VerifyDjangoPBKDF2SHA256(m.Verifier, secret) == nil {
+		return true
+	}
+	if s.activeAppPasswordCountLocked(mailboxID) > MaxActiveAppPasswords {
+		return false
+	}
 	for _, p := range s.AppPasswords {
-		if p.MailboxID == strings.ToLower(mailboxID) && p.RevokedAt == nil && daemon.VerifyDjangoPBKDF2SHA256(p.Verifier, secret) == nil {
+		if p.MailboxID == mailboxID && p.RevokedAt == nil && daemon.VerifyDjangoPBKDF2SHA256(p.Verifier, secret) == nil {
 			return true
 		}
 	}
-	m, ok := s.Mailboxes[strings.ToLower(mailboxID)]
-	return ok && m.Active && daemon.VerifyDjangoPBKDF2SHA256(m.Verifier, secret) == nil
+	return false
 }
 
 func HashSecret(secret string) (string, error) {
@@ -428,7 +475,11 @@ func HashSecretBytes(secret []byte) (string, error) {
 	if len(secret) < 8 {
 		return "", errors.New("password too short")
 	}
-	return daemon.MakeDjangoPBKDF2SHA256Bytes(secret, safeToken(10), 120000), nil
+	salt, err := randomToken(10)
+	if err != nil {
+		return "", err
+	}
+	return daemon.MakeDjangoPBKDF2SHA256Bytes(secret, salt, 120000), nil
 }
 func (s *Service) validateMailbox(email string) error {
 	a, err := mail.ParseAddress(email)
@@ -550,16 +601,16 @@ func (s *Service) loadSQL(ctx context.Context) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	rows, err = s.DB.QueryContext(ctx, `SELECT label, subject_id, verifier, created_at, revoked_at FROM tokens WHERE kind='app_password'`)
+	rows, err = s.DB.QueryContext(ctx, `SELECT public_id, subject_id, label, verifier, created_at, revoked_at FROM tokens WHERE kind='app_password'`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, mailbox, verifier string
+		var id, mailbox, label, verifier string
 		var created time.Time
 		var revoked sql.NullTime
-		if err := rows.Scan(&id, &mailbox, &verifier, &created, &revoked); err != nil {
+		if err := rows.Scan(&id, &mailbox, &label, &verifier, &created, &revoked); err != nil {
 			return err
 		}
 		var rp *time.Time
@@ -567,10 +618,16 @@ func (s *Service) loadSQL(ctx context.Context) error {
 			t := revoked.Time
 			rp = &t
 		}
-		s.AppPasswords[id] = AppPassword{ID: id, MailboxID: strings.ToLower(mailbox), Label: id, Verifier: verifier, CreatedAt: created, RevokedAt: rp}
+		mailbox = strings.ToLower(mailbox)
+		s.AppPasswords[id] = AppPassword{ID: id, MailboxID: mailbox, Label: label, Verifier: verifier, CreatedAt: created, RevokedAt: rp}
 	}
 	if err := rows.Err(); err != nil {
 		return err
+	}
+	for mailboxID := range s.Mailboxes {
+		if s.activeAppPasswordCountLocked(mailboxID) > MaxActiveAppPasswords {
+			return fmt.Errorf("mailbox %s exceeds active app password limit", mailboxID)
+		}
 	}
 	for _, m := range s.Mailboxes {
 		s.syncDaemonMailboxLocked(m)
@@ -614,13 +671,82 @@ func (s *Service) persistTokenLocked(ctx context.Context, tok Token) error {
 	return err
 }
 
-func (s *Service) persistAppPasswordLocked(ctx context.Context, p AppPassword) error {
+func (s *Service) persistAppPasswordCreateLocked(ctx context.Context, actor authz.Actor, p AppPassword) error {
 	if s.DB == nil {
 		return nil
 	}
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	local, domain, ok := strings.Cut(p.MailboxID, "@")
+	if !ok {
+		return errors.New("invalid mailbox address")
+	}
+	var mailboxRowID string
+	if err := tx.QueryRowContext(ctx, `SELECT m.id::text FROM mailboxes m JOIN domains d ON d.id=m.domain_id WHERE d.name=$1 AND m.local_part=$2 FOR UPDATE`, domain, local).Scan(&mailboxRowID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("mailbox not found")
+		}
+		return err
+	}
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM tokens WHERE subject_type='mailbox' AND subject_id=$1 AND kind='app_password' AND revoked_at IS NULL`, p.MailboxID).Scan(&active); err != nil {
+		return err
+	}
+	if active >= MaxActiveAppPasswords {
+		return ErrAppPasswordLimit
+	}
 	scopeJSON, _ := json.Marshal([]string{"mailbox:" + strings.ToLower(p.MailboxID) + ":app_password"})
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO tokens(id, subject_type, subject_id, kind, verifier, label, scope_json, created_at, revoked_at) VALUES ($1,'mailbox',$2,'app_password',$3,$4,$5,$6,$7) ON CONFLICT (id) DO UPDATE SET verifier=EXCLUDED.verifier, revoked_at=EXCLUDED.revoked_at`, stableUUID("app_password:"+p.ID), strings.ToLower(p.MailboxID), p.Verifier, p.ID, string(scopeJSON), p.CreatedAt, nullTimePtr(p.RevokedAt))
-	return err
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tokens(id, subject_type, subject_id, kind, verifier, label, scope_json, created_at, revoked_at, public_id) VALUES ($1,'mailbox',$2,'app_password',$3,$4,$5,$6,NULL,$7)`, stableUUID("app_password:"+p.ID), p.MailboxID, p.Verifier, p.Label, string(scopeJSON), p.CreatedAt, p.ID); err != nil {
+		return err
+	}
+	if err := audit.WriteSQL(ctx, tx, appPasswordSuccessEvent(actor, "app_password.create", p)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Service) persistAppPasswordRevokeLocked(ctx context.Context, actor authz.Actor, p AppPassword) error {
+	if s.DB == nil {
+		return nil
+	}
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var rowID string
+	if err := tx.QueryRowContext(ctx, `SELECT id::text FROM tokens WHERE public_id=$1 AND subject_type='mailbox' AND subject_id=$2 AND kind='app_password' FOR UPDATE`, p.ID, p.MailboxID).Scan(&rowID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("app password not found")
+		}
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE tokens SET revoked_at=$1 WHERE id=$2`, nullTimePtr(p.RevokedAt), rowID); err != nil {
+		return err
+	}
+	if err := audit.WriteSQL(ctx, tx, appPasswordSuccessEvent(actor, "app_password.revoke", p)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func appPasswordSuccessEvent(actor authz.Actor, action string, p AppPassword) audit.Event {
+	eventTime := p.CreatedAt
+	if action == "app_password.revoke" && p.RevokedAt != nil {
+		eventTime = *p.RevokedAt
+	}
+	return audit.Event{
+		Actor:         audit.ActorRef{Type: actor.Type, ID: actor.ID},
+		Action:        action,
+		Resource:      audit.ResourceRef{Type: "identity", ID: p.MailboxID},
+		AfterRedacted: map[string]any{"credential_id": p.ID, "label": p.Label},
+		CorrelationID: "identity",
+		Result:        "success",
+		Time:          eventTime,
+	}
 }
 
 func stableUUID(seed string) string {
@@ -647,12 +773,12 @@ func randomSecret() (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
-func safeToken(n int) string {
+func randomToken(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 type PatchOperation struct {
