@@ -15,6 +15,7 @@ import (
 
 	"forgejo/gotthboard/gotth-mail/internal/admin"
 	"forgejo/gotthboard/gotth-mail/internal/api"
+	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/authn"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/daemon"
@@ -32,7 +33,6 @@ func main() {
 	if err := version.Validate(version.Version); err != nil {
 		log.Fatal(err)
 	}
-	mux := http.NewServeMux()
 	server := api.Server{Authz: authz.StaticAuthorizer{}}
 	if os.Getenv("GOTTH_MAIL_REFERENCE_FIXTURE") == "1" {
 		server = referenceServer()
@@ -48,17 +48,44 @@ func main() {
 	if err := configureOIDCFromEnv(context.Background(), &server, http.DefaultClient); err != nil {
 		log.Fatalf("configure oidc: %v", err)
 	}
-	mux.Handle("/api/", server.Handler())
-	mux.Handle("/internal/", server.Handler())
-	mux.Handle("/healthz", server.Handler())
-	mux.Handle("/readyz", server.Handler())
-	mux.Handle("/webmail", server.Handler())
-	mux.Handle("/", httpui.HandlerWithAdmin(referenceAdminStore()))
+	if err := configureSCIMFromEnv(&server); err != nil {
+		log.Fatalf("configure scim: %v", err)
+	}
+	mux := runtimeMux(server)
 	addr := os.Getenv("GOTTH_MAIL_LISTEN")
 	if addr == "" {
 		addr = ":8080"
 	}
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+func runtimeMux(server api.Server) http.Handler {
+	mux := http.NewServeMux()
+	serverHandler := server.Handler()
+	mux.Handle("/api/", serverHandler)
+	mux.Handle("/scim/", serverHandler)
+	mux.Handle("/internal/", serverHandler)
+	mux.Handle("/healthz", serverHandler)
+	mux.Handle("/readyz", serverHandler)
+	mux.Handle("/webmail", serverHandler)
+	mux.Handle("/", httpui.HandlerWithAdmin(referenceAdminStore()))
+	return mux
+}
+
+func configureSCIMFromEnv(server *api.Server) error {
+	externalURL := strings.TrimSpace(os.Getenv("GOTTH_MAIL_SCIM_EXTERNAL_URL"))
+	if externalURL == "" {
+		return nil
+	}
+	if server.AuditDB == nil || server.Identity == nil {
+		return fmt.Errorf("GOTTH_MAIL_DATABASE_URL or GOTTH_MAIL_DATABASE_URL_FILE is required when SCIM is enabled")
+	}
+	handler, err := api.NewSCIMHandler(externalURL, server.AuditDB, server.Identity, server.Authz, audit.SQLWriter{DB: server.AuditDB})
+	if err != nil {
+		return err
+	}
+	server.SCIM = handler
+	return nil
 }
 
 func configureOIDCFromEnv(ctx context.Context, server *api.Server, client *http.Client) error {

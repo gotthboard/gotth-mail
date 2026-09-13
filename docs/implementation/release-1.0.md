@@ -49,9 +49,12 @@ tombstones, expected versions, and immediate deletion visibility.
 
 Authentication middleware validates the verifier-backed SCIM bearer before
 the library handler. `ResolveScope` returns only the authenticated client's
-opaque provisioning scope. Product projection, authorization, audit, password
-delegation, daemon synchronization, and session revocation must commit or fail
-together with the SCIM transaction.
+opaque provisioning scope. Canonical resource, mailbox, authorization, success
+audit, and password delegation changes commit or fail together with the SCIM
+transaction. The admitted single control-plane writer updates its in-memory
+daemon/passdb view only after commit and reconstructs it from SQL on restart.
+Groups and session revocation remain unavailable until the authoritative
+Authentik-subject binding exists; no ID-token claim substitutes for it.
 
 The current email-address-as-resource-ID scheme requires an explicit migration
 and Authentik adoption proof. It must not be silently reinterpreted.
@@ -61,9 +64,9 @@ and Authentik adoption proof. It must not be silently reinterpreted.
 This release-contract feature pins both libraries and runs an external
 consumer contract test that performs a real OIDC discovery/begin request and a
 real SCIM User create/read cycle. That proves dependency and public-API
-compatibility only. It does not claim the consumer-owned persistence adapters
-or live Authentik cutover are complete; those remain blocking identity
-workstream work.
+compatibility only. The later identity feature now supplies the consumer-owned
+PostgreSQL adapter and runtime cutover. Live Authentik, legacy adoption,
+backup/restore, and release promotion remain separate blocking evidence.
 
 ## Release verification
 

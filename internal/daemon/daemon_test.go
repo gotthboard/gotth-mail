@@ -98,6 +98,18 @@ func TestVerifierRejectsUnsupportedHash(t *testing.T) {
 	}
 }
 
+func TestDjangoPBKDF2ByteAndStringInputsMatch(t *testing.T) {
+	const secret = "sëcret phrase"
+	want := MakeDjangoPBKDF2SHA256(secret, "fixed-salt", 1200)
+	got := MakeDjangoPBKDF2SHA256Bytes([]byte(secret), "fixed-salt", 1200)
+	if got != want {
+		t.Fatalf("byte-input verifier mismatch: got %q want %q", got, want)
+	}
+	if err := VerifyDjangoPBKDF2SHA256(got, secret); err != nil {
+		t.Fatalf("byte-input verifier rejected: %v", err)
+	}
+}
+
 func TestDovecotPassdbAuditsAppPasswordUse(t *testing.T) {
 	w := &audit.MemoryWriter{}
 	s := Service{Audit: w, Mailboxes: map[string]Mailbox{"user@example.test": {Address: "user@example.test", Enabled: true, Verifier: MakeDjangoPBKDF2SHA256("mail-secret", "salt", 1200)}}, AppPasswordVerifiers: map[string][]string{"user@example.test": {MakeDjangoPBKDF2SHA256("app-secret", "salt2", 1200)}}}

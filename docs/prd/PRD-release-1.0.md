@@ -51,10 +51,11 @@ provisioning scope, a durable transactional store adapter, mailbox/domain
 policy, password delegation, audit, daemon synchronization, and session
 effects.
 
-The current in-tree OIDC and SCIM implementations remain temporary migration
-code. They may not be declared stable 1.0 mechanisms. Cutover must preserve
-userspace routes while deleting duplicate protocol machinery once the
-consumer adapters and migration evidence pass.
+The 1.0-alpha development line has removed the duplicate in-tree OIDC and SCIM
+protocol implementations in favor of the pinned libraries while preserving
+the public routes. This is implementation progress, not a stable claim:
+operator-reviewed legacy identity adoption, live Authentik lifecycle,
+backup/restore, and complete release evidence still gate promotion.
 
 ## Acceptance
 

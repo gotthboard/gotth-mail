@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -211,17 +213,49 @@ func TestAuthzExplainUsesRequestActorActionResource(t *testing.T) {
 func authed(method, path, body, token string) *http.Request {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
+	if strings.HasPrefix(path, "/scim/v2/") && body != "" {
+		req.Header.Set("Content-Type", "application/scim+json")
+	}
 	return req
 }
 
-func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
-	ids := identity.NewService("example.test")
+func scimTestHandler(t *testing.T, writer audit.Writer) (*sql.DB, *identity.Service, *daemon.Service, http.Handler) {
+	t.Helper()
+	db := testpg.DB(t, store.MigrateSQL)
+	ids, err := identity.NewSQLService(context.Background(), db, "example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := ids.AddToken("scim-test", "scim_client", "scim-secret-token"); err != nil {
 		t.Fatal(err)
 	}
-	d := daemon.Service{}
-	ids.Daemon = &d
-	h := Server{Identity: ids, Daemon: d}.Handler()
+	d := &daemon.Service{}
+	ids.Daemon = d
+	if writer == nil {
+		writer = audit.SQLWriter{DB: db}
+	}
+	scimHandler, err := NewSCIMHandler("https://mail.example.test/scim/v2", db, ids, authz.StaticAuthorizer{}, writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db, ids, d, Server{Identity: ids, Daemon: *d, SCIM: scimHandler}.Handler()
+}
+
+func responseID(t *testing.T, body string) string {
+	t.Helper()
+	var response map[string]any
+	if err := json.Unmarshal([]byte(body), &response); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := response["id"].(string)
+	if id == "" {
+		t.Fatalf("response has no opaque id: %s", body)
+	}
+	return id
+}
+
+func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
+	db, _, d, h := scimTestHandler(t, nil)
 
 	unauth := httptest.NewRecorder()
 	h.ServeHTTP(unauth, httptest.NewRequest(http.MethodPost, "/scim/v2/Users", strings.NewReader(`{"userName":"user@example.test"}`)))
@@ -229,17 +263,41 @@ func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
 		t.Fatalf("unauth SCIM status=%d", unauth.Code)
 	}
 
-	create := authed(http.MethodPost, "/scim/v2/Users", `{"userName":"user@example.test","displayName":"User","active":true,"password":"long-password"}`, "scim-secret-token")
+	create := authed(http.MethodPost, "/scim/v2/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"externalId":"authentik-subject-1","userName":"user@example.test","displayName":"User","active":true,"password":"long-password"}`, "scim-secret-token")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, create)
 	if rr.Code != http.StatusCreated || !strings.Contains(rr.Body.String(), "user@example.test") {
 		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
 	}
+	userID := responseID(t, rr.Body.String())
+	if userID == "user@example.test" {
+		t.Fatal("SCIM resource ID reused the mailbox address")
+	}
+	var storedDocument []byte
+	var storedVerifier string
+	var auditBefore, auditAfter sql.NullString
+	if err := db.QueryRow(`SELECT data FROM scim_resources WHERE id=$1`, userID).Scan(&storedDocument); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COALESCE(m.verifier,'') FROM mailboxes m WHERE m.scim_resource_id=$1`, userID).Scan(&storedVerifier); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT before_redacted_json, after_redacted_json FROM audit_events WHERE action='scim.user.create' AND resource_id=$1`, userID).Scan(&auditBefore, &auditAfter); err != nil {
+		t.Fatal(err)
+	}
+	for label, value := range map[string]string{"resource": string(storedDocument), "audit_before": auditBefore.String, "audit_after": auditAfter.String} {
+		if strings.Contains(value, "long-password") || strings.Contains(value, `"password"`) {
+			t.Fatalf("%s retained SCIM password material: %s", label, value)
+		}
+	}
+	if strings.Contains(storedVerifier, "long-password") || !strings.HasPrefix(storedVerifier, "pbkdf2_sha256$") {
+		t.Fatalf("mailbox verifier is not an encoded one-way value: %q", storedVerifier)
+	}
 	if got := d.DovecotPassdb("c", daemon.PassdbRequest{Username: "user@example.test", Secret: "long-password", Protocol: "imap"}); got.Decision != daemon.OK {
 		t.Fatalf("SCIM password did not enter daemon passdb: %#v", got)
 	}
 
-	patch := authed(http.MethodPatch, "/scim/v2/Users/user@example.test", `{"Operations":[{"op":"replace","path":"/displayName","value":"Renamed"},{"op":"replace","path":"/active","value":false}]}`, "scim-secret-token")
+	patch := authed(http.MethodPatch, "/scim/v2/Users/"+userID, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"displayName","value":"Renamed"},{"op":"replace","path":"active","value":false}]}`, "scim-secret-token")
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, patch)
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "Renamed") || !strings.Contains(rr.Body.String(), `"active":false`) {
@@ -253,14 +311,14 @@ func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
 		t.Fatalf("list status=%d body=%s", rr.Code, rr.Body.String())
 	}
 
-	read := authed(http.MethodGet, "/scim/v2/Users/user@example.test", "", "scim-secret-token")
+	read := authed(http.MethodGet, "/scim/v2/Users/"+userID, "", "scim-secret-token")
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, read)
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "user@example.test") {
 		t.Fatalf("read status=%d body=%s", rr.Code, rr.Body.String())
 	}
 
-	put := authed(http.MethodPut, "/scim/v2/Users/user@example.test", `{"userName":"user@example.test","displayName":"Put User","active":true,"password":"replacement-password"}`, "scim-secret-token")
+	put := authed(http.MethodPut, "/scim/v2/Users/"+userID, `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"externalId":"authentik-subject-1","userName":"user@example.test","displayName":"Put User","active":true,"password":"replacement-password"}`, "scim-secret-token")
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, put)
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "Put User") {
@@ -269,12 +327,39 @@ func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
 	if got := d.DovecotPassdb("c", daemon.PassdbRequest{Username: "user@example.test", Secret: "replacement-password", Protocol: "imap"}); got.Decision != daemon.OK {
 		t.Fatalf("PUT replacement password did not enter daemon passdb: %#v", got)
 	}
+	restarted, err := identity.NewSQLService(context.Background(), db, "example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedDaemon := &daemon.Service{}
+	restarted.BindDaemon(restartedDaemon)
+	restartedSCIM, err := NewSCIMHandler("https://mail.example.test/scim/v2", db, restarted, authz.StaticAuthorizer{}, audit.SQLWriter{DB: db})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedHandler := Server{Identity: restarted, Daemon: *restartedDaemon, SCIM: restartedSCIM}.Handler()
+	rr = httptest.NewRecorder()
+	restartedHandler.ServeHTTP(rr, authed(http.MethodGet, "/scim/v2/Users/"+userID, "", "scim-secret-token"))
+	if rr.Code != http.StatusOK || responseID(t, rr.Body.String()) != userID {
+		t.Fatalf("restart read status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := restartedDaemon.DovecotPassdb("c", daemon.PassdbRequest{Username: "user@example.test", Secret: "replacement-password", Protocol: "imap"}); got.Decision != daemon.OK {
+		t.Fatalf("restart lost SCIM password projection: %#v", got)
+	}
 
-	deleteReq := authed(http.MethodDelete, "/scim/v2/Users/user@example.test", "", "scim-secret-token")
+	deleteReq := authed(http.MethodDelete, "/scim/v2/Users/"+userID, "", "scim-secret-token")
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, deleteReq)
-	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"active":false`) {
+	if rr.Code != http.StatusNoContent {
 		t.Fatalf("delete status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := d.DovecotPassdb("c", daemon.PassdbRequest{Username: "user@example.test", Secret: "replacement-password", Protocol: "imap"}); got.Decision != daemon.Reject {
+		t.Fatalf("deleted SCIM user remained enabled: %#v", got)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodPost, "/scim/v2/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"externalId":"authentik-subject-1","userName":"replacement@example.test","active":true}`, "scim-secret-token"))
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("tombstoned external identity recreation status=%d body=%s", rr.Code, rr.Body.String())
 	}
 
 	badCases := []struct{ name, method, path, body string }{
@@ -284,9 +369,9 @@ func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
 		{"scalar display", http.MethodPost, "/scim/v2/Users", `{"userName":"bad@example.test","displayName":12}`},
 		{"scalar formatted", http.MethodPost, "/scim/v2/Users", `{"userName":"bad@example.test","name":{"formatted":12}}`},
 		{"bad domain", http.MethodPost, "/scim/v2/Users", `{"userName":"bad@evil.test"}`},
-		{"empty operations", http.MethodPatch, "/scim/v2/Users/user@example.test", `{"Operations":[]}`},
-		{"unknown path", http.MethodPatch, "/scim/v2/Users/user@example.test", `{"Operations":[{"op":"replace","path":"/unknown","value":"x"}]}`},
-		{"unsupported op", http.MethodPatch, "/scim/v2/Users/user@example.test", `{"Operations":[{"op":"move","path":"/displayName","value":"x"}]}`},
+		{"empty operations", http.MethodPatch, "/scim/v2/Users/" + userID, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[]}`},
+		{"unknown path", http.MethodPatch, "/scim/v2/Users/" + userID, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"unknown","value":"x"}]}`},
+		{"unsupported op", http.MethodPatch, "/scim/v2/Users/" + userID, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"move","path":"displayName","value":"x"}]}`},
 	}
 	for _, tc := range badCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -299,8 +384,8 @@ func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
 	}
 
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/scim/v2/Groups", nil))
-	if rr.Code != http.StatusNotImplemented || !strings.Contains(rr.Body.String(), "explicitly unsupported") {
+	h.ServeHTTP(rr, authed(http.MethodGet, "/scim/v2/Groups", "", "scim-secret-token"))
+	if rr.Code != http.StatusNotImplemented || !strings.Contains(rr.Body.String(), "disabled until opaque membership binding") {
 		t.Fatalf("groups status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
@@ -361,13 +446,9 @@ func TestAppPasswordAPICreateListRevokeSecretOnce(t *testing.T) {
 	}
 }
 
-func TestSCIMPutRejectsDivergentIDAndAuditsAuthFailure(t *testing.T) {
-	ids := identity.NewService("example.test")
-	if err := ids.AddToken("scim-test", "scim_client", "scim-secret-token"); err != nil {
-		t.Fatal(err)
-	}
+func TestSCIMRenamePreservesOpaqueIDAndAuditsAuthFailure(t *testing.T) {
 	w := &audit.MemoryWriter{}
-	h := Server{Identity: ids, Audit: w}.Handler()
+	db, ids, d, h := scimTestHandler(t, w)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/scim/v2/Users", strings.NewReader(`{"userName":"user@example.test"}`)))
 	if rr.Code != http.StatusUnauthorized {
@@ -385,25 +466,105 @@ func TestSCIMPutRejectsDivergentIDAndAuditsAuthFailure(t *testing.T) {
 		t.Fatalf("missing decode failure audit %#v", w.Events)
 	}
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, authed(http.MethodPost, "/scim/v2/Users", `{"userName":"user@example.test","password":"long-password"}`, "scim-secret-token"))
+	h.ServeHTTP(rr, authed(http.MethodPost, "/scim/v2/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"user@example.test","password":"long-password"}`, "scim-secret-token"))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
 	}
+	userID := responseID(t, rr.Body.String())
+	created, err := ids.CreateAppPassword(context.Background(), authz.Actor{Type: "local_admin", ID: "test-admin"}, "user@example.test", "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.DovecotPassdb("c", daemon.PassdbRequest{Username: "user@example.test", Secret: created.SecretOnce, Protocol: "imap"}); got.Decision != daemon.OK {
+		t.Fatalf("pre-rename app password rejected: %#v", got)
+	}
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, authed(http.MethodPut, "/scim/v2/Users/user@example.test", `{"userName":"other@example.test"}`, "scim-secret-token"))
-	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "id must match userName") {
-		t.Fatalf("mismatch status=%d body=%s", rr.Code, rr.Body.String())
+	h.ServeHTTP(rr, authed(http.MethodPut, "/scim/v2/Users/"+userID, `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"other@example.test","active":true}`, "scim-secret-token"))
+	if rr.Code != http.StatusOK || responseID(t, rr.Body.String()) != userID || !strings.Contains(rr.Body.String(), "other@example.test") {
+		t.Fatalf("rename status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := d.DovecotPassdb("c", daemon.PassdbRequest{Username: "user@example.test", Secret: created.SecretOnce, Protocol: "imap"}); got.Decision != daemon.NotFound {
+		t.Fatalf("renamed mailbox lingered at old address: %#v", got)
+	}
+	if got := d.DovecotPassdb("c", daemon.PassdbRequest{Username: "other@example.test", Secret: created.SecretOnce, Protocol: "imap"}); got.Decision != daemon.OK {
+		t.Fatalf("renamed mailbox lost app password: %#v", got)
+	}
+	restarted, err := identity.NewSQLService(context.Background(), db, "example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedDaemon := &daemon.Service{}
+	restarted.BindDaemon(restartedDaemon)
+	if got := restartedDaemon.DovecotPassdb("c", daemon.PassdbRequest{Username: "user@example.test", Secret: created.SecretOnce, Protocol: "imap"}); got.Decision != daemon.NotFound {
+		t.Fatalf("restart restored old renamed address: %#v", got)
+	}
+	if got := restartedDaemon.DovecotPassdb("c", daemon.PassdbRequest{Username: "other@example.test", Secret: created.SecretOnce, Protocol: "imap"}); got.Decision != daemon.OK {
+		t.Fatalf("restart lost renamed app password: %#v", got)
 	}
 }
 
-func TestDefaultIdentityServiceIsSharedAcrossSCIMAndAppPasswordRoutes(t *testing.T) {
+func TestSCIMFailsClosedWithoutConfiguredRuntime(t *testing.T) {
 	h := Server{Daemon: daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}}}.Handler()
-	// The default service has no configured token, so this currently proves routes are wired through one service only by requiring explicit auth.
-	// Shared-state behavior with successful auth is covered by injected-service tests above.
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/scim/v2/Users", strings.NewReader(`{"userName":"user@example.test"}`)))
-	if rr.Code != http.StatusUnauthorized {
+	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d", rr.Code)
+	}
+}
+
+func TestSCIMAuditFailureRollsBackResourceAndMailbox(t *testing.T) {
+	db, _, _, h := scimTestHandler(t, nil)
+	if _, err := db.Exec(`ALTER TABLE audit_events ADD CONSTRAINT reject_scim_create CHECK (action <> 'scim.user.create')`); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authed(http.MethodPost, "/scim/v2/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"rollback@example.test","password":"long-password"}`, "scim-secret-token"))
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, table := range []string{"scim_resources", "mailboxes"} {
+		var count int
+		if err := db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("%s retained %d rows after audit failure", table, count)
+		}
+	}
+}
+
+func TestSCIMConcurrentCreateHasOneWinner(t *testing.T) {
+	_, _, _, h := scimTestHandler(t, nil)
+	const contenders = 8
+	statuses := make(chan int, contenders)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for index := 0; index < contenders; index++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, authed(http.MethodPost, "/scim/v2/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"concurrent@example.test","active":true}`, "scim-secret-token"))
+			statuses <- rr.Code
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(statuses)
+	winners, conflicts := 0, 0
+	for status := range statuses {
+		switch status {
+		case http.StatusCreated:
+			winners++
+		case http.StatusConflict:
+			conflicts++
+		default:
+			t.Fatalf("unexpected concurrent status %d", status)
+		}
+	}
+	if winners != 1 || conflicts != contenders-1 {
+		t.Fatalf("winners=%d conflicts=%d", winners, conflicts)
 	}
 }
 

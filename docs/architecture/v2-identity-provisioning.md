@@ -134,6 +134,21 @@ The adapter must pass `scim.CheckStore`; that library check is necessary but
 does not replace product restart, concurrency, migration, backup, restore, and
 mailbox/audit projection evidence.
 
+Canonical SCIM resources, ordered indexes, immutable index contracts, and
+permanent tombstones live in PostgreSQL. A stable authenticated `scim_client`
+actor ID derives an opaque storage scope; token-secret rotation preserves scope
+only when that actor ID is preserved. User resource mutation, write-only
+password hashing, mailbox projection, and success audit admission share one
+serializable transaction. A failure in any member rolls the transaction back.
+
+The committed SQL state is authoritative. The current single control-plane
+process projects accepted mailboxes into its in-memory daemon/passdb view only
+after commit and rebuilds the view on startup. Horizontal multi-writer runtime
+operation is not admitted until cache propagation is explicit. Legacy
+email-keyed mailbox rows likewise require an operator-reviewed opaque-ID and
+Authentik-subject adoption record; provenance cannot be inferred from an
+address.
+
 ## GOTTH component allocation
 
 The authoritative allocation, exact inspected revisions, legal gates, and
