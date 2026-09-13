@@ -261,6 +261,17 @@ func (tx *transaction) Delete(scope, resourceType, id, expectedVersion string, t
 	if tombstone.Scope != scope || tombstone.ResourceType != resourceType || tombstone.ID != id || tombstone.ExternalID != current.ExternalID || tombstone.Manager != current.Manager || tombstone.Version != current.Version || tombstone.DeletedAt.IsZero() {
 		return fmt.Errorf("SCIM tombstone does not match deleted resource")
 	}
+	if resourceType == "User" {
+		var groupID string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT group_id FROM scim_group_members WHERE scope=$1 AND user_id=$2 ORDER BY group_id LIMIT 1`, scope, id).Scan(&groupID)
+		switch {
+		case err == nil:
+			return &gotthscim.ProtocolError{Status: 409, Detail: "User remains referenced by a Group"}
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return err
+		}
+	}
 	if err := tx.disableProjection(current, tombstone.DeletedAt); err != nil {
 		return err
 	}
@@ -649,8 +660,13 @@ func recordPasswordKey(scope, resourceType, id string) string {
 
 func mapStoreError(err error) error {
 	var postgresError *pq.Error
-	if errors.As(err, &postgresError) && (postgresError.Code == "23505" || postgresError.Code == "23503") {
-		return gotthscim.ErrConflict
+	if errors.As(err, &postgresError) {
+		switch postgresError.Code {
+		case "23503":
+			return &gotthscim.ProtocolError{Status: 409, Detail: "SCIM resource remains referenced by existing state"}
+		case "23505":
+			return gotthscim.ErrConflict
+		}
 	}
 	return err
 }
