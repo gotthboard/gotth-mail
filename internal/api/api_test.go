@@ -2,15 +2,10 @@ package api
 
 import (
 	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
-	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -31,6 +26,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/testpg"
 	"forgejo/gotthboard/gotth-mail/internal/webmail"
+	gotthoidc "github.com/gotthboard/gotth-oidc/pkg/oidc"
 )
 
 func TestV0APIShellRoutes(t *testing.T) {
@@ -116,18 +112,32 @@ func TestStatusReportsReleaseIdentity(t *testing.T) {
 	}
 }
 
-type apiOIDCExchange struct{ token string }
+type apiOIDCClient struct {
+	authorization gotthoidc.Authorization
+	identity      gotthoidc.Identity
+}
 
-func (f apiOIDCExchange) ExchangeCode(ctx context.Context, req authn.TokenRequest) (authn.TokenResponse, error) {
-	return authn.TokenResponse{IDToken: f.token, TokenType: "Bearer"}, nil
+func (client *apiOIDCClient) Begin() (gotthoidc.Authorization, error) {
+	return client.authorization, nil
+}
+
+func (client *apiOIDCClient) CompleteResponse(_ context.Context, response gotthoidc.AuthorizationResponse, attempt gotthoidc.ProtectedAttempt) (gotthoidc.Identity, error) {
+	if response.State == "" || response.Code == "" || attempt != client.authorization.Attempt {
+		return gotthoidc.Identity{}, errors.New("bad completion input")
+	}
+	return client.identity, nil
 }
 
 func TestOIDCBrowserRedirectLoginAndGETCallback(t *testing.T) {
-	key, jwks := apiJWKS(t, "kid1")
 	now := time.Unix(1234, 0).UTC()
-	cfg := authn.OIDCConfig{Issuer: "https://auth.example.test/application/o/gotth-mail/", ClientID: "gotth-mail", RedirectURI: "http://127.0.0.1:18080/api/v1/oidc/callback", TokenEndpoint: "https://auth.example.test/token", ClockSkew: time.Minute, Now: func() time.Time { return now }}
+	redirectURI := "http://127.0.0.1:18080/api/v1/oidc/callback"
+	state, nonce := "api-state", "api-nonce"
+	attempt := gotthoidc.ProtectedAttempt{StateHash: sha256.Sum256([]byte(state)), ContextCiphertext: "protected-context"}
+	attempt.NonceCiphertext[0] = 1
+	attempt.PKCEVerifierCiphertext[0] = 2
+	client := &apiOIDCClient{authorization: gotthoidc.Authorization{URL: "https://auth.example.test/application/o/authorize/?state=" + state + "&nonce=" + nonce + "&code_challenge=challenge&code_challenge_method=S256", Attempt: attempt}}
 	store := authn.NewStore()
-	h := Server{OIDCConfig: cfg, OIDCStore: store, OIDCAuthorizeEndpoint: "https://auth.example.test/application/o/authorize/", OIDCJWKS: jwks}.Handler()
+	h := Server{OIDCClient: client, OIDCStore: store, OIDCRedirectURI: redirectURI, OIDCNow: func() time.Time { return now }}.Handler()
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/oidc/login?mode=redirect&redirect=/done", nil))
 	if rr.Code != http.StatusFound {
@@ -147,13 +157,13 @@ func TestOIDCBrowserRedirectLoginAndGETCallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := u.Query().Get("state")
-	nonce := u.Query().Get("nonce")
-	if state == "" || nonce == "" || u.Query().Get("redirect_uri") != cfg.RedirectURI {
+	state = u.Query().Get("state")
+	nonce = u.Query().Get("nonce")
+	if state == "" || nonce == "" || u.Query().Get("code_challenge_method") != "S256" {
 		t.Fatalf("bad authorize redirect %s", loc)
 	}
-	tok := apiSignToken(t, key, "kid1", map[string]any{"iss": cfg.Issuer, "sub": "user-123", "aud": []string{cfg.ClientID}, "azp": cfg.ClientID, "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "nbf": now.Add(-time.Second).Unix(), "nonce": nonce, "email": "alice@example.test", "name": "Alice"})
-	h = Server{OIDCConfig: cfg, OIDCStore: store, OIDCAuthorizeEndpoint: "https://auth.example.test/application/o/authorize/", OIDCJWKS: jwks, OIDCExchanger: apiOIDCExchange{token: tok}}.Handler()
+	email := "alice@example.test"
+	client.identity = gotthoidc.Identity{Issuer: "https://auth.example.test/application/o/gotth-mail/", Subject: "user-123", DisplayName: "Alice", Email: &email}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/oidc/callback?state="+url.QueryEscape(state)+"&code=auth-code", nil)
 	req.AddCookie(&http.Cookie{Name: "gotth_mail_oidc_binding", Value: binding})
 	rr = httptest.NewRecorder()
@@ -176,37 +186,8 @@ func TestOIDCBrowserRedirectLoginAndGETCallback(t *testing.T) {
 	}
 }
 
-func apiJWKS(t *testing.T, kid string) (*rsa.PrivateKey, authn.JWKS) {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e := big.NewInt(int64(key.PublicKey.E)).Bytes()
-	return key, authn.JWKS{Keys: []authn.JWK{{Kty: "RSA", Kid: kid, Alg: "RS256", Use: "sig", N: base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()), E: base64.RawURLEncoding.EncodeToString(e)}}}
-}
-func apiSignToken(t *testing.T, key *rsa.PrivateKey, kid string, claims map[string]any) string {
-	t.Helper()
-	h := apiEncJSON(t, map[string]any{"alg": "RS256", "kid": kid, "typ": "JWT"})
-	c := apiEncJSON(t, claims)
-	d := sha256.Sum256([]byte(h + "." + c))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, d[:])
-	if err != nil {
-		t.Fatal(err)
-	}
-	return h + "." + c + "." + base64.RawURLEncoding.EncodeToString(sig)
-}
-func apiEncJSON(t *testing.T, v any) string {
-	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
 func TestOIDCLoginRouteRequiresBrowserBinding(t *testing.T) {
-	h := Server{}.Handler()
+	h := Server{OIDCClient: &apiOIDCClient{}}.Handler()
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/oidc/login", nil))
 	if rr.Code != http.StatusBadRequest {

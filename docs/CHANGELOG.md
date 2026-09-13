@@ -21,9 +21,55 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 15:27 CDT — Define honest GOTTH stack adoption for identity
+### 2026-09-13 15:48 CDT — Adopt gotth-oidc with protected durable attempts
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/authn`, `internal/api`, and `cmd/gotth-mail`
+- migration `0003_oidc_protected_attempts` and migration tests
+- GOTTH stack reference, identity implementation specification, README, and
+  identity workflow evidence
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Removed the duplicate GOTTH Mail discovery, JWKS, Authorization Code, token
+exchange, and ID-token verifier implementation. The runtime now delegates
+those protocol mechanics to the exact pinned `gotth-oidc` library and retains
+only the product-owned browser binding, atomic attempt consumption, local
+return path, application session, cookie, and identity boundaries.
+
+OIDC login attempts now persist the library's state digest, encrypted nonce,
+encrypted PKCE verifier, and authenticated context rather than raw state and
+nonce. Migration `0003` intentionally invalidates legacy in-flight attempts,
+preserves sessions, and installs fixed-size database checks. Callback
+consumption is one conditional update, so concurrent or replayed callbacks
+cannot both win; a failed provider exchange leaves the attempt spent.
+
+The executable now opens, pings, migrates, and loads PostgreSQL before enabling
+OIDC. OIDC configuration without durable storage fails startup. Database and
+client secrets accept mutually exclusive direct or `_FILE` sources, and the
+file form avoids placing container secrets in process environment where the
+deployment permits it. Authorization-shaped ID-token groups are no longer
+trusted; `gotth-oidc` returns identity facts only.
+
+Verification:
+
+- test-first focused authn/store/API/command suites pass locally;
+- repository-wide compile-only tests and `git diff --check` pass locally;
+- real PostgreSQL migration, restart, concurrent-consume, and runtime wiring
+  tests pass on the development host;
+- serialized full coverage passes with 93.3% for `internal/authn`; the final
+  race suite, vet, all command builds, module verification, and Graphify
+  rebuild pass;
+- post-fix cold review found no new slice-level blocker; live Authentik
+  evidence remains required before the feature can be called complete.
+
+### 2026-09-13 15:27 CDT — Define honest GOTTH stack adoption for identity
+
+Commit: `819c47dbf47d19ec3a7fe750d3d5604f3ec5b16f`
 
 Affected files:
 

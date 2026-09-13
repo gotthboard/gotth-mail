@@ -33,7 +33,7 @@ func TestMigrateSQLOnPostgres(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO plugin_registrations(id, name, seam, image, endpoint, enabled, created_at, updated_at) VALUES ($1,'stub','dns','img','ep',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, "00000000-0000-0000-0000-000000000005"); err == nil {
 		t.Fatal("expected enabled plugin credential constraint")
 	}
-	if _, err := db.Exec(`INSERT INTO oidc_login_states(state_id, nonce, browser_binding_hash, redirect_after_login, created_at, expires_at) VALUES ('s','n','b','/',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO oidc_login_states(state_hash, nonce_ciphertext, pkce_verifier_ciphertext, context_ciphertext, browser_binding_hash, redirect_after_login, created_at, expires_at) VALUES (decode(repeat('00',32),'hex'),decode(repeat('00',72),'hex'),decode(repeat('00',72),'hex'),'context',decode(repeat('00',32),'hex'),'/',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + interval '10 minutes')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO sessions(id, identity_ref_id, csrf_secret_hash, auth_method, created_at, expires_at, last_seen_at) VALUES ('sess','authentik|sub','csrf','oidc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {

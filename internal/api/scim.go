@@ -18,7 +18,7 @@ func writeAPIAudit(w audit.Writer, r *http.Request, action, resource, result, co
 	_ = w.Write(r.Context(), audit.Event{Actor: audit.ActorRef{Type: "api", ID: r.RemoteAddr}, Action: action, Resource: audit.ResourceRef{Type: "identity", ID: resource}, Result: result, ErrorCode: code, CorrelationID: r.Header.Get("X-Correlation-ID")})
 }
 
-func (s Server) identityService(auditLog *audit.MemoryWriter) *identity.Service {
+func (s *Server) identityService(auditLog *audit.MemoryWriter) *identity.Service {
 	ids := s.Identity
 	if ids == nil {
 		var domains []string

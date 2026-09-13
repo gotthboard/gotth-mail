@@ -66,11 +66,26 @@ func TestNotificationDeliveryEvidenceMigrationFileMatchesRuntime(t *testing.T) {
 	if fileSQL != notificationDeliveryEvidenceMigrationSQL {
 		t.Fatalf("migration file/runtime drift\nfile: %q\nruntime: %q", fileSQL, notificationDeliveryEvidenceMigrationSQL)
 	}
-	if len(upgradeMigrations) != 1 || upgradeMigrations[0].Version != notificationDeliveryEvidenceMigrationVersion || upgradeMigrations[0].SQL != fileSQL {
+	if len(upgradeMigrations) != 2 || upgradeMigrations[0].Version != notificationDeliveryEvidenceMigrationVersion || upgradeMigrations[0].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
 	if got, want := upgradeMigrations[0].Checksum, hex.EncodeToString(sum[:]); got != want {
+		t.Fatalf("runtime checksum=%q file checksum=%q", got, want)
+	}
+}
+
+func TestOIDCProtectedAttemptsMigrationFileMatchesRuntime(t *testing.T) {
+	data, err := os.ReadFile("../../migrations/0003_oidc_protected_attempts.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileSQL := strings.TrimSpace(string(data))
+	if len(upgradeMigrations) != 2 || upgradeMigrations[1].Version != oidcProtectedAttemptsMigrationVersion || upgradeMigrations[1].SQL != fileSQL {
+		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
+	}
+	sum := sha256.Sum256([]byte(fileSQL))
+	if got, want := upgradeMigrations[1].Checksum, hex.EncodeToString(sum[:]); got != want {
 		t.Fatalf("runtime checksum=%q file checksum=%q", got, want)
 	}
 }

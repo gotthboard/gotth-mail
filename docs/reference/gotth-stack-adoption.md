@@ -42,6 +42,34 @@ is admitted.
    only after its legal and release gates are satisfied, then run live login,
    provision, role, disable, deprovision, restart, backup, and restore proofs.
 
+## OIDC runtime configuration
+
+OIDC is enabled only when all three non-secret bindings are present:
+
+- `GOTTH_MAIL_AUTHENTIK_ISSUER`
+- `GOTTH_MAIL_AUTHENTIK_CLIENT_ID`
+- `GOTTH_MAIL_AUTHENTIK_REDIRECT_URI`
+
+The client secret may be supplied by exactly one of
+`GOTTH_MAIL_AUTHENTIK_CLIENT_SECRET` or
+`GOTTH_MAIL_AUTHENTIK_CLIENT_SECRET_FILE`. The file form is preferred for a
+container secret. Public clients may omit both only when the provider metadata
+admits `none` client authentication.
+
+OIDC additionally requires exactly one durable database source:
+`GOTTH_MAIL_DATABASE_URL` or `GOTTH_MAIL_DATABASE_URL_FILE`. Startup opens and
+pings PostgreSQL, applies the checked migration ledger, loads the durable
+identity service, and only then discovers the OIDC provider. A partial OIDC
+binding, two competing secret sources, database failure, migration failure, or
+provider-discovery failure stops startup. With no OIDC binding the OIDC routes
+return unavailable; they never pretend an in-memory production login is
+durable.
+
+Migration `0003_oidc_protected_attempts` deletes only legacy in-flight login
+attempts, preserves application sessions, removes plaintext state/nonce
+columns, and installs fixed-size protected fields. Operators should expect
+users who began login before the migration to restart that login once.
+
 ## Admission rule
 
 Compatibility tests prove only that a library can be called. Runtime adoption

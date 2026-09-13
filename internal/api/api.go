@@ -22,30 +22,30 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/render"
 	"forgejo/gotthboard/gotth-mail/internal/version"
 	"forgejo/gotthboard/gotth-mail/internal/webmail"
+	gotthoidc "github.com/gotthboard/gotth-oidc/pkg/oidc"
 )
 
 type Server struct {
-	Authz                 authz.Authorizer
-	Config                config.Config
-	Audit                 *audit.MemoryWriter
-	AuditDB               *sql.DB
-	Plugins               plugin.Registry
-	Applied               *render.Set
-	Daemon                daemon.Service
-	Queue                 *ops.Queue
-	DNSChecks             []diag.DNSRecordCheck
-	CertCheck             diag.CertCheck
-	WebmailOK             bool
-	OIDCConfig            authn.OIDCConfig
-	OIDCStore             authn.StateStore
-	OIDCAuthorizeEndpoint string
-	OIDCJWKS              authn.JWKS
-	OIDCExchanger         authn.CodeExchanger
-	Identity              *identity.Service
-	V3                    *ops.V3Runtime
-	WebmailClient         *webmail.Client
-	WebmailSender         *webmail.Sender
-	NotificationRecorder  notification.Recorder
+	Authz                authz.Authorizer
+	Config               config.Config
+	Audit                *audit.MemoryWriter
+	AuditDB              *sql.DB
+	Plugins              plugin.Registry
+	Applied              *render.Set
+	Daemon               daemon.Service
+	Queue                *ops.Queue
+	DNSChecks            []diag.DNSRecordCheck
+	CertCheck            diag.CertCheck
+	WebmailOK            bool
+	OIDCClient           authn.OIDCClient
+	OIDCStore            authn.StateStore
+	OIDCRedirectURI      string
+	OIDCNow              func() time.Time
+	Identity             *identity.Service
+	V3                   *ops.V3Runtime
+	WebmailClient        *webmail.Client
+	WebmailSender        *webmail.Sender
+	NotificationRecorder notification.Recorder
 }
 
 func (s Server) Handler() http.Handler {
@@ -80,6 +80,10 @@ func (s Server) Handler() http.Handler {
 		if !method(w, r, "GET") {
 			return
 		}
+		if s.OIDCClient == nil {
+			http.Error(w, "OIDC unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		store := s.OIDCStore
 		if store == nil {
 			store = authn.NewStore()
@@ -94,13 +98,13 @@ func (s Server) Handler() http.Handler {
 				http.Error(w, authn.SafeOIDCError(err), http.StatusBadRequest)
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: "gotth_mail_oidc_binding", Value: browser, Path: "/api/v1/oidc", HttpOnly: true, Secure: secureCookieFor(s.OIDCConfig.RedirectURI), SameSite: http.SameSiteLaxMode, Expires: time.Now().Add(10 * time.Minute)})
+			http.SetCookie(w, &http.Cookie{Name: "gotth_mail_oidc_binding", Value: browser, Path: "/api/v1/oidc", HttpOnly: true, Secure: secureCookieFor(s.OIDCRedirectURI), SameSite: http.SameSiteLaxMode, Expires: s.oidcNow().Add(10 * time.Minute)})
 		}
 		if browser == "" {
 			http.Error(w, "browser binding required", http.StatusBadRequest)
 			return
 		}
-		start, err := authn.StartLogin(s.OIDCConfig, store, s.OIDCAuthorizeEndpoint, browser, r.URL.Query().Get("redirect"), 10*time.Minute)
+		start, err := authn.StartLogin(r.Context(), s.OIDCClient, store, browser, r.URL.Query().Get("redirect"), s.oidcNow(), 10*time.Minute)
 		if err != nil {
 			http.Error(w, authn.SafeOIDCError(err), http.StatusBadRequest)
 			return
@@ -112,6 +116,10 @@ func (s Server) Handler() http.Handler {
 		writeJSON(w, start)
 	})
 	mux.HandleFunc("/api/v1/oidc/callback", func(w http.ResponseWriter, r *http.Request) {
+		if s.OIDCClient == nil {
+			http.Error(w, "OIDC unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		store := s.OIDCStore
 		if store == nil {
 			http.Error(w, "oidc state store unavailable", http.StatusBadRequest)
@@ -124,12 +132,14 @@ func (s Server) Handler() http.Handler {
 		}
 		browserBinding := r.Header.Get("X-GOTTH-Mail-Browser-Binding")
 		browserCallback := r.Method == http.MethodGet
+		var response gotthoidc.AuthorizationResponse
 		switch r.Method {
 		case http.MethodPost:
 			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
 				http.Error(w, "bad oidc callback", http.StatusBadRequest)
 				return
 			}
+			response = gotthoidc.AuthorizationResponse{State: in.State, Code: in.Code, Mode: gotthoidc.ResponseModeQuery}
 		case http.MethodGet:
 			c, err := r.Cookie("gotth_mail_oidc_binding")
 			if err != nil || c.Value == "" {
@@ -137,21 +147,30 @@ func (s Server) Handler() http.Handler {
 				return
 			}
 			browserBinding = c.Value
-			in.State = r.URL.Query().Get("state")
-			in.Code = r.URL.Query().Get("code")
-			in.RedirectURI = s.OIDCConfig.RedirectURI
+			response, err = gotthoidc.ParseCallback(r)
+			if err != nil {
+				http.Error(w, authn.SafeOIDCError(authn.ErrInvalidOIDCToken), http.StatusBadRequest)
+				return
+			}
+			in.State = response.State
+			in.Code = response.Code
+			in.RedirectURI = s.OIDCRedirectURI
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		res, err := authn.CompleteCallback(r.Context(), s.OIDCConfig, store, authn.CallbackInput{StateID: in.State, BrowserBindingHash: browserBinding, RedirectURI: in.RedirectURI, Code: in.Code, JWKS: s.OIDCJWKS, Exchanger: s.OIDCExchanger})
+		if in.RedirectURI != s.OIDCRedirectURI {
+			http.Error(w, authn.SafeOIDCError(authn.ErrInvalidOIDCState), http.StatusBadRequest)
+			return
+		}
+		res, err := authn.CompleteCallback(r.Context(), s.OIDCClient, store, authn.CallbackInput{Response: response, BrowserBinding: browserBinding}, s.oidcNow())
 		if err != nil {
 			http.Error(w, authn.SafeOIDCError(err), http.StatusBadRequest)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: "gotth_mail_session", Value: res.Session.ID, Path: "/", HttpOnly: true, Secure: secureCookieFor(s.OIDCConfig.RedirectURI), SameSite: http.SameSiteStrictMode, Expires: res.Session.ExpiresAt})
+		http.SetCookie(w, &http.Cookie{Name: "gotth_mail_session", Value: res.Session.ID, Path: "/", HttpOnly: true, Secure: secureCookieFor(s.OIDCRedirectURI), SameSite: http.SameSiteStrictMode, Expires: res.Session.ExpiresAt})
 		if browserCallback {
-			http.SetCookie(w, &http.Cookie{Name: "gotth_mail_oidc_binding", Value: "", Path: "/api/v1/oidc", HttpOnly: true, Secure: secureCookieFor(s.OIDCConfig.RedirectURI), SameSite: http.SameSiteLaxMode, MaxAge: -1})
+			http.SetCookie(w, &http.Cookie{Name: "gotth_mail_oidc_binding", Value: "", Path: "/api/v1/oidc", HttpOnly: true, Secure: secureCookieFor(s.OIDCRedirectURI), SameSite: http.SameSiteLaxMode, MaxAge: -1})
 			target := res.RedirectAfterLogin
 			if target == "" {
 				target = "/"
@@ -400,6 +419,14 @@ func (s Server) authorizer() authz.Authorizer {
 	}
 	return authz.StaticAuthorizer{}
 }
+
+func (s Server) oidcNow() time.Time {
+	if s.OIDCNow != nil {
+		return s.OIDCNow().UTC()
+	}
+	return time.Now().UTC()
+}
+
 func actor(r *http.Request) audit.ActorRef { return audit.ActorRef{Type: "local_admin", ID: "local"} }
 func method(w http.ResponseWriter, r *http.Request, want string) bool {
 	if r.Method != want {

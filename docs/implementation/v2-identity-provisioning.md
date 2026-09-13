@@ -42,6 +42,10 @@ the attempt; the user starts a new login.
 An upgrade migration invalidates all pre-adoption in-flight attempts, removes
 the plaintext state/nonce columns, and installs fixed-length protected columns.
 Application sessions remain separate and are not invalidated by that migration.
+Because the protected-attempt schema is intentionally incompatible with the
+legacy raw-state schema, operators must apply this migration during a
+coordinated restart. Mixed old/new GOTTH Mail processes are not supported
+during this one-time upgrade.
 
 Validation requirements:
 
@@ -58,6 +62,13 @@ Validation requirements:
 - exact `gotth-oidc` protected-attempt and S256 PKCE behavior
 
 Failures return safe errors and log no tokens.
+
+Runtime configuration uses `GOTTH_MAIL_DATABASE_URL_FILE` and
+`GOTTH_MAIL_AUTHENTIK_CLIENT_SECRET_FILE` for container secrets where
+available; their direct environment counterparts are mutually exclusive
+fallbacks. OIDC configuration without a migrated PostgreSQL store fails
+startup. Provider discovery occurs only after database migration and durable
+identity-state loading succeed.
 
 ## Session model
 
