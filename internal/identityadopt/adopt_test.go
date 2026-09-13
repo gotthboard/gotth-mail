@@ -99,6 +99,17 @@ func TestAdoptionRejectsStaleStateOwnershipAndTombstone(t *testing.T) {
 			t.Fatalf("stale plan err=%v", err)
 		}
 	})
+	t.Run("different mailbox ownership", func(t *testing.T) {
+		db := adoptionDB(t)
+		seedLegacyMailbox(t, db, "member@example.test", "Member", true, "")
+		if _, err := db.Exec(`INSERT INTO scim_resources(scope,resource_type,id,external_id,manager,version,credential_version,created_unix_nano,last_modified_unix_nano,data) VALUES ('scope','User','opaque-other','other-subject','manager','v1','',1,1,'{}'); UPDATE mailboxes SET scim_resource_id='opaque-other'`); err != nil {
+			t.Fatal(err)
+		}
+		_, err := (Service{DB: db}).Preview(context.Background(), Request{Mailbox: "member@example.test", Subject: "subject", Scope: "scope", Manager: "manager"})
+		if err == nil || !strings.Contains(err.Error(), "different SCIM ownership") {
+			t.Fatalf("different ownership err=%v", err)
+		}
+	})
 	t.Run("subject conflict", func(t *testing.T) {
 		db := adoptionDB(t)
 		seedLegacyMailbox(t, db, "member@example.test", "Member", true, "")

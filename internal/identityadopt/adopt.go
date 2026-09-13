@@ -86,9 +86,18 @@ func (s Service) Preview(ctx context.Context, request Request) (Plan, error) {
 	plan.CreatedAt, plan.UpdatedAt = plan.CreatedAt.UTC(), plan.UpdatedAt.UTC()
 	if plan.ExistingResourceID != "" {
 		var scope, resourceType, externalID, manager string
-		err = s.DB.QueryRowContext(ctx, `SELECT scope, resource_type, external_id, manager FROM scim_resources WHERE id=$1`, plan.ExistingResourceID).Scan(&scope, &resourceType, &externalID, &manager)
+		var data []byte
+		err = s.DB.QueryRowContext(ctx, `SELECT scope, resource_type, external_id, manager, data FROM scim_resources WHERE id=$1`, plan.ExistingResourceID).Scan(&scope, &resourceType, &externalID, &manager, &data)
 		if err != nil || scope != plan.Scope || resourceType != "User" || externalID != plan.Subject || manager != plan.Manager {
 			return Plan{}, errors.New("mailbox already has different SCIM ownership")
+		}
+		document, err := gotthscim.DecodeDocument(data)
+		if err != nil {
+			return Plan{}, errors.New("mailbox SCIM ownership record is invalid")
+		}
+		userName, ok := document["userName"].(string)
+		if !ok || !strings.EqualFold(userName, plan.Mailbox) {
+			return Plan{}, errors.New("mailbox SCIM ownership record names a different mailbox")
 		}
 		plan.AlreadyAdopted = true
 	} else {

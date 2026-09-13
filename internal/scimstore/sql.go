@@ -188,6 +188,15 @@ func (tx *transaction) Create(record gotthscim.Record) error {
 	if err := validateRecordShape(record); err != nil {
 		return err
 	}
+	if tx.adoption != nil && record.ResourceType == "User" {
+		var subjectOwned bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS (SELECT 1 FROM scim_resources WHERE resource_type='User' AND external_id=$1)`, record.ExternalID).Scan(&subjectOwned); err != nil {
+			return err
+		}
+		if subjectOwned {
+			return gotthscim.ErrConflict
+		}
+	}
 	var reserved bool
 	err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS (SELECT 1 FROM scim_tombstones WHERE id=$1 OR ($2<>'' AND scope=$3 AND resource_type=$4 AND external_id=$2))`, record.ID, record.ExternalID, record.Scope, record.ResourceType).Scan(&reserved)
 	if err != nil {
