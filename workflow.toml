@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "v2.identity-provisioning.live-authentik-persistence"
+active_feature = "v2.identity-provisioning.legacy-mailbox-adoption"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -480,6 +480,18 @@ branch = "workflow/feature/v2.identity-provisioning.live-authentik-persistence"
 dependencies = ["v2.identity-provisioning.oidc-sessions", "v2.identity-provisioning.scim", "v2.identity-provisioning.app-passwords-ui"]
 implementation_spec_sections = ["OIDC login", "Session model", "SCIM API", "App passwords / mail-client tokens"]
 verification = ["exact issuer/subject plus SCIM externalId/mailbox binding tests", "verified-email continuity and ambiguity rejection tests", "foreign-keyed durable session restart/expiry/revocation tests", "SCIM disable/delete session revocation tests", "same-mailbox session authorization tests", "CSRF rejection and secret non-disclosure tests", "live Authentik authorization-code smoke", "live Authentik SCIM provision/login/disable lifecycle", "app-password client compatibility matrix", "go test ./...", "go test -race ./...", "git diff --check"]
+
+[[features]]
+id = "v2.identity-provisioning.legacy-mailbox-adoption"
+root = "v2.identity-provisioning"
+title = "Reviewed legacy mailbox adoption into opaque SCIM ownership"
+state = "in_progress"
+path = "workflow/features/v2.identity-provisioning/legacy-mailbox-adoption"
+source_path = "internal/identityadopt"
+branch = "workflow/feature/v2.identity-provisioning.live-authentik-persistence"
+dependencies = ["v2.identity-provisioning.scim", "v2.identity-provisioning.live-authentik-persistence"]
+implementation_spec_sections = ["SCIM API", "Session model"]
+verification = ["redacted deterministic preview tests", "stale confirmation rejection", "gotth-scim reconciler opaque-ID proof", "existing mailbox UUID/verifier preservation", "subject/mailbox/tombstone conflict tests", "audit rollback test", "restart proof", "go test ./...", "go test -race ./...", "git diff --check"]
 
 [[features]]
 id = "v3.ops-import-admin.production-ops"

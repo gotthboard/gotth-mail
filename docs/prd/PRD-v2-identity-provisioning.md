@@ -104,6 +104,23 @@ Requirements:
 - Reject malformed JSON, non-object payloads, invalid scalar identity fields, unsupported patch operations, unknown paths, and bad passwords.
 - SCIM DELETE disables mailbox by default; it does not delete mail data.
 - Authentik-compatible provisioning path.
+- Existing email-keyed mailboxes are admitted through an explicit
+  preview/confirm adoption operation. The operator supplies the exact mailbox,
+  stable Authentik subject, SCIM scope, and manager. The operation must use
+  `gotth-scim` validation, opaque-ID generation, reconciliation, and the
+  product PostgreSQL transaction adapter; it must never derive an ID or
+  subject from the mailbox address.
+- Adoption preserves the existing mailbox row, verifier, enabled state,
+  creation time, and mail data. It attaches one newly generated opaque SCIM
+  User ID and records the redacted SCIM audit in the same transaction.
+- Preview output contains no verifier or credential material and produces a
+  deterministic confirmation digest over the exact mailbox row/version and
+  requested ownership. Apply rechecks that state under lock and fails closed
+  if it drifted, is already owned, is tombstoned, or conflicts with another
+  subject.
+- Adoption does not manufacture an OIDC identity reference. The first
+  independently verified OIDC callback must still prove issuer, subject, and
+  email continuity before it can create `identity_refs` or a session.
 
 ### App passwords / mail-client tokens
 
@@ -164,6 +181,10 @@ Requirements:
   check and product restart/concurrency/migration/backup/restore tests.
 - SCIM resources use opaque persistent IDs; an email address is never the
   resource ID.
+- A reviewed legacy-mailbox adoption survives restart, preserves the existing
+  mailbox UUID/verifier/data ownership, is idempotent only for the exact
+  manager-owned desired identity, and rejects stale confirmation, duplicate
+  subject, duplicate mailbox ownership, and tombstones without partial state.
 - App passwords/mail-client tokens work for Dovecot auth and are stored as the
   current GOTTH Mail 1.0 Authentik/Django `pbkdf2_sha256` encoded
   password-hash/verifier strings or explicitly documented verifier-only

@@ -16,4 +16,8 @@ verification, cold review, admission into the unfinished 1.0-alpha line, live
 Authentik lifecycle proof, and backup/restore proof are recorded. Legacy
 email-keyed adoption also remains an explicit operator-controlled migration.
 
+The adoption slice uses the public `gotth-scim.Reconciler`; it does not insert
+fabricated SCIM rows. Preview/confirm binds one exact unowned mailbox to one
+manager-owned subject, and the SQL adapter consumes that claim atomically.
+
 Canonical state lives in `workflow.toml`. This folder holds scoped evidence, review notes, and postmortems only.

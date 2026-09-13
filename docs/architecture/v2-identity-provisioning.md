@@ -164,6 +164,24 @@ email-keyed mailbox rows likewise require an operator-reviewed opaque-ID and
 Authentik-subject adoption record; provenance cannot be inferred from an
 address.
 
+Legacy adoption is a narrow composition of existing mechanisms. A preview
+reads one unowned mailbox and returns a redacted plan plus SHA-256 confirmation
+digest. Apply reconstructs the plan from current SQL state, requires the exact
+digest, and invokes `gotth-scim.Reconciler` with one User desired resource.
+The library validates the SCIM document and generates the opaque resource ID.
+The GOTTH Mail SQL adapter consumes a transaction-local adoption claim, locks
+the exact mailbox UUID/version, attaches the resource ID, preserves its
+verifier and creation time, and writes the normal SCIM audit before commit.
+The claim is valid for one exact mailbox and cannot make ordinary SCIM creates
+adopt address collisions.
+
+This operation records provisioning ownership only. It deliberately does not
+pre-create `identity_refs`, sessions, or roles. A later verified
+`gotth-oidc` callback still has to match the adopted User `externalId` and
+mailbox email before the issuer/subject binding exists. Rollback is the normal
+SCIM manager-owned delete/disable path plus database restore evidence; an
+opaque ID or tombstone is never recycled.
+
 SCIM disable/delete revokes sessions through the mailbox UUID inside the same
 transaction as the mailbox transition and SCIM audit. Changing an
 `externalId` after an OIDC identity has been bound is rejected; silently moving

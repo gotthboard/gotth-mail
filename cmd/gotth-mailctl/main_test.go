@@ -94,3 +94,13 @@ func TestCLIAuditRetentionPreviewApplyRequiresConfirmation(t *testing.T) {
 		t.Fatal("wrong confirmation accepted")
 	}
 }
+
+func TestCLIAdoptionRequestRequiresAllOwnershipFields(t *testing.T) {
+	request, err := adoptionRequest([]string{"identity", "adopt", "preview", "--mailbox", "member@example.test", "--subject", "subject", "--scope", "scope", "--manager", "manager"})
+	if err != nil || request.Mailbox != "member@example.test" || request.Subject != "subject" || request.Scope != "scope" || request.Manager != "manager" {
+		t.Fatalf("request=%#v err=%v", request, err)
+	}
+	if _, err := adoptionRequest([]string{"identity", "adopt", "preview", "--mailbox", "member@example.test"}); err == nil {
+		t.Fatal("incomplete adoption request accepted")
+	}
+}

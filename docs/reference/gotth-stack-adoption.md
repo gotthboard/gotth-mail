@@ -32,9 +32,11 @@ is admitted.
    projection. The adapter passes `scim.CheckStore` plus focused product
    restart and concurrency tests; backup, restore, and live Authentik evidence
    still gate workstream completion.
-4. Migrate email-address SCIM identifiers to opaque persistent IDs. Old
-   identifiers may be resolved only through an explicit bounded migration
-   record; they must never be regenerated from a mutable address.
+4. Adopt legacy email-keyed mailboxes through the reviewed preview/confirm
+   operation. `gotth-scim.Reconciler` validates the User desired state and
+   generates the opaque ID; GOTTH Mail only supplies the exact existing-row
+   claim and atomic PostgreSQL projection. IDs and subjects are never derived
+   from a mutable address.
 5. Use SCIM Groups for role membership only after the exact binding between an
    Authentik OIDC subject and a SCIM User `externalId` is specified and proven.
    OIDC authorization-shaped claims are not trusted merely because a provider
@@ -106,9 +108,13 @@ Authentik OIDC subject. The same missing binding prevents honest SCIM-driven
 web-session invalidation. No ID-token group claim is trusted as a shortcut.
 
 Legacy email-keyed mailbox rows are not guessed into SCIM ownership. Adoption
-requires an operator-reviewed mapping that records the existing mailbox, new
-opaque resource ID, authoritative Authentik subject, and rollback evidence.
-Fresh SCIM-created resources and renames never use an email address as their ID.
+requires an operator-reviewed mailbox/subject/scope/manager mapping and exact
+state confirmation digest. `gotth-scim` generates the opaque resource ID at
+apply time, while the product adapter preserves the mailbox UUID, verifier,
+enabled state, and mail ownership. The operation creates no OIDC identity or
+session; verified `gotth-oidc` issuer/subject/email continuity remains
+mandatory. Fresh SCIM-created resources and renames never use an email address
+as their ID.
 
 ## App-password and Dovecot allocation
 

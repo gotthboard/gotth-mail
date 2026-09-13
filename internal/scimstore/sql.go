@@ -31,8 +31,25 @@ type requestMetadata struct {
 
 type requestMetadataKey struct{}
 
+type legacyMailboxAdoption struct {
+	MailboxID string
+	Mailbox   string
+	UpdatedAt time.Time
+	consumed  bool
+}
+
+type legacyMailboxAdoptionKey struct{}
+
 func WithRequestMetadata(ctx context.Context, actor authz.Actor, correlationID, sourceIP, userAgent string) context.Context {
 	return context.WithValue(ctx, requestMetadataKey{}, requestMetadata{Actor: actor, CorrelationID: correlationID, SourceIP: sourceIP, UserAgent: userAgent})
+}
+
+// WithLegacyMailboxAdoption admits one exact existing mailbox as the target of
+// the next gotth-scim User create in this transaction. Ordinary SCIM creates
+// never receive this claim and therefore retain conflict-on-address behavior.
+func WithLegacyMailboxAdoption(ctx context.Context, mailboxID, mailbox string, updatedAt time.Time) context.Context {
+	claim := legacyMailboxAdoption{MailboxID: mailboxID, Mailbox: strings.ToLower(mailbox), UpdatedAt: updatedAt.UTC()}
+	return context.WithValue(ctx, legacyMailboxAdoptionKey{}, claim)
 }
 
 // SQLStore implements gotth-scim's exact-once transaction contract. The
@@ -53,6 +70,7 @@ type transaction struct {
 	metadata  requestMetadata
 	passwords map[string]passwordChange
 	project   []mailboxProjection
+	adoption  *legacyMailboxAdoption
 }
 
 type passwordChange struct {
@@ -81,8 +99,14 @@ func (store *SQLStore) Transact(ctx context.Context, fn func(gotthscim.Transacti
 	defer dbtx.Rollback()
 	metadata, _ := ctx.Value(requestMetadataKey{}).(requestMetadata)
 	tx := &transaction{ctx: ctx, tx: dbtx, identity: store.Identity, metadata: metadata, passwords: map[string]passwordChange{}}
+	if claim, ok := ctx.Value(legacyMailboxAdoptionKey{}).(legacyMailboxAdoption); ok {
+		tx.adoption = &claim
+	}
 	if err := fn(tx); err != nil {
 		return mapStoreError(err)
+	}
+	if tx.adoption != nil && !tx.adoption.consumed {
+		return fmt.Errorf("legacy mailbox adoption claim was not consumed")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -376,6 +400,25 @@ func (tx *transaction) mailboxFromRecord(record gotthscim.Record) (identity.Mail
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return identity.Mailbox{}, "", err
 	}
+	if errors.Is(err, sql.ErrNoRows) && tx.adoption != nil {
+		var existingEmail, existingDisplay, existingVerifier, existingSCIMID string
+		var existingEnabled, domainEnabled bool
+		var existingCreated, existingUpdated time.Time
+		err = tx.tx.QueryRowContext(tx.ctx, `SELECT lower(m.local_part || '@' || d.name), COALESCE(m.display_name,''), m.enabled, d.enabled, COALESCE(m.verifier,''), COALESCE(m.scim_resource_id,''), m.created_at, m.updated_at FROM mailboxes m JOIN domains d ON d.id=m.domain_id WHERE m.id=$1 FOR UPDATE`, tx.adoption.MailboxID).Scan(&existingEmail, &existingDisplay, &existingEnabled, &domainEnabled, &existingVerifier, &existingSCIMID, &existingCreated, &existingUpdated)
+		if err != nil {
+			return identity.Mailbox{}, "", fmt.Errorf("legacy adoption mailbox is unavailable: %w", err)
+		}
+		if !strings.EqualFold(existingEmail, tx.adoption.Mailbox) || !strings.EqualFold(existingEmail, mailbox.Email) || !existingUpdated.Equal(tx.adoption.UpdatedAt) || existingSCIMID != "" || !domainEnabled {
+			return identity.Mailbox{}, "", gotthscim.ErrConflict
+		}
+		if existingEnabled != mailbox.Active || existingDisplay != mailbox.DisplayName {
+			return identity.Mailbox{}, "", gotthscim.ErrConflict
+		}
+		previousEmail = existingEmail
+		verifier = existingVerifier
+		mailbox.CreatedAt = existingCreated
+		tx.adoption.consumed = true
+	}
 	if change, exists := tx.passwords[recordPasswordKey(record.Scope, record.ResourceType, record.ID)]; exists {
 		verifier = change.verifier
 	}
@@ -394,6 +437,18 @@ func (tx *transaction) persistMailbox(record gotthscim.Record, previousEmail str
 	}
 	domainID := stableUUID("domain:" + domain)
 	mailboxID := stableUUID("scim-mailbox:" + record.ID)
+	if tx.adoption != nil && tx.adoption.consumed && strings.EqualFold(previousEmail, tx.adoption.Mailbox) {
+		mailboxID = tx.adoption.MailboxID
+		result, err := tx.tx.ExecContext(tx.ctx, `UPDATE mailboxes SET display_name=$1, enabled=$2, verifier=$3, updated_at=$4, scim_resource_id=$5 WHERE id=$6 AND scim_resource_id IS NULL`, nullableString(mailbox.DisplayName), mailbox.Active, nullableString(mailbox.Verifier), mailbox.UpdatedAt, record.ID, mailboxID)
+		if err != nil {
+			return mapStoreError(err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil || changed != 1 {
+			return gotthscim.ErrConflict
+		}
+		return nil
+	}
 	if previousEmail != "" {
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM mailboxes WHERE scim_resource_id=$1`, record.ID).Scan(&mailboxID); err != nil {
 			return err

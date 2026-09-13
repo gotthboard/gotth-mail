@@ -266,11 +266,40 @@ memory views would diverge until restart. Startup reloads SQL mailboxes and
 rebuilds the daemon view. The deployment must run one control-plane writer
 until explicit cache propagation replaces this constraint.
 
-Legacy email-keyed mailbox rows are not automatically converted. The future
-adoption operation must take an explicit reviewed mapping from existing
-mailbox to opaque SCIM ID and authoritative Authentik subject, prove rollback,
-and reject ambiguous ownership. Until that subject binding exists, Groups and
-SCIM-driven web-session invalidation remain explicitly unavailable.
+Legacy email-keyed mailbox rows are not automatically converted. The operator
+uses:
+
+```text
+gotth-mailctl identity adopt preview --config <file> --mailbox <address> \
+  --subject <authentik-subject> --scope <scim-scope> --manager <manager>
+
+gotth-mailctl identity adopt apply --config <file> --mailbox <address> \
+  --subject <authentik-subject> --scope <scim-scope> --manager <manager> \
+  --confirm <preview-digest>
+```
+
+Preview selects exactly one mailbox by normalized address and requires
+`scim_resource_id IS NULL`. Its canonical JSON contains the mailbox UUID,
+address, display name, enabled state, creation timestamp, update timestamp,
+subject, scope, and manager; it never contains the verifier. `plan_id` is the
+lowercase SHA-256 digest of that canonical JSON.
+
+Apply runs preview again and constant-time compares the supplied digest. It
+constructs a standard User document and calls `gotth-scim.Reconciler` with one
+desired resource and `DeleteMissing=false`. `gotth-scim` validates the
+document, owns opaque resource-ID generation, and applies its manager/external
+ID reconciliation rules. A transaction-local adoption claim contains the
+expected mailbox UUID and update timestamp. The SQL adapter locks that row,
+requires the same unowned address and version, preserves its UUID, verifier,
+creation time, and enabled state, sets only the SCIM ownership and admitted
+display state, and writes `scim.user.create` audit before commit.
+
+No issuer is accepted by this command and no `identity_refs`, sessions, or
+role bindings are created. The first verified OIDC callback remains the sole
+issuer/subject/session admission path. Existing ownership, stale plans,
+subject conflicts, tombstones, malformed input, missing/disabled domains, and
+audit failure all reject atomically. Until the verified subject binding exists,
+Groups remain explicitly unavailable.
 
 ## SCIM error contract
 

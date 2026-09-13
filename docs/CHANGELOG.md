@@ -21,6 +21,37 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 18:52 CDT — Add reviewed legacy mailbox adoption
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- identity/provisioning PRD, architecture, implementation, and GOTTH adoption contract
+- workflow manifest and legacy-adoption feature record
+- `internal/identityadopt` preview/apply service and PostgreSQL tests
+- `internal/scimstore` transaction-local legacy mailbox claim
+- `gotth-mailctl identity adopt` preview/apply commands and parser tests
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added an explicit path for moving an existing email-keyed mailbox under opaque
+SCIM ownership without guessing identity provenance. The operator reviews a
+redacted deterministic plan and confirms its exact digest. Apply delegates
+User validation, manager reconciliation, and opaque resource-ID generation to
+the pinned `gotth-scim` library, while the product SQL adapter locks and
+preserves the existing mailbox UUID, verifier, enabled state, creation time,
+and mail ownership. It creates no OIDC identity, session, or role authority;
+the verified `gotth-oidc` callback remains the only binding path.
+
+Verification:
+
+- constrained package compilation and CLI parser tests: pass
+- PostgreSQL transaction, rollback, restart, full, race, vet, and build gates:
+  pending on the development host
+- `git diff --check`: pass
+
 ### 2026-09-13 18:38 CDT — Reconcile identity evidence and live provider status
 
 Commit: current commit; hash assigned by Git after commit
