@@ -16,6 +16,10 @@ This is still not code. Implementation may begin only after a version has a PRD,
 - [v3 implementation spec](v3-ops-import-admin.md) — from [PRD-v3-ops-import-admin.md](../prd/PRD-v3-ops-import-admin.md) and [architecture/v3-ops-import-admin.md](../architecture/v3-ops-import-admin.md)
 - [v4 implementation spec](v4-webmail.md) — from [PRD-v4-webmail.md](../prd/PRD-v4-webmail.md) and [architecture/v4-webmail.md](../architecture/v4-webmail.md)
 - [v5 implementation spec](v5-notifications.md) — from [PRD-v5-notifications.md](../prd/PRD-v5-notifications.md) and [architecture/v5-notifications.md](../architecture/v5-notifications.md)
+- [1.0 release-line specification](release-1.0.md) — from [PRD-release-1.0.md](../prd/PRD-release-1.0.md) and [architecture/release-1.0.md](../architecture/release-1.0.md)
+
+The `v0` through `v5` names are historical capability-workstream identifiers.
+They do not permit product tags outside the 1.0 alpha/beta/stable grammar.
 
 ## Global implementation rules
 

@@ -18,6 +18,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/render"
 	"forgejo/gotthboard/gotth-mail/internal/store"
+	"forgejo/gotthboard/gotth-mail/internal/version"
 )
 
 func main() {
@@ -27,10 +28,19 @@ func main() {
 	}
 }
 func run(args []string) error {
+	if err := version.Validate(version.Version); err != nil {
+		return err
+	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: gotth-mailctl <config|render|diff|apply|migrate|authz|doctor|audit>")
+		return fmt.Errorf("usage: gotth-mailctl <version|config|render|diff|apply|migrate|authz|doctor|audit>")
 	}
 	switch args[0] {
+	case "version":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: gotth-mailctl version")
+		}
+		fmt.Println(version.Version)
+		return nil
 	case "config":
 		c, err := loadConfigArg(args)
 		if err != nil {

@@ -21,6 +21,45 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 15:08 CDT — Define the 1.0 release line and pin GOTTH identity libraries
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `README.md`, `go.mod`, and `go.sum`
+- release-line PRD, architecture, and implementation specification
+- product PRD, architecture index, and implementation index
+- `internal/version` and `cmd/gotth-mailctl`
+- GOTTH OIDC/SCIM external-consumer contract tests
+- `workflow.toml`, `workflow/COVERAGE.md`, and release-line workflow records
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Replaced the misleading product-version interpretation of the historical
+`v0` through `v5` workflow IDs. They remain immutable capability identifiers
+inside one product release line. Incomplete builds are now constrained to
+`1.0.0-alpha.N`, feature-complete acceptance builds to `1.0.0-beta.N`, and the
+first stable tag to exactly `1.0.0`. The binary version grammar and tag mapping
+are executable, and `gotth-mailctl version` exposes the linked build identity.
+
+Pinned the public `gotth-oidc` and `gotth-scim` modules to exact reviewed
+pseudo-versions and raised the Go directive to their documented Go 1.26.6
+runtime. External-consumer tests prove real OIDC discovery/PKCE authorization
+start and SCIM User create/read behavior. This proves the libraries fit GOTTH
+Mail; it does not lie about the unfinished application adapters. The contract
+records the remaining protected-attempt/session persistence, transactional
+SCIM store/password/audit projection, opaque resource-ID migration, and live
+Authentik cutover work.
+
+Verification:
+
+- `git diff --check` passed;
+- focused version, identity-module contract, and CLI tests passed;
+- final full, race, vet, build, manifest, and remote-ref verification will be
+  recorded in workflow evidence before the feature is marked done.
+
 ### 2026-09-13 14:02 CDT — Record GOTTH Mail canonical admission boundary
 
 Commit: current commit; hash assigned by Git after commit

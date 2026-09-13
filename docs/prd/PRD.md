@@ -66,7 +66,9 @@ Reject:
 
 ## Version PRDs
 
-The detailed version plans live in separate files:
+The detailed capability-workstream plans live in separate files. Their
+historical `v0` through `v5` identifiers are workflow IDs, not published
+product versions:
 
 - [v0 Foundation](PRD-v0-foundation.md)
 - [v1 Mail Core](PRD-v1-mail-core.md)
@@ -74,32 +76,37 @@ The detailed version plans live in separate files:
 - [v3 Ops + Import + Mature Admin](PRD-v3-ops-import-admin.md)
 - [v4 Custom Webmail](PRD-v4-webmail.md)
 - [v5 Notifications](PRD-v5-notifications.md)
+- [1.0 release line](PRD-release-1.0.md)
 
-## Version roadmap
+## Capability workstreams for 1.0
 
-### v0 — Foundation
+### Foundation (`v0.foundation` historical ID)
 
 Build the containerized control-plane base: Go project, GOTTH shell, typed config, migrations, audit capture, permission core, Authentik base, app-password/token primitives, TLS config validation, plugin runtime foundation, and plugin seam definitions.
 
-### v1 — Mail Core
+### Mail Core (`v1.mail-core` historical ID)
 
 Build the actual mail-server control path: Postfix/Dovecot/Rspamd contracts, DNS/TLS/Let’s Encrypt, MTA-STS/TLS-RPT, doctor, lookup debugger, mail flow trace, queue visibility, smoke tests, snapshots, and first plugin containers for webmail/DNS/cert/backup.
 
-### v2 — Identity + Provisioning
+### Identity + Provisioning (`v2.identity-provisioning` historical ID)
 
 Build identity and provisioning on top of the working mail core: OIDC login, strict token validation, Authentik role mapping, SCIM, app passwords/mail-client tokens, permission simulator full coverage, and identity UI.
 
-### v3 — Ops + Import + Mature Admin
+### Ops + Import + Mature Admin (`v3.ops-import-admin` historical ID)
 
 Build operational maturity: audit UI, backup/restore verification, snapshot/rollback UI, Mailu import source plugin, abuse/rate-limit dashboard, mature admin UI, config diff viewer, and rollback guidance.
 
-### v4 — Custom Webmail
+### Custom Webmail (`v4.webmail` historical ID)
 
 Only after the control plane is solid and the v4 cutline is explicitly accepted, build custom GOTTH webmail: IMAP core, MIME-safe message rendering, compose/send, attachments, drafts, search, identities/signatures, sieve/rules, mobile UI, and XSS hardening.
 
-### v5 — Notifications
+### Notifications (`v5.notifications` historical ID)
 
 Build the notification backend plugin seam, with Telegram as the first required implementation: operational alerts, read-only commands, later approval workflows, actor mapping, and audit coverage.
+
+These workstreams all belong to the `1.0.0` release line. Incomplete integrated
+builds are `1.0.0-alpha.N`; feature-complete acceptance builds are
+`1.0.0-beta.N`; only the complete admitted stack becomes stable `1.0.0`.
 
 ## Plugin boundaries
 

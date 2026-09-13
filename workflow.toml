@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "v5.notifications.openpgp-signed-email"
+active_feature = "release.1-0.identity-libraries"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -23,7 +23,7 @@ notes = "Docs-only features use git diff --check, verbose changelog update, and 
 
 [[root_features]]
 id = "v0.foundation"
-title = "v0 Foundation"
+title = "Foundation workstream (historical v0 ID)"
 state = "done"
 prd = "docs/prd/PRD-v0-foundation.md"
 architecture = "docs/architecture/v0-foundation.md"
@@ -37,7 +37,7 @@ required_verification = ["git diff --check", "go test ./..."]
 
 [[root_features]]
 id = "v1.mail-core"
-title = "v1 Mail Core"
+title = "Mail Core workstream (historical v1 ID)"
 state = "done"
 prd = "docs/prd/PRD-v1-mail-core.md"
 architecture = "docs/architecture/v1-mail-core.md"
@@ -51,7 +51,7 @@ required_verification = ["git diff --check", "go test ./...", "reference compose
 
 [[root_features]]
 id = "v2.identity-provisioning"
-title = "v2 Identity + Provisioning"
+title = "Identity + Provisioning workstream (historical v2 ID)"
 state = "in_progress"
 prd = "docs/prd/PRD-v2-identity-provisioning.md"
 architecture = "docs/architecture/v2-identity-provisioning.md"
@@ -65,7 +65,7 @@ required_verification = ["git diff --check", "go test ./...", "OIDC/SCIM/app-pas
 
 [[root_features]]
 id = "v3.ops-import-admin"
-title = "v3 Ops + Import + Mature Admin"
+title = "Ops + Import + Mature Admin workstream (historical v3 ID)"
 state = "in_progress"
 prd = "docs/prd/PRD-v3-ops-import-admin.md"
 architecture = "docs/architecture/v3-ops-import-admin.md"
@@ -79,7 +79,7 @@ required_verification = ["git diff --check", "go test ./...", "backup/import/bul
 
 [[root_features]]
 id = "v4.webmail"
-title = "v4 Custom Webmail"
+title = "Custom Webmail workstream (historical v4 ID)"
 state = "in_progress"
 prd = "docs/prd/PRD-v4-webmail.md"
 architecture = "docs/architecture/v4-webmail.md"
@@ -93,7 +93,7 @@ required_verification = ["git diff --check", "go test ./...", "IMAP/SMTP/MIME/XS
 
 [[root_features]]
 id = "v5.notifications"
-title = "v5 Notifications"
+title = "Notifications workstream (historical v5 ID)"
 state = "in_progress"
 prd = "docs/prd/PRD-v5-notifications.md"
 architecture = "docs/architecture/v5-notifications.md"
@@ -119,6 +119,20 @@ worktree = "/tank/development/linus/gotth-mail-worktrees/project.identity"
 dependencies = []
 required_verification = ["git diff --check", "go test ./...", "renamed command builds", "current-name audit", "Forgejo ref and old-path proof", "GitHub distribution parity"]
 
+[[root_features]]
+id = "release.1-0"
+title = "GOTTH Mail 1.0 alpha/beta/stable release line"
+state = "in_progress"
+prd = "docs/prd/PRD-release-1.0.md"
+architecture = "docs/architecture/release-1.0.md"
+implementation_spec = "docs/implementation/release-1.0.md"
+path = "workflow/features/release.1-0"
+source_path = "."
+branch = "workflow/root/release.1-0"
+worktree = "/tank/development/linus/gotth-mail-worktrees/release.1-0"
+dependencies = []
+required_verification = ["git diff --check", "go test ./...", "go test -race ./...", "go vet ./...", "exact alpha/beta/stable version proof", "complete integrated deployment and rollback evidence", "owner acceptance"]
+
 [[features]]
 id = "v0.foundation.repo-skeleton"
 root = "v0.foundation"
@@ -142,6 +156,66 @@ branch = "workflow/feature/project.rename-gotth-mail"
 dependencies = []
 implementation_spec_sections = ["Required changes", "Verification"]
 verification = ["git diff --check", "go test ./...", "renamed command builds", "protobuf regeneration", "current-name audit", "Forgejo ref and old-path proof", "GitHub distribution parity"]
+
+[[features]]
+id = "release.1-0.contract"
+root = "release.1-0"
+title = "Define the alpha/beta/stable 1.0 release contract"
+state = "in_progress"
+path = "workflow/features/release.1-0/contract"
+source_path = "docs"
+branch = "workflow/feature/project.release-contract"
+dependencies = []
+implementation_spec_sections = ["Version grammar", "Release verification"]
+verification = ["version grammar tests", "cross-document release-state audit", "git diff --check", "go test ./..."]
+
+[[features]]
+id = "release.1-0.identity-libraries"
+root = "release.1-0"
+title = "Pin and prove GOTTH OIDC/SCIM consumer compatibility"
+state = "in_progress"
+path = "workflow/features/release.1-0/identity-libraries"
+source_path = "test/contract"
+branch = "workflow/feature/project.release-contract"
+dependencies = []
+implementation_spec_sections = ["OIDC adoption", "SCIM adoption", "Compatibility proof in this feature"]
+verification = ["immutable public module pins", "OIDC discovery and authorization-begin consumer test", "SCIM create/read consumer test", "git diff --check", "go test ./..."]
+
+[[features]]
+id = "release.1-0.alpha-integration"
+root = "release.1-0"
+title = "Complete all required workstreams and publish integrated alphas"
+state = "planned"
+path = "workflow/features/release.1-0/alpha-integration"
+source_path = "."
+branch = "workflow/feature/release.1-0.alpha-integration"
+dependencies = ["project.identity", "v0.foundation", "v1.mail-core", "v2.identity-provisioning", "v3.ops-import-admin", "v4.webmail", "v5.notifications", "release.1-0.identity-libraries"]
+implementation_spec_sections = ["Release verification"]
+verification = ["complete workstream traceability", "reproducible alpha artifact", "upgrade/backup/restore/rollback proof", "full/race/vet/build/container gates"]
+
+[[features]]
+id = "release.1-0.beta-acceptance"
+root = "release.1-0"
+title = "Harden and physically accept the feature-complete stack"
+state = "planned"
+path = "workflow/features/release.1-0/beta-acceptance"
+source_path = "."
+branch = "workflow/feature/release.1-0.beta-acceptance"
+dependencies = ["release.1-0.alpha-integration"]
+implementation_spec_sections = ["Release verification"]
+verification = ["live end-to-end mail and identity proof", "security and accessibility gates", "monitoring and recovery proof", "owner physical acceptance"]
+
+[[features]]
+id = "release.1-0.stable"
+root = "release.1-0"
+title = "Admit immutable stable 1.0.0"
+state = "planned"
+path = "workflow/features/release.1-0/stable"
+source_path = "."
+branch = "workflow/feature/release.1-0.stable"
+dependencies = ["release.1-0.beta-acceptance"]
+implementation_spec_sections = ["Version grammar", "Release verification"]
+verification = ["exact tag/binary/artifact parity", "Forgejo/GitHub parity", "known-good rollback record", "owner stable-release approval"]
 
 [[features]]
 id = "v0.foundation.store-migrations"
