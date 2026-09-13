@@ -21,6 +21,50 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 15:27 CDT — Define honest GOTTH stack adoption for identity
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- identity/provisioning PRD, architecture, and implementation specification
+- `docs/reference/gotth-stack-adoption.md` and `README.md`
+- identity workflow manifest, coverage map, and feature records
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Reconciled the GOTTH Mail 1.0 identity workstream with the actual reusable
+GOTTH component contracts. Runtime OIDC must now replace its duplicate
+protocol code with the exact pinned `gotth-oidc` API and persist only protected
+one-time attempts. Runtime SCIM must replace its handwritten router with the
+exact pinned `gotth-scim` server plus a conformant PostgreSQL adapter and
+atomic product projection. The documents now define opaque SCIM identity,
+restart/concurrency/migration evidence, and the consumer-owned session,
+authorization, mailbox, password, audit, and recovery boundaries.
+
+The component inventory also records why unlicensed, placeholder, unrelated,
+or mechanism-breaking repositories are not imported merely to increase the
+number of `gotth-*` dependencies. `gotth-authentik`, `gotth-pg-migrate`,
+`gotth-release`, and `gotth-infrastructure` remain gated by licensing and
+separate compatibility work; `gotth-jobs` does not belong in synchronous login
+or canonical provisioning acceptance.
+
+The manifest now activates the OIDC adoption feature, and stale feature-folder
+claims of completion have been corrected to match canonical `workflow.toml`.
+No runtime code, product `main`, tag, release, mirror, or deployment changed in
+this documentation prerequisite.
+
+Verification:
+
+- exact public component revisions, package boundaries, license files, and
+  exported OIDC/SCIM contracts were inspected;
+- Graphify mapped the existing OIDC, session, SCIM, identity, daemon, and API
+  dependency surfaces at source revision
+  `21b5ff6876624fc0e14532d636f7d12d92d442b6`;
+- `git diff --check` and documentation/workflow consistency checks will gate
+  this prerequisite commit.
+
 ### 2026-09-13 15:21 CDT — Remove remaining hard-coded v0 runtime identity
 
 Commit: current commit; hash assigned by Git after commit

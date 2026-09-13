@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "v5.notifications.openpgp-signed-email"
+active_feature = "v2.identity-provisioning.oidc-sessions"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -364,14 +364,14 @@ verification = ["real Postfix SMTP alias delivery smoke", "real Dovecot IMAP log
 [[features]]
 id = "v2.identity-provisioning.oidc-sessions"
 root = "v2.identity-provisioning"
-title = "OIDC authorization-code login, state, token validation, sessions"
+title = "Adopt gotth-oidc with protected attempts and durable sessions"
 state = "in_progress"
 path = "workflow/features/v2.identity-provisioning/oidc-sessions"
 source_path = "internal/authn"
 branch = "workflow/feature/v2.identity-provisioning.oidc-sessions"
 dependencies = ["v1.mail-core"]
 implementation_spec_sections = ["OIDC login", "Session model"]
-verification = ["state/nonce/redirect/token validation tests", "single-use state atomicity", "no unsigned-claim fallback", "no token disclosure", "go test ./...", "git diff --check"]
+verification = ["gotth-oidc runtime import and duplicate protocol removal", "protected attempt migration", "state/nonce/PKCE/redirect/token validation tests", "single-use and concurrent state atomicity", "restart persistence", "no unsigned-claim fallback", "no secret persistence or disclosure", "go test ./...", "go test -race ./...", "git diff --check"]
 
 [[features]]
 id = "v2.identity-provisioning.authentik-roles-authz"
@@ -395,7 +395,7 @@ source_path = "internal/api"
 branch = "workflow/feature/v2.identity-provisioning.scim"
 dependencies = ["v2.identity-provisioning.authentik-roles-authz"]
 implementation_spec_sections = ["SCIM API", "SCIM error contract"]
-verification = ["SCIM auth/authz tests", "list/create/read/replace/patch/disable tests", "malformed/non-object/scalar/unsupported/unknown/empty Operations/bad password tests", "Authentik-compatible flow test", "go test ./...", "git diff --check"]
+verification = ["gotth-scim runtime import and handwritten router removal", "PostgreSQL scim.CheckStore conformance", "SCIM auth/authz tests", "opaque-ID/tombstone/restart/concurrency tests", "list/create/read/replace/patch/disable tests", "malformed/non-object/scalar/unsupported/unknown/empty Operations/bad password tests", "atomic mailbox/password/audit projection", "Authentik-compatible flow test", "go test ./...", "go test -race ./...", "git diff --check"]
 
 [[features]]
 id = "v2.identity-provisioning.app-passwords-ui"

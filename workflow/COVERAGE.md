@@ -31,8 +31,10 @@ None.
 ## Smallest next coverage increment
 
 Complete the consumer adapters and live Authentik cutover for the pinned
-`gotth-oidc` and `gotth-scim` modules, including opaque SCIM-ID migration and
-store conformance. Then complete the notifications workstream's declared
+`gotth-oidc` and `gotth-scim` modules, including protected-attempt migration,
+concurrent callback replay, runtime PostgreSQL wiring, opaque SCIM-ID migration,
+store conformance, transactional mailbox/password/audit projection, and
+restart/backup/restore proof. Then complete the notifications workstream's declared
 dependencies, core routing/selection and recorder composition, and remaining
 per-user/profile/deployment scope before moving those features to `done`.
 

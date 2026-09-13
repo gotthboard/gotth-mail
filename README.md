@@ -13,6 +13,7 @@ This repository is in staged implementation governed by `workflow.toml`. Do not 
 - [1.0 release contract](docs/prd/PRD-release-1.0.md)
 - [Changelog](docs/CHANGELOG.md)
 - [Authentik password hashing compatibility](docs/reference/authentik-password-hashing.md)
+- [GOTTH component adoption contract](docs/reference/gotth-stack-adoption.md)
 - [Workflow manifest](workflow.toml)
 - [Coverage posture](workflow/COVERAGE.md)
 
@@ -23,6 +24,9 @@ This repository is in staged implementation governed by `workflow.toml`. Do not 
 - GOTTH admin UI: Go + templ + Tailwind + HTMX
 - Postfix, Dovecot, Rspamd, and front/proxy mail stack
 - Required adjacent Authentik service/profile
+- `gotth-oidc` for OIDC protocol mechanics and `gotth-scim` for the SCIM
+  protocol/storage contract; GOTTH Mail retains product storage, sessions,
+  authorization, mailbox projection, audit, and operations policy
 - Containerized gRPC/protobuf plugins at narrow mechanism seams
 
 ## Development workflow

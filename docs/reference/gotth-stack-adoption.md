@@ -1,0 +1,51 @@
+# GOTTH component adoption contract
+
+This record defines which reusable GOTTH components GOTTH Mail uses, where the
+product boundary remains consumer-owned, and why a component is not imported
+when it does not fit. Repository branding is not an architectural argument.
+
+The revisions below were inspected on 2026-09-13. Every imported module must
+remain pinned to an exact reviewed revision until an immutable compatible tag
+is admitted.
+
+| Component | Inspected revision | GOTTH Mail decision |
+| --- | --- | --- |
+| `gotth-oidc` | `1ae119e52f8efc3392fcc9fa716b1b27c9ffce6c` | Adopt now for discovery, Authorization Code, S256 PKCE, protected attempt material, callback parsing, code exchange, and ID-token validation. GOTTH Mail owns durable one-time attempt consumption, browser binding, identity records, application sessions, cookies, and authorization. |
+| `gotth-scim` | `255629e27f7df301d263a116fb37fd315ff54693` | Adopt in the next identity slice for SCIM parsing, RFC behavior, opaque IDs, transactions, ETags, PATCH/search/Bulk, tombstones, reconciliation, and write-only password delegation. GOTTH Mail owns bearer authentication, provisioning scopes, PostgreSQL storage, mailbox/password/audit projection, session invalidation, and product policy. |
+| `gotth-authentik` | `0587d298d317247cd5c86a4beff23c705da395e0` | Intended for the live Authentik desired-state/profile proof after its license is selected and its consumer contract is admitted. It is not imported or copied while unlicensed. |
+| `gotth-pg-migrate` | `6a513260994ab01ad525f7ab8909f8fa65cebe41` | Candidate for a separately reviewed migration-engine cutover. It is not mixed into the OIDC slice: it is currently unlicensed and its six-digit immutable-file ledger is incompatible with GOTTH Mail's existing table-name baseline ledger. |
+| `gotth-release` | `2d918925dfd8550cb0a58f4569561d624addd5d2` | Intended for deterministic 1.0 alpha/beta/stable artifacts after licensing and a product-specific archive manifest are admitted. It does not belong in runtime identity code. |
+| `gotth-infrastructure` | `785ca581417c8cbaea4594d4e2b0be01828a94be` | Candidate for the control-plane container's desired-state and inspect proof after licensing. Its one-container contract does not model the complete Postfix/Dovecot/Rspamd/Authenik stack, so product deployment orchestration remains GOTTH Mail-owned. |
+| `gotth-jobs` | `1c7b229f24e61a65c477408282aed74602dd3cab` | Available for later durable asynchronous work with at-least-once semantics. It is deliberately excluded from login and canonical SCIM mutation because those paths require synchronous, fail-closed acceptance rather than eventual projection. |
+| reserved `gotth-*` repositories | current public `main` | Do not import placeholders or unrelated product components. A component becomes eligible only when it has a real API, an applicable mechanism, an acceptable license, exact version provenance, and consumer evidence. |
+
+## Immediate identity sequence
+
+1. Replace duplicate in-tree OIDC protocol code with `gotth-oidc` while
+   preserving GOTTH Mail's existing login/callback URLs and session-cookie
+   userspace.
+2. Persist only `gotth-oidc.ProtectedAttempt` material plus consumer-owned
+   browser-binding, return-path, expiry, and consumption metadata. Raw state,
+   nonce, and PKCE verifier values must never be stored.
+3. Replace the handwritten SCIM HTTP surface with `gotth-scim` backed by a
+   transaction-bearing PostgreSQL adapter and atomic mailbox/password/audit
+   projection. The adapter must pass `scim.CheckStore` plus product-specific
+   restart, concurrency, migration, backup, and restore tests.
+4. Migrate email-address SCIM identifiers to opaque persistent IDs. Old
+   identifiers may be resolved only through an explicit bounded migration
+   record; they must never be regenerated from a mutable address.
+5. Use SCIM Groups for role membership only after the exact binding between an
+   Authentik OIDC subject and a SCIM User `externalId` is specified and proven.
+   OIDC authorization-shaped claims are not trusted merely because a provider
+   placed them in an ID token.
+6. Use `gotth-authentik` for the real provider/application/enrollment profile
+   only after its legal and release gates are satisfied, then run live login,
+   provision, role, disable, deprovision, restart, backup, and restore proofs.
+
+## Admission rule
+
+Compatibility tests prove only that a library can be called. Runtime adoption
+is complete only when duplicate production mechanics are removed, consumer
+adapters are durable, failure paths are covered, live integration is proven,
+and the exact dependency revision is recorded. No component tag, GOTTH Mail
+alpha, or stable claim follows from a package import alone.

@@ -1,4 +1,7 @@
-# Implementation Spec — v2 Identity + Provisioning
+# Implementation Spec — GOTTH Mail 1.0 Identity + Provisioning
+
+Historical workflow ID: `v2.identity-provisioning`; it is not a product
+version.
 
 Source PRD: [PRD-v2-identity-provisioning.md](../prd/PRD-v2-identity-provisioning.md)
 Source architecture: [architecture/v2-identity-provisioning.md](../architecture/v2-identity-provisioning.md)
@@ -14,20 +17,31 @@ OIDC, SCIM, and IMAP/SMTP credentials must stay separate.
 Flow:
 
 ```text
-start_login -> redirect_to_provider -> callback -> validate_state -> exchange_code -> validate_id_token -> map_identity -> create_session
+gotth_oidc.Begin -> persist_protected_attempt -> redirect_to_provider -> parse_callback -> atomically_consume_attempt -> gotth_oidc.Complete -> map_identity -> persist_session
 ```
 
 OIDC login state is stored in `oidc_login_states`:
 
-- `state_id` primary key
-- `nonce` not null
-- `browser_binding_hash` not null
+- `state_hash` 32-byte primary key
+- `nonce_ciphertext` fixed-size protected envelope, not null
+- `pkce_verifier_ciphertext` fixed-size protected envelope, not null
+- `context_ciphertext` bounded protected attempt context, not null
+- `browser_binding_hash` 32-byte digest, not null
 - `redirect_after_login`
 - `created_at`
 - `expires_at`
 - `used_at`
 
-`state_id` is single-use. The callback must mark it used in the same transaction that accepts the callback.
+The browser receives the raw state; only its SHA-256 lookup digest is stored.
+Raw state, nonce, PKCE verifier, authorization code, and tokens are never
+written to the database or logs. The callback atomically marks the matching
+attempt used before calling `oidc.Client.Complete`. This prevents concurrent
+redemption. Network or validation failure after consumption does not restore
+the attempt; the user starts a new login.
+
+An upgrade migration invalidates all pre-adoption in-flight attempts, removes
+the plaintext state/nonce columns, and installs fixed-length protected columns.
+Application sessions remain separate and are not invalidated by that migration.
 
 Validation requirements:
 
@@ -41,6 +55,7 @@ Validation requirements:
 - authorized party (`azp`) matches client ID when present
 - expiry, issued-at, and not-before are valid with bounded clock skew
 - no unsigned-claim fallback
+- exact `gotth-oidc` protected-attempt and S256 PKCE behavior
 
 Failures return safe errors and log no tokens.
 
@@ -64,6 +79,10 @@ Session cookies:
 - rotation on login
 
 OIDC sessions grant web/API session access only. They never authenticate IMAP/SMTP.
+
+`gotth-oidc` returns issuer, subject, display name, verified email, and safe
+picture identity facts. It does not return authorization-shaped group claims.
+GOTTH Mail maps roles from its separately verified durable mapping path.
 
 ## Authentik role mapping
 
@@ -116,6 +135,19 @@ Must cover local admin, API token, OIDC subject, SCIM client, system actor, brea
 
 ## SCIM API
 
+The HTTP surface is implemented by `gotth-scim.Server`, not the handwritten
+legacy router. GOTTH Mail supplies:
+
+- bearer authentication middleware and opaque provisioning scopes;
+- a PostgreSQL implementation of `scim.Store`/`scim.Transaction`;
+- `scim.PasswordStore` only when password projection is atomic with resource
+  mutation and audit;
+- mailbox, verifier, audit, role, and session-invalidation projection;
+- product-specific disable semantics and recovery evidence.
+
+The adapter must pass `scim.CheckStore` and product tests. `scim.MemoryStore`
+is restricted to library/HTTP fixtures and is never production durability.
+
 Base path:
 
 ```text
@@ -138,6 +170,10 @@ GET    /Groups
 ```
 
 Groups return explicit unsupported behavior until real group semantics exist.
+
+Group support may be enabled only after membership values are bound to opaque
+SCIM User IDs and each User `externalId` is proven to match the corresponding
+Authentik OIDC subject. No ID-token group claim bypasses this mapping.
 
 SCIM requests authenticate as a `scim_client` actor using a verifier-backed bearer/API token. Every create/update/patch/deprovision request runs through core authorization and domain policy before canonical mailbox state is admitted.
 
@@ -189,7 +225,10 @@ Unsupported groups or operations must fail explicitly. No fake 200/no-op behavio
 
 ## Password hashing compatibility
 
-Mailbox-password and app-password/mail-client verifier storage uses Django encoded password-hash syntax with the current v2 compatibility profile fixed to `pbkdf2_sha256`, matching the checked Authentik/Django default deployment.
+Mailbox-password and app-password/mail-client verifier storage uses Django
+encoded password-hash syntax with the current GOTTH Mail 1.0 compatibility
+profile fixed to `pbkdf2_sha256`, matching the checked Authentik/Django default
+deployment.
 
 Requirements:
 
@@ -262,6 +301,11 @@ Required tests:
 
 - OIDC state, nonce, redirect URI, issuer, signature, subject, audience, azp, exp, iat, nbf validation
 - invalid state/nonce/token negative tests
+- raw state/nonce/PKCE/token absence from persistence and logs
+- migration invalidates legacy in-flight attempts without invalidating sessions
+- concurrent callback replay permits exactly one attempt consumption
+- process restart between login start and callback preserves the protected
+  attempt; restart after callback preserves the application session
 - no unsigned-claim fallback test
 - no token disclosure in failure logs
 - Authentik role mapping doctor/tests for global admin/domain manager/scoped access
@@ -272,7 +316,12 @@ Required tests:
 - SCIM success paths for list/create/read/replace/patch/disable
 - SCIM failure paths for malformed JSON, non-object payload, scalar identity fields, unsupported operations, unknown paths, empty Operations arrays, bad passwords
 - Authentik-compatible SCIM provisioning path without DB/config bypass
-- password-hash compatibility tests for the v2 `pbkdf2_sha256` Authentik/Django default profile plus rejection tests for unsupported Django hashers
+- `scim.CheckStore` against the PostgreSQL adapter plus concurrent uniqueness,
+  opaque-ID persistence, tombstone non-reassignment, restart, backup, and
+  restore tests
+- password-hash compatibility tests for the current GOTTH Mail 1.0
+  `pbkdf2_sha256` Authentik/Django default profile plus rejection tests for
+  unsupported Django hashers
 - app-password create/revoke/list/Dovecot auth with `pbkdf2_sha256` Django encoded verifier/hash storage where applicable
 - every identity/provisioning mutation audited
 - `git diff --check`
