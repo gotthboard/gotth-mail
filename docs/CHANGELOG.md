@@ -21,9 +21,81 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 18:34 CDT — Enable opaque non-authoritative SCIM Groups
+### 2026-09-13 18:45 CDT — Close opaque SCIM Group evidence
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- identity implementation consistency repair
+- release-line architecture and implementation status
+- global coverage map
+- opaque-Groups workflow state and evidence
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Closed the non-authoritative Group slice after PostgreSQL, full, race, vet,
+build, module, coverage, graph, and cold-review gates passed. Removed one stale
+implementation sentence that still claimed Groups were unavailable and made
+the remaining boundary explicit: Groups are durable provisioning inventory,
+but only a separately admitted stable Authentik Group-to-role projection may
+create product authority.
+
+Verification:
+
+- focused PostgreSQL Group lifecycle and schema-integrity tests twice: pass
+- full repository tests and race tests at `a74ad3e`: pass
+- vet, all command builds, module verification, and diff checks: pass
+- changed Group membership projector coverage: 80.4%
+- code-only Graphify extraction: 1,805 nodes / 4,472 edges; SHA-256
+  `1d52d9d1b75218c2c845f0de6e818a987c57e7231c436e5e7589aa988dbe4313`
+
+### 2026-09-13 18:43 CDT — Prove database-enforced Group edge integrity
+
+Commit: `772bf08716aed3c9f47aab771482f97eaa784da1`
+
+Affected files:
+
+- SCIM Group PostgreSQL lifecycle test
+- `docs/CHANGELOG.md` (recorded by the evidence-closure commit)
+
+Explanation:
+
+Added direct PostgreSQL proof that normalized membership cannot cross a SCIM
+scope and cannot use a Group resource where a User resource is required. This
+tests the composite foreign-key contract independently of HTTP validation.
+
+Verification:
+
+- exact Group PostgreSQL test twice: pass
+
+### 2026-09-13 18:38 CDT — Report referenced User deletion as a SCIM conflict
+
+Commit: `a74ad3eaf988556fa93d2db36c132639aac1eb82`
+
+Affected files:
+
+- product SCIM PostgreSQL adapter
+- `docs/CHANGELOG.md` (recorded by the evidence-closure commit)
+
+Explanation:
+
+The first PostgreSQL run proved storage rollback but exposed a bad protocol
+boundary: deleting a User still referenced by a Group returned generic 500.
+The adapter now detects that reference before projection and reports an exact
+409 conflict; a concurrent database foreign-key conflict maps to the same safe
+protocol class.
+
+Verification:
+
+- exact Group lifecycle, rollback, store-conformance, and migration tests
+  twice: pass
+- full repository tests and race tests: pass
+
+### 2026-09-13 18:35 CDT — Enable opaque non-authoritative SCIM Groups
+
+Commit: `b7023dd26b7fab1e7d49e5a16b7ad97753984361`
 
 Affected files:
 
@@ -47,8 +119,8 @@ not create product role bindings or trust OIDC group claims.
 Verification:
 
 - constrained store/SCIM/API compilation: pass
-- PostgreSQL lifecycle, migration, rollback, full, race, vet, build, and
-  coverage gates: pending on the development host
+- PostgreSQL lifecycle, migration, and rollback: pass after the referenced-User
+  conflict repair at `a74ad3e`
 - `git diff --check`: pass
 
 ### 2026-09-13 18:25 CDT — Add reviewed legacy mailbox adoption

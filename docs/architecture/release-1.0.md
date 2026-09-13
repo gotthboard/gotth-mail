@@ -43,12 +43,14 @@ logs.
 
 The adapter projects admitted SCIM Users into mailbox and domain state through
 the existing authorization and audit services, then updates the single
-process's daemon/passdb view after commit. SCIM Groups, role projection, and
-web-session invalidation remain disabled until opaque User membership is bound
-to authoritative Authentik OIDC subjects. SCIM resource IDs are opaque and
-persistent; email addresses remain mutable indexed attributes. A legacy
-migration must preserve provider IDs or record a deliberate one-time adoption
-mapping.
+process's daemon/passdb view after commit. SCIM Groups are durable,
+non-authoritative provisioning inventory with same-scope opaque User edges;
+they grant no role. Stable Group-to-role projection remains disabled until the
+live Authentik profile and exact mapping are admitted. User disable/delete
+revokes bound web sessions transactionally. SCIM resource IDs are opaque and
+persistent; email addresses remain mutable indexed attributes. Legacy
+email-keyed mailboxes move under SCIM ownership only through the reviewed,
+digest-confirmed adoption path, which preserves mailbox identity and verifier.
 
 The composition point is the database, not a provider-specific token parser.
 The exact verified OIDC subject must equal one active SCIM User `externalId`,

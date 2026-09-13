@@ -59,11 +59,17 @@ opaque provisioning scope. Canonical resource, mailbox, authorization, success
 audit, and password delegation changes commit or fail together with the SCIM
 transaction. The admitted single control-plane writer updates its in-memory
 daemon/passdb view only after commit and reconstructs it from SQL on restart.
-Groups and session revocation remain unavailable until the authoritative
-Authentik-subject binding exists; no ID-token claim substitutes for it.
+Groups are non-authoritative provisioning inventory whose members must be
+same-scope opaque User IDs. Group mutations create no role authority. User
+disable/delete revokes bound sessions transactionally. Stable Group-to-role
+projection remains unavailable until the live Authentik profile and exact
+mapping are admitted; no ID-token claim substitutes for it.
 
-The current email-address-as-resource-ID scheme requires an explicit migration
-and Authentik adoption proof. It must not be silently reinterpreted.
+Legacy email-keyed mailboxes use the implemented redacted preview plus exact
+digest-confirmed adoption path. The `gotth-scim.Reconciler` owns validation and
+opaque ID generation; the product transaction preserves mailbox UUID,
+verifier, enabled state, and mail ownership. No OIDC identity or session is
+fabricated. Live Authentik adoption proof remains required.
 
 ## Compatibility proof in this feature
 
@@ -71,8 +77,11 @@ This release-contract feature pins both libraries and runs an external
 consumer contract test that performs a real OIDC discovery/begin request and a
 real SCIM User create/read cycle. That proves dependency and public-API
 compatibility only. The later identity feature now supplies the consumer-owned
-PostgreSQL adapter and runtime cutover. Live Authentik, legacy adoption,
-backup/restore, and release promotion remain separate blocking evidence.
+PostgreSQL adapter and runtime cutover. Durable login attempts and sessions,
+OIDC-to-SCIM binding, session-bound app-password self-service, reviewed legacy
+adoption, and non-authoritative opaque Groups are implemented and evidenced.
+Live Authentik, stable Group-to-role projection, identity-aware backup/restore,
+and release promotion remain separate blocking evidence.
 
 ## Release verification
 

@@ -2,7 +2,7 @@
 
 ID: `v2.identity-provisioning.opaque-scim-groups`
 
-State: `in_progress`
+State: `done`
 
 Enable the pinned `gotth-scim` Group protocol surface while enforcing that
 every member is a live opaque User ID in the same provisioning scope. Persist

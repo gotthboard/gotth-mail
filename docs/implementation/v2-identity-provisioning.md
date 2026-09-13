@@ -310,8 +310,10 @@ No issuer is accepted by this command and no `identity_refs`, sessions, or
 role bindings are created. The first verified OIDC callback remains the sole
 issuer/subject/session admission path. Existing ownership, stale plans,
 subject conflicts, tombstones, malformed input, missing/disabled domains, and
-audit failure all reject atomically. Until the verified subject binding exists,
-Groups remain explicitly unavailable.
+audit failure all reject atomically. A Group may inventory an adopted User's
+opaque ID before verified subject binding exists, but it grants no product
+authorization; only the separately admitted stable Group-to-role projection
+may create authority.
 
 ## SCIM error contract
 
