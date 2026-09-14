@@ -19,6 +19,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/ops"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/render"
+	"forgejo/gotthboard/gotth-mail/internal/scimtoken"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/version"
 	_ "github.com/lib/pq"
@@ -97,44 +98,7 @@ func run(args []string) error {
 		var r store.Runner
 		return r.MigrateEmpty()
 	case "identity":
-		if len(args) < 4 || args[1] != "adopt" || args[2] != "preview" && args[2] != "apply" {
-			return fmt.Errorf("usage: gotth-mailctl identity adopt <preview|apply> --config <file> --mailbox <address> --subject <subject> --scope <scope> --manager <manager> [--confirm <digest>]")
-		}
-		cfg, err := loadValidatedConfig(args)
-		if err != nil {
-			return err
-		}
-		db, err := sql.Open("postgres", cfg.Database.DSN)
-		if err != nil {
-			return err
-		}
-		defer db.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := db.PingContext(ctx); err != nil {
-			return fmt.Errorf("connect identity database: %w", err)
-		}
-		request, err := adoptionRequest(args)
-		if err != nil {
-			return err
-		}
-		service := identityadopt.Service{DB: db}
-		if args[2] == "preview" {
-			plan, err := service.Preview(ctx, request)
-			if err != nil {
-				return err
-			}
-			return json.NewEncoder(os.Stdout).Encode(plan)
-		}
-		confirmation, ok := flagValue(args, "--confirm")
-		if !ok || confirmation == "" {
-			return fmt.Errorf("--confirm <preview-digest> required")
-		}
-		result, err := service.Apply(ctx, request, confirmation)
-		if err != nil {
-			return err
-		}
-		return json.NewEncoder(os.Stdout).Encode(result)
+		return runIdentity(args)
 
 	case "doctor":
 		format, ok := flagValue(args, "--format")
@@ -194,6 +158,98 @@ func run(args []string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown command %s", args[0])
+}
+
+func runIdentity(args []string) error {
+	if len(args) < 3 || args[2] != "preview" && args[2] != "apply" {
+		return identityUsage()
+	}
+	cfg, err := loadValidatedConfig(args)
+	if err != nil {
+		return err
+	}
+	db, err := sql.Open("postgres", cfg.Database.DSN)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("connect identity database: %w", err)
+	}
+	switch args[1] {
+	case "adopt":
+		request, err := adoptionRequest(args)
+		if err != nil {
+			return err
+		}
+		service := identityadopt.Service{DB: db}
+		if args[2] == "preview" {
+			plan, err := service.Preview(ctx, request)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(plan)
+		}
+		confirmation, ok := flagValue(args, "--confirm")
+		if !ok || confirmation == "" {
+			return fmt.Errorf("--confirm <preview-digest> required")
+		}
+		result, err := service.Apply(ctx, request, confirmation)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	case "scim-token":
+		actorID, secretPath, err := scimTokenRequest(args)
+		if err != nil {
+			return err
+		}
+		secret, err := scimtoken.ReadSecret(secretPath)
+		if err != nil {
+			return err
+		}
+		defer clear(secret)
+		service := scimtoken.Service{DB: db}
+		if args[2] == "preview" {
+			plan, err := service.Preview(ctx, actorID, secret)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(plan)
+		}
+		confirmation, ok := flagValue(args, "--confirm")
+		if !ok || confirmation == "" {
+			return fmt.Errorf("--confirm <preview-digest> required")
+		}
+		result, err := service.Apply(ctx, actorID, secret, confirmation)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	default:
+		return identityUsage()
+	}
+}
+
+func identityUsage() error {
+	return fmt.Errorf("usage: gotth-mailctl identity adopt <preview|apply> --config <file> --mailbox <address> --subject <subject> --scope <scope> --manager <manager> [--confirm <digest>] | gotth-mailctl identity scim-token <preview|apply> --config <file> --id <stable-actor-id> --secret-file <owner-only-file> [--confirm <digest>]")
+}
+
+func scimTokenRequest(args []string) (string, string, error) {
+	actorID, ok := flagValue(args, "--id")
+	if !ok || strings.TrimSpace(actorID) == "" {
+		return "", "", fmt.Errorf("--id required")
+	}
+	secretPath, ok := flagValue(args, "--secret-file")
+	if !ok || strings.TrimSpace(secretPath) == "" {
+		return "", "", fmt.Errorf("--secret-file required")
+	}
+	if _, ok := flagValue(args, "--secret"); ok {
+		return "", "", fmt.Errorf("--secret is forbidden; use --secret-file")
+	}
+	return actorID, secretPath, nil
 }
 
 func adoptionRequest(args []string) (identityadopt.Request, error) {

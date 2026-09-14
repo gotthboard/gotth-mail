@@ -104,3 +104,16 @@ func TestCLIAdoptionRequestRequiresAllOwnershipFields(t *testing.T) {
 		t.Fatal("incomplete adoption request accepted")
 	}
 }
+
+func TestCLISCIMTokenRequestRequiresProtectedFileInterface(t *testing.T) {
+	actorID, path, err := scimTokenRequest([]string{"identity", "scim-token", "preview", "--id", "authentik-primary", "--secret-file", "/run/secrets/scim"})
+	if err != nil || actorID != "authentik-primary" || path != "/run/secrets/scim" {
+		t.Fatalf("actor=%q path=%q err=%v", actorID, path, err)
+	}
+	if _, _, err := scimTokenRequest([]string{"identity", "scim-token", "preview", "--id", "authentik-primary"}); err == nil {
+		t.Fatal("missing secret file accepted")
+	}
+	if _, _, err := scimTokenRequest([]string{"identity", "scim-token", "preview", "--id", "authentik-primary", "--secret-file", "/run/secrets/scim", "--secret", "leak"}); err == nil {
+		t.Fatal("argv secret accepted")
+	}
+}

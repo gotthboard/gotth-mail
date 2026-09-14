@@ -667,7 +667,7 @@ func (s *Service) persistTokenLocked(ctx context.Context, tok Token) error {
 	if tok.Revoked {
 		revoked = sql.NullTime{Time: s.now(), Valid: true}
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO tokens(id, subject_type, subject_id, kind, verifier, label, scope_json, created_at, revoked_at) VALUES ($1,'token',$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO UPDATE SET verifier=EXCLUDED.verifier, scope_json=EXCLUDED.scope_json, revoked_at=EXCLUDED.revoked_at`, stableUUID("token:"+tok.ID), tok.ID, tok.Kind, tok.Verifier, tok.ID, string(scopes), s.now(), revoked)
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO tokens(id, subject_type, subject_id, kind, verifier, label, scope_json, created_at, revoked_at) VALUES ($1,'token',$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO UPDATE SET verifier=EXCLUDED.verifier, scope_json=EXCLUDED.scope_json, revoked_at=EXCLUDED.revoked_at`, TokenStorageID(tok.ID), tok.ID, tok.Kind, tok.Verifier, tok.ID, string(scopes), s.now(), revoked)
 	return err
 }
 
@@ -756,6 +756,12 @@ func stableUUID(seed string) string {
 	b[8] = (b[8] & 0x3f) | 0x80
 	s := hex.EncodeToString(b)
 	return s[0:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:32]
+}
+
+// TokenStorageID returns the stable database row ID used for a non-mailbox
+// token actor. Credential rotation must preserve this row and the actor ID.
+func TokenStorageID(actorID string) string {
+	return stableUUID("token:" + actorID)
 }
 
 func nullString(v string) sql.NullString { return sql.NullString{String: v, Valid: v != ""} }

@@ -21,9 +21,44 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 20:05 CDT — Specify SCIM bearer bootstrap and rotation
+### 2026-09-13 20:12 CDT — Implement transactional SCIM client-token admission
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/scimtoken/scimtoken.go`
+- `internal/scimtoken/scimtoken_test.go`
+- `internal/identity/identity.go`
+- `cmd/gotth-mailctl/main.go`
+- `cmd/gotth-mailctl/main_test.go`
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Added the operator-only `gotth-mailctl identity scim-token preview|apply`
+mechanism needed to bootstrap or rotate Authentik's outbound SCIM bearer.
+Secrets are accepted only from bounded owner-only regular files opened without
+following a final symlink. Preview output contains only a confirmation digest,
+stable actor ID, and operation. Apply locks and rechecks current state inside a
+serializable PostgreSQL transaction, stores only a PBKDF2 verifier, and commits
+the redacted audit event atomically. Stable actor and storage IDs survive
+rotation, while a same-secret retry performs no database or audit write.
+
+No Authentik object, live token, deployment, public URL, product-main ref, tag,
+or release changes in this implementation commit.
+
+Verification:
+
+- focused package tests and vet on the coding host: pass (PostgreSQL cases skip
+  there because local `initdb` is intentionally absent)
+- `git diff --check`: pass
+- full PostgreSQL and heavy development-host verification remains required
+  before admission
+
+### 2026-09-13 20:05 CDT — Specify SCIM bearer bootstrap and rotation
+
+Commit: `5705cd4`
 
 Affected files:
 
