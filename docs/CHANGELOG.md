@@ -21,9 +21,30 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 20:16 CDT — Reject corrupt SCIM token state
+### 2026-09-13 20:20 CDT — Extend SCIM token negative coverage
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- SCIM token protected-file and service tests
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Extended the hostile matrix across missing paths, control bytes, absent or
+closed databases, invalid actor IDs, and weak secrets for both preview and
+apply. These are negative-path tests only; runtime behavior and authority did
+not broaden.
+
+Verification:
+
+- focused coding-host tests and `git diff --check`: pass
+- development-host PostgreSQL, race, and coverage rerun remains required
+
+### 2026-09-13 20:16 CDT — Reject corrupt SCIM token state
+
+Commit: `e194203`
 
 Affected files:
 

@@ -23,6 +23,12 @@ var (
 
 func TestReadSecretRequiresProtectedRegularBearerFile(t *testing.T) {
 	root := t.TempDir()
+	if _, err := ReadSecret(""); err == nil {
+		t.Fatal("empty secret path accepted")
+	}
+	if _, err := ReadSecret(filepath.Join(root, "missing")); err == nil {
+		t.Fatal("missing secret file accepted")
+	}
 	valid := filepath.Join(root, "valid")
 	writeSecret(t, valid, firstSecret, 0o600)
 	got, err := ReadSecret(valid)
@@ -38,6 +44,7 @@ func TestReadSecretRequiresProtectedRegularBearerFile(t *testing.T) {
 	}{
 		{"weak", []byte("short"), 0o600},
 		{"newline", append(append([]byte(nil), firstSecret...), '\n'), 0o600},
+		{"control", append(append([]byte(nil), firstSecret...), '\t'), 0o600},
 		{"space", append(append([]byte(nil), firstSecret...), ' '), 0o600},
 		{"permissions", firstSecret, 0o640},
 		{"oversized", bytes.Repeat([]byte{'a'}, maxSecretBytes+1), 0o600},
@@ -60,6 +67,40 @@ func TestReadSecretRequiresProtectedRegularBearerFile(t *testing.T) {
 	}
 	if _, err := ReadSecret(root); err == nil {
 		t.Fatal("directory secret file accepted")
+	}
+}
+
+func TestSCIMTokenRejectsInvalidInputAndUnavailableDatabase(t *testing.T) {
+	ctx := context.Background()
+	service := Service{}
+	if _, err := service.Preview(ctx, "authentik-primary", firstSecret); err == nil {
+		t.Fatal("preview without database accepted")
+	}
+	if _, err := service.Apply(ctx, "authentik-primary", firstSecret, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("apply without database accepted")
+	}
+	db := tokenDB(t)
+	service.DB = db
+	if _, err := service.Preview(ctx, "UPPER", firstSecret); err == nil {
+		t.Fatal("invalid actor accepted")
+	}
+	if _, err := service.Preview(ctx, "authentik-primary", []byte("short")); err == nil {
+		t.Fatal("weak preview secret accepted")
+	}
+	if _, err := service.Apply(ctx, "UPPER", firstSecret, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("invalid apply actor accepted")
+	}
+	if _, err := service.Apply(ctx, "authentik-primary", []byte("short"), strings.Repeat("0", 64)); err == nil {
+		t.Fatal("weak apply secret accepted")
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Preview(ctx, "authentik-primary", firstSecret); err == nil {
+		t.Fatal("preview against closed database succeeded")
+	}
+	if _, err := service.Apply(ctx, "authentik-primary", firstSecret, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("apply against closed database succeeded")
 	}
 }
 
