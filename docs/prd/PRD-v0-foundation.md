@@ -81,6 +81,11 @@ v0 establishes the containerized control-plane foundation. It must ship a testab
 - Dashboard/status page.
 - Read-only config/status views.
 - Authentik/bootstrap status page.
+- Shared applicable typography, spacing, blue/gray light and dark theme tokens,
+  original icons, navigation, command, focus, status, and table patterns from
+  the
+  [GOTTH Mail classic interface language](../reference/classic-interface-language.md),
+  while remaining visibly and authoritatively separate from webmail.
 - UI mutations must go through the same service/auth/audit path as API and CLI.
 
 ### v0.7 Plugin runtime foundation
@@ -140,6 +145,9 @@ Core owns policy. Plugins provide mechanisms.
 - Render/apply requires explicit apply and emits an audit event.
 - Audit writer records redacted mutation events.
 - Permission simulator can explain simple allow/deny results.
+- The admin shell uses the shared classic interface language without making a
+  privileged mutation look like an ordinary webmail action or granting
+  webmail control-plane authority.
 - Authentik service/profile exists in the deployment topology and has modeled OIDC/SCIM/role-mapping config.
 - Plugin gRPC health/version/capability contracts compile and are testable.
 - Authenticated plugin health/version/capability calls succeed with admitted service credentials.

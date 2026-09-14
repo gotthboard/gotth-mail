@@ -21,9 +21,45 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 18:45 CDT — Close opaque SCIM Group evidence
+### 2026-09-13 19:06 CDT — Specify the GOTTH Mail classic interface language
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- webmail product requirements, architecture, implementation, and verification
+- administration-shell requirements, architecture, and implementation guidance
+- shared classic-interface reference
+- repository documentation index
+- canonical v4 workflow state, verification gates, and requirement evidence
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Recorded Danny's requirement that the custom GOTTH Mail webmail use an Outlook
+Classic-inspired but distinctly GOTTH Mail presentation. The contract now
+requires a desktop-first three-pane workflow, dense sortable message list,
+configurable and resizable reading pane, traditional command bar, keyboard
+navigation, context-menu parity, responsive mobile drill-down, and restrained
+blue/gray light and dark themes shared appropriately with the separate admin
+GUI. It explicitly preserves the server-rendered Go, templ, Tailwind, and HTMX
+boundary; existing security, accessibility, hostile-content, and
+control-plane-authority invariants; and forbids copying Microsoft trademarks,
+copyrighted assets, or exact branding. The canonical v4 workstream remains
+`in_progress`; the docs change does not misrepresent the existing minimal
+`/webmail` shell as satisfying the new interface contract.
+
+Verification:
+
+- reviewed requirement trace across PRD, architecture, implementation,
+  acceptance criteria, workflow state, verification gates, shared reference,
+  evidence, and docs index
+- `go test ./internal/webmail`: pass
+- `git diff --check`: pass
+
+### 2026-09-13 18:45 CDT — Close opaque SCIM Group evidence
+
+Commit: `270572fbeab7c24e187984658351a277fd30b578`
 
 Affected files:
 
