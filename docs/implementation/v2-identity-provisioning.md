@@ -297,6 +297,35 @@ identity store. Every request, including discovery, requires a verifier-backed
 `scim_client` bearer. The stable token actor ID, not its rotatable secret,
 derives the opaque storage scope.
 
+The corresponding Authentik bearer is admitted with:
+
+```text
+gotth-mailctl identity scim-token preview --config <file> \
+  --id <stable-actor-id> --secret-file <owner-only-file>
+
+gotth-mailctl identity scim-token apply --config <file> \
+  --id <stable-actor-id> --secret-file <owner-only-file> \
+  --confirm <preview-digest>
+```
+
+The token ID must be a lowercase stable identifier of 1-128 ASCII characters
+using only letters, digits, dot, underscore, and hyphen. The secret file is
+opened without following a final symlink, must be regular, must have no
+group/world permission bits, and must contain 32-512 printable bearer-safe
+ASCII bytes with no leading/trailing whitespace or line breaks. The secret is
+not accepted in argv or the environment and is never included in JSON output.
+
+Preview returns only `plan_id`, `actor_id`, and one operation:
+`create|rotate|reactivate|unchanged`. Its digest binds a domain separator,
+actor ID, SHA-256 of the requested secret, SHA-256 of the current verifier (or
+an explicit absent marker), current revocation state, and operation. Apply
+starts a serializable transaction, locks the current row, rebuilds the plan,
+constant-time compares the digest, and then either performs no write for
+`unchanged` or upserts a fresh PBKDF2 verifier plus `scim.token.<operation>`
+audit event atomically. A row with the stable storage ID but a different kind
+or subject is a hard conflict. The audit carries no file path, digest,
+verifier, or secret.
+
 Migration `0004_scim_resources` stores resources, ordered search indexes,
 immutable index contracts, permanent tombstones, and the mailbox-to-resource
 binding. Nanosecond timestamps are stored as integers because the imported

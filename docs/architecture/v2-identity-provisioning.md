@@ -215,6 +215,29 @@ mailbox email before the issuer/subject binding exists. Rollback is the normal
 SCIM manager-owned delete/disable path plus database restore evidence; an
 opaque ID or tombstone is never recycled.
 
+The outbound Authentik provider and inbound GOTTH Mail endpoint share one
+bearer, but they do not share plaintext storage. An operator first creates a
+high-entropy bearer in an owner-only regular file. `gotth-mailctl identity
+scim-token preview` validates the file and reads the current token row without
+printing a fingerprint or secret. Its confirmation digest binds the stable
+actor ID, requested secret digest, current verifier digest, revocation state,
+and intended create/rotate/reactivate/no-op transition.
+
+`apply` opens a serializable PostgreSQL transaction, locks the exact token row,
+reconstructs the plan, and compares the confirmation digest in constant time.
+For a mutation it writes a fresh Django PBKDF2-SHA256 verifier and a redacted
+audit event before committing. The audit names only the actor ID and operation.
+The raw bearer remains solely in the operator-owned file so it can be installed
+into Authentik; it is never persisted or echoed by GOTTH Mail. A same-secret
+retry performs no write. The actor ID does not change during rotation, so
+`provisioningScope(actor.ID)` continues to select the same opaque SCIM scope.
+
+Secret-file validation is part of the trust boundary: the path must resolve to
+a regular non-symlink file with no group/world permission bits, and the value
+must be bounded, non-whitespace, printable bearer-safe data with at least 32
+bytes. Command-line and environment secret values are not accepted. This is a
+Linux/Docker operator mechanism, not an end-user credential workflow.
+
 SCIM disable/delete revokes sessions through the mailbox UUID inside the same
 transaction as the mailbox transition and SCIM audit. Changing an
 `externalId` after an OIDC identity has been bound is rejected; silently moving

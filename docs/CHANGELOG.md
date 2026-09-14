@@ -21,6 +21,35 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 20:05 CDT — Specify SCIM bearer bootstrap and rotation
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- identity/provisioning PRD, architecture, and implementation contract
+- live Authentik workflow contract and verification manifest
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Specified the missing operator mechanism required before Authentik can call the
+GOTTH Mail SCIM endpoint. The command is a preview/confirm transaction that
+accepts a bearer only through an owner-only regular file, stores only a
+verifier, audits mutation atomically, preserves the stable actor-derived SCIM
+scope across rotation, and makes same-secret retry a no-op. The contract
+forbids argv/environment secret input and secret, verifier, digest, or path
+disclosure in plan output and audit.
+
+This is a local credential-bootstrap contract. It does not create the live
+Authentik SCIM provider, deploy GOTTH Mail, choose a public URL, retire the
+historical provider, or claim the lifecycle gate complete.
+
+Verification:
+
+- requirement/architecture/implementation/workflow trace review: pass
+- `git diff --check`: pass
+
 ### 2026-09-13 19:50 CDT — Admit and stage the live GOTTH Authentik profile
 
 Commits: `d7fdb56`, `c783440`, `f6d971a`; current commit hash assigned by Git

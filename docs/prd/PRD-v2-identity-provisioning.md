@@ -48,6 +48,25 @@ mail-client tokens handle IMAP/SMTP clients. These concepts must stay separate.
 - `IDP-GOTTH-010`: The current strict loopback callback is a bounded
   pre-production smoke target. Beta and stable require the deployed public
   HTTPS callback derived from the exact GOTTH Mail public URL.
+- `IDP-GOTTH-011`: The Authentik SCIM bearer is provisioned through an
+  explicit operator preview/confirm operation. GOTTH Mail stores only a
+  password verifier, Authentik stores the usable bearer, and neither the CLI,
+  audit ledger, plan output, repository, nor process logs may disclose it.
+- `IDP-GOTTH-012`: The operator supplies the bearer through one bounded,
+  owner-only regular file. Symlinks, group/world permissions, whitespace,
+  control bytes, and weak or oversized values fail closed. Direct command-line
+  or environment secret input is forbidden because it leaks through process
+  inspection and shell history.
+- `IDP-GOTTH-013`: A stable operator-selected `scim_client` actor ID survives
+  bearer rotation and remains the sole input to the opaque provisioning-scope
+  derivation. Rotation must not orphan, merge, or move existing SCIM state.
+- `IDP-GOTTH-014`: Create, rotate, and reactivate commit the verifier and a
+  redacted audit event in one PostgreSQL transaction. Audit failure, stale
+  confirmation, conflicting token kind, or concurrent state drift leaves the
+  prior credential authoritative.
+- `IDP-GOTTH-015`: Reapplying the same live bearer is an observable no-op. It
+  must not rewrite the verifier, create an audit success event, or change the
+  provisioning scope.
 
 ## Scope
 
@@ -151,6 +170,11 @@ Requirements:
 - Adoption does not manufacture an OIDC identity reference. The first
   independently verified OIDC callback must still prove issuer, subject, and
   email continuity before it can create `identity_refs` or a session.
+- Before an Authentik SCIM provider is enabled, the operator must use the
+  reviewed `gotth-mailctl identity scim-token preview|apply` workflow to bind
+  one strong bearer to one stable `scim_client` actor ID. The resulting raw
+  bearer is transferred to Authentik from the same protected file; it is never
+  returned by GOTTH Mail.
 
 ### App passwords / mail-client tokens
 
@@ -214,6 +238,9 @@ Requirements:
 - Permission simulator explains allow/deny results for identity-backed actors.
 - SCIM provisioning can create, update, list, disable, and patch users through Authentik-compatible flows.
 - SCIM failure paths are tested.
+- SCIM client-token preview/apply rejects unsafe secret files, weak values,
+  stale plans, kind collisions, and audit failure; rotation preserves the
+  actor-derived provisioning scope and same-secret retry is a no-op.
 - SCIM Groups can be created, read, listed, replaced, patched, and deleted with
   same-scope opaque User membership; missing/cross-scope/User-delete conflicts
   fail without partial mutation. Group existence alone grants no role.

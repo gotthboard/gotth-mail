@@ -20,6 +20,13 @@ GOTTH Mail/operator responsibilities. Migration creates the `gotth-mail`
 issuer beside the historical provider first; retirement is forbidden until
 the complete lifecycle and recovery gates pass.
 
+The next local slice closes the missing SCIM credential bootstrap mechanism.
+It adds an operator-only preview/confirm command that reads a protected bearer
+file, persists only a verifier, audits mutation in the same transaction, keeps
+the stable actor-derived scope across rotation, and treats same-secret retry as
+a no-op. It does not create the live Authentik SCIM provider or invent a public
+GOTTH Mail URL.
+
 Live provider/browser, installed Authentik SCIM lifecycle, Dovecot client,
 restart, backup, and restore proof remain separate evidence gates after the
 local mechanism passes.

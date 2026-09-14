@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "v2.identity-provisioning.opaque-scim-groups"
+active_feature = "v2.identity-provisioning.live-authentik-persistence"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -479,7 +479,7 @@ source_path = "internal/authn"
 branch = "workflow/feature/v2.identity-provisioning.live-authentik-persistence"
 dependencies = ["v2.identity-provisioning.oidc-sessions", "v2.identity-provisioning.scim", "v2.identity-provisioning.app-passwords-ui"]
 implementation_spec_sections = ["OIDC login", "Session model", "SCIM API", "App passwords / mail-client tokens"]
-verification = ["exact issuer/subject plus SCIM externalId/mailbox binding tests", "verified-email continuity and ambiguity rejection tests", "foreign-keyed durable session restart/expiry/revocation tests", "SCIM disable/delete session revocation tests", "same-mailbox session authorization tests", "CSRF rejection and secret non-disclosure tests", "pinned gotth-authentik deterministic profile render/check and secret scan", "Authentik 2026.5.2 additive import and client-secret preservation proof", "historical issuer rollback retention", "live Authentik authorization-code smoke", "real browser callback proof", "live Authentik SCIM provision/login/disable lifecycle", "restart/backup/isolated-restore/rollback proof", "app-password client compatibility matrix", "go test ./...", "go test -race ./...", "git diff --check"]
+verification = ["exact issuer/subject plus SCIM externalId/mailbox binding tests", "verified-email continuity and ambiguity rejection tests", "foreign-keyed durable session restart/expiry/revocation tests", "SCIM disable/delete session revocation tests", "same-mailbox session authorization tests", "CSRF rejection and secret non-disclosure tests", "SCIM token protected-file and preview/confirm tests", "SCIM token stale-plan, kind-conflict, rotation-scope, same-secret no-op, and audit-rollback tests", "pinned gotth-authentik deterministic profile render/check and secret scan", "Authentik 2026.5.2 additive import and client-secret preservation proof", "historical issuer rollback retention", "live Authentik authorization-code smoke", "real browser callback proof", "live Authentik SCIM provision/login/disable lifecycle", "restart/backup/isolated-restore/rollback proof", "app-password client compatibility matrix", "go test ./...", "go test -race ./...", "git diff --check"]
 
 [[features]]
 id = "v2.identity-provisioning.legacy-mailbox-adoption"
