@@ -58,6 +58,20 @@ and the verified email must equal that User's projected mailbox. The resulting
 identity reference owns the session; a SCIM disable/delete revokes it in the
 same transaction as deprovisioning.
 
+## Extension-management composition
+
+GOTTH Mail is the consumer and authority. It pins `gotth-extensions`, owns the
+installed-extension registry and secret store, authenticates each out-of-
+process service, issues the exact grant, and calls the extension-provided
+control and seam services. A concrete extension repository supplies one
+mechanism; it does not supply Mail policy or administrator presentation.
+
+The browser communicates only with GOTTH Mail. Server-rendered administrator
+routes use the same authorization, CSRF, service, transaction, and audit paths
+as non-browser operations. Constrained extension metadata may describe fields
+and named secret slots, but never executable UI. The webmail and administrator
+may share visual tokens while their authority remains separate.
+
 ## Failure boundaries
 
 - OIDC or SCIM unavailability blocks new login/provisioning; it never blocks
@@ -70,6 +84,9 @@ same transaction as deprovisioning.
   consumer tests; live Authentik integration still blocks promotion.
 - Missing GitHub distribution, library license decisions, or exact dependency
   provenance blocks release promotion but does not weaken runtime checks.
+- Extension failure degrades only its mechanism. Disabling revokes its grant
+  and blocks new routing before shutdown; uninstall and secret deletion are
+  separate confirmed operations.
 
 ## Rollback
 

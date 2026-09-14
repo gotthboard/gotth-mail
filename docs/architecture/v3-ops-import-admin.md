@@ -108,6 +108,37 @@ Adds:
 
 Mature admin workflows call the same API/service/auth/audit paths as every other mutation surface. UI polish must not create a second mutation path.
 
+## Extensions administrator architecture
+
+The Extensions page is a GOTTH Mail control-plane view over a Mail-owned
+registry. It is not a web surface served by extension processes.
+
+```text
+browser -> Mail admin routes -> authz/CSRF/confirmation
+                              -> registry + encrypted secret store + audit
+                              -> grant/routing/supervision adapter
+                              -> authenticated out-of-process extension
+```
+
+The list and detail projections are secret-free. Constrained, versioned
+configuration metadata is validated before Mail renders native templ
+components. Unknown field kinds, duplicate names, over-limit documents,
+executable presentation, arbitrary URLs/actions, and secret values fail
+closed. Complex provider-specific workflows require reviewed Mail-owned
+adapters rather than extension-injected UI.
+
+Enable occurs only after the exact artifact, manifest digest, grant,
+configuration revision, transport identity, handshake, and health result agree.
+Disable first revokes the grant and removes the instance from new routing, then
+stops it. Update is a separately confirmed privilege/configuration diff and
+retains the previous pin. Every transition uses the existing service and audit
+boundary and is idempotent or explicitly reconciled after ambiguity.
+
+The page uses the separate administrator GUI's visual language and shares
+reviewed design tokens with webmail, but it never gains webmail mailbox
+authority. Mail and Board may present the same interaction pattern while
+keeping separate registries and credentials.
+
 ## Verification gates
 
 - audit UI answers who changed what, when, through which path, and result
@@ -117,3 +148,6 @@ Mature admin workflows call the same API/service/auth/audit paths as every other
 - abuse/rate-limit dashboard exposes useful signals
 - admin workflows do not bypass API/service/auth/audit paths
 - bulk operations prove preview, confirmation, per-item result reporting, and per-item or grouped audit entries
+- extension metadata cannot inject presentation or authority
+- setup/test/enable/disable/update/rollback preserve grant, routing, secret,
+  audit, accessibility, and failure-isolation boundaries

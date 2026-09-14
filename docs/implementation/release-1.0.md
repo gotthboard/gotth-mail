@@ -83,6 +83,20 @@ adoption, and non-authoritative opaque Groups are implemented and evidenced.
 Live Authentik, stable Group-to-role projection, identity-aware backup/restore,
 and release promotion remain separate blocking evidence.
 
+## Extensions foundation adoption
+
+Pin an immutable reviewed `gotth-extensions` revision. Replace or reconcile
+only the existing duplicate plugin control mechanics: manifest validation,
+host grant, version negotiation, lifecycle validation, handshake, and health.
+Mail's DNS, notification, backup, webmail, certificate, and import operations
+remain separate versioned protocols.
+
+The administrator implementation is governed by the v3 operations
+specification. No extension-provided HTML, JavaScript, templ component,
+Tailwind class list, CSS, redirect, or arbitrary action is admitted. Every
+installed artifact, manifest digest, grant, transport identity, configuration
+revision, and rollback pin is independently recorded and audited.
+
 ## Release verification
 
 - version grammar unit tests, including rejected zero, leading-zero, `0.x`,
@@ -95,3 +109,6 @@ and release promotion remain separate blocking evidence.
   rejection before beta;
 - full/race/vet/build/container, deployment, rollback, security,
   accessibility, monitoring, and owner-acceptance gates before stable.
+- extension-foundation conformance plus administrator setup/test/enable/
+  disable/update/rollback, secret-redaction, hostile-metadata, and failure-
+  isolation tests before beta.

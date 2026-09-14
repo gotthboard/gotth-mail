@@ -21,6 +21,43 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 23:07 CDT — Plan the host-owned Extensions administrator
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- 1.0 and operations/admin PRD, architecture, and implementation contracts
+- workflow dependency graph and planned feature records
+
+Explanation:
+
+Added Danny's requirement for one GOTTH Mail administrator surface that lists
+all installed extensions and supports setup, bounded testing, enable/disable,
+updates, audit, versions, and rollback. The browser remains connected only to
+Mail; extension processes cannot inject markup, scripts, templates, styles, or
+actions. Mail retains registry, authorization, CSRF/confirmation, encrypted
+write-only secrets, grants, transport identity, supervision, mutation, audit,
+and rollback authority.
+
+The plan places immutable `gotth-extensions` foundation adoption before the UI
+and requires every concrete mechanism to remain independently packaged in a
+`gotth-extension-<slug>` repository. Alpha integration now depends on both
+planned units.
+
+Verification:
+
+- `git diff --check` passed
+- `workflow.toml` parsed successfully; feature IDs, roots, dependencies, and
+  workflow feature directories are complete and consistent
+- every `workflow.events.jsonl` line parsed as a JSON object
+- implementation and runtime verification remain future planned work
+
+Risks / non-goals:
+
+- no runtime code, provider repository, product integration, credential, DNS
+  mutation, deployment, tag, release, or mirror change
+
 ### 2026-09-13 20:23 CDT — Record SCIM token bootstrap verification
 
 Commit: current commit; hash assigned by Git after commit

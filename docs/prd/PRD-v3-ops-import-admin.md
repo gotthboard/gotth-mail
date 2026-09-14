@@ -73,6 +73,24 @@ v3 turns the working mail system into an operationally serious system: audit vis
 - Permission simulator UI.
 - Generated config status/config surfaces for plugin-backed mechanisms.
 
+### v3.7 Extensions administrator
+
+- One Extensions page lists every installed extension with repository, pinned
+  version/artifact, manifest digest, granted permissions, lifecycle, health,
+  enabled state, available update, and rollback pin.
+- A detail surface provides Overview, Configuration, Secrets, Permissions,
+  Health, Audit, Versions, and Rollback without exposing secret values.
+- Setup is preview, exact grant approval, configuration, write-only secret
+  entry, bounded connection test, then enable after authenticated handshake and
+  health success.
+- Disable revokes the grant and blocks new calls before process shutdown while
+  preserving configuration. Uninstall and secret deletion are separate
+  confirmed operations.
+- Updates preview artifact, manifest, interface, capability, field, and secret-
+  slot changes and retain the prior admissible pin for rollback.
+- The server renders the page using Go, templ, Tailwind, and HTMX with ordinary
+  HTML fallback. Extensions supply no executable presentation.
+
 ## Non-goals
 
 - No custom webmail.
@@ -80,6 +98,10 @@ v3 turns the working mail system into an operationally serious system: audit vis
 - No hidden destructive bulk operations.
 - No bulk mutation without preview, explicit confirmation, result reporting, and audit coverage.
 - No import that silently weakens passwords, DKIM permissions, role mappings, or daemon lookup behavior.
+- No extension-provided HTML, JavaScript, CSS, template, redirect, or arbitrary
+  form action.
+- No global administrator that can enumerate or mutate another GOTTH product's
+  registry, grants, secrets, or audit state.
 
 ## Acceptance criteria
 
@@ -90,3 +112,6 @@ v3 turns the working mail system into an operationally serious system: audit vis
 - Abuse/rate-limit dashboard exposes operationally useful signals.
 - Admin UI covers the common operational workflows without bypassing API/service/audit paths.
 - Bulk operations prove preview, explicit confirmation, per-item result reporting, and audit coverage.
+- The Extensions administrator proves setup, test, enable, disable, update,
+  rollback, health, redaction, keyboard, responsive, and no-JavaScript flows
+  against at least one real `gotth-extension-<slug>` artifact.

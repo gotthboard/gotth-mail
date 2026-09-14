@@ -181,6 +181,51 @@ Apply must verify preview hash, actor, action, resource scope, and expiry. Stale
 
 UI polish must not create a second mutation path. GOTTH screens call API/service/auth/audit paths.
 
+## Extensions administrator
+
+Host-owned routes:
+
+```text
+GET  /admin/extensions
+GET  /admin/extensions/{instance-id}
+POST /api/v1/extensions/{instance-id}/configure/preview
+POST /api/v1/extensions/{instance-id}/configure/apply
+POST /api/v1/extensions/{instance-id}/test
+POST /api/v1/extensions/{instance-id}/enable
+POST /api/v1/extensions/{instance-id}/disable
+POST /api/v1/extensions/{instance-id}/update/preview
+POST /api/v1/extensions/{instance-id}/update/apply
+POST /api/v1/extensions/{instance-id}/rollback
+POST /api/v1/extensions/{instance-id}/uninstall/preview
+POST /api/v1/extensions/{instance-id}/uninstall/apply
+```
+
+The HTML surface is server-rendered Go + templ + Tailwind with HTMX fragments
+and ordinary form fallback. Every POST requires administrator authorization,
+CSRF, bounded input, and the same service-layer confirmation/audit contract as
+the API. Sensitive reconfiguration, capability expansion, rollback, uninstall,
+and secret deletion require recent reauthentication or the product's admitted
+equivalent high-risk confirmation.
+
+The registry stores instance ID, extension/repository identity, immutable
+artifact and rollback pins, manifest/configuration/grant/session digests,
+lifecycle and health codes, enabled state, timestamps, and audit correlation.
+Secret values live only in a Mail-owned encrypted installation secret store
+that this feature must define and verify before the first extension can be
+enabled; projections contain slot IDs and configured/rotated status only.
+
+Configuration metadata admits only a closed set of bounded scalar field kinds,
+labels, validation constraints, defaults, and named secret slots. It admits no
+markup, script, style, template, executable expression, redirect, arbitrary
+action, or secret value. Provider-specific complexity is implemented by a
+reviewed Mail adapter.
+
+Enable ordering is validate pin and metadata, persist configuration, inject
+scoped secrets, authenticate transport, negotiate grant, start, handshake,
+health, then admit routing. Disable ordering is revoke grant, remove routing,
+stop, then record final state. Retried and ambiguous operations reconcile by
+the bound configuration/session identities rather than guessing success.
+
 ## Verification
 
 Required tests:
@@ -197,5 +242,17 @@ Required tests:
 - abuse/rate-limit dashboard exposes required operational signals without hidden policy
 - admin workflows do not bypass API/service/auth/audit paths
 - bulk operations prove preview, confirmation, per-item result reporting, and per-item or grouped audit entries
+- list/detail projections are complete, bounded, and secret-free
+- hostile configuration metadata cannot inject HTML/script/style/actions or
+  broaden grants
+- write-only secret create/rotate/delete never redisplays or logs values
+- setup and test cannot enable an unhealthy or unauthenticated instance
+- disable blocks new routing before shutdown and is safe to retry
+- update previews bind actor, artifact, manifest, grant, configuration, expiry,
+  and privilege diff; stale or changed previews fail closed
+- prior pin rollback works without changing unrelated extensions
+- keyboard, focus, status announcement, 320-pixel reflow, theme contrast, and
+  ordinary HTML/no-JavaScript flows pass
+- Mail cannot enumerate or mutate another product's registry or secrets
 - `git diff --check`
 - `go test ./...`

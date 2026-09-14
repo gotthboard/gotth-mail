@@ -31,8 +31,9 @@ Stable `1.0.0` requires all of the following:
 3. Authentik-backed web login and SCIM provisioning using the admitted
    `gotth-oidc` and `gotth-scim` libraries through consumer-owned persistence,
    authorization, audit, and product adapters;
-4. durable administration, Mailu adoption/import, backup, isolated restore,
-   rollback, abuse controls, and diagnostics;
+4. durable administration, including one host-owned Extensions surface for
+   setup, testing, enable/disable, update, rollback, and audit; Mailu
+   adoption/import, backup, isolated restore, abuse controls, and diagnostics;
 5. production IMAP/SMTP webmail with the required exact-sender OpenPGP policy;
 6. notification delivery, approvals, identity binding, and key lifecycle;
 7. container deployment, upgrade, rollback, security, accessibility,
@@ -63,6 +64,21 @@ User `externalId` and mailbox projection. Sessions foreign-key that relation;
 SCIM deprovisioning revokes them. Authentik-specific token claims are not a
 shortcut around the libraries or product authorization state.
 
+## GOTTH Extensions management
+
+Stable 1.0 adopts an exact reviewed `gotth-extensions` foundation revision and
+reconciles the existing Mail plugin control pieces with its manifest, grant,
+negotiation, lifecycle, handshake, and health contracts. Concrete mechanisms
+remain in independent `gotth-extension-<slug>` repositories and retain their
+seam-specific protocols.
+
+The Mail administrator owns one native Extensions page. Extensions cannot
+inject markup, scripts, templates, styles, redirects, or arbitrary form
+actions. Mail owns the registry, authorization, CSRF and confirmation,
+write-only encrypted secrets, process supervision, mutation, audit, update,
+and rollback policy. No shared cross-product control-plane authority is
+introduced.
+
 ## Acceptance
 
 - Every published pre-stable version is an immutable `1.0.0-alpha.N` or
@@ -77,3 +93,6 @@ shortcut around the libraries or product authorization state.
   tags; floating branches are forbidden in admitted builds.
 - Library license and independent release gates remain explicit. Consumer use
   does not fabricate a library release.
+- Beta cannot begin until the Extensions administrator proves safe setup,
+  test, enable, disable, update, rollback, redaction, accessibility, and
+  failure behavior against at least one real independently packaged extension.

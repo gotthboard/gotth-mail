@@ -75,7 +75,7 @@ source_path = "."
 branch = "workflow/root/v3.ops-import-admin"
 worktree = "/tank/development/linus/gotth-mail-worktrees/v3.ops-import-admin"
 dependencies = ["v2.identity-provisioning"]
-required_verification = ["git diff --check", "go test ./...", "backup/import/bulk-operation contract tests"]
+required_verification = ["git diff --check", "go test ./...", "backup/import/bulk-operation contract tests", "extension administrator hostile-metadata, grant, secret, lifecycle, accessibility, and rollback tests"]
 
 [[root_features]]
 id = "v4.webmail"
@@ -189,7 +189,7 @@ state = "planned"
 path = "workflow/features/release.1-0/alpha-integration"
 source_path = "."
 branch = "workflow/feature/release.1-0.alpha-integration"
-dependencies = ["project.identity", "v0.foundation", "v1.mail-core", "v2.identity-provisioning", "v3.ops-import-admin", "v4.webmail", "v5.notifications", "release.1-0.identity-libraries", "release.1-0.identity-library-releases"]
+dependencies = ["project.identity", "v0.foundation", "v1.mail-core", "v2.identity-provisioning", "v3.ops-import-admin", "v4.webmail", "v5.notifications", "release.1-0.identity-libraries", "release.1-0.identity-library-releases", "release.1-0.extensions-foundation-adoption", "v3.ops-import-admin.extension-management-ui"]
 implementation_spec_sections = ["Release verification"]
 verification = ["complete workstream traceability", "reproducible alpha artifact", "upgrade/backup/restore/rollback proof", "full/race/vet/build/container gates"]
 
@@ -204,6 +204,30 @@ branch = "workflow/feature/release.1-0.identity-library-releases"
 dependencies = ["release.1-0.identity-libraries"]
 implementation_spec_sections = ["OIDC adoption", "SCIM adoption", "Release verification"]
 verification = ["owner license decision", "consumer adapter acceptance", "immutable library tags", "Forgejo/GitHub tag parity", "exact dependency pin"]
+
+[[features]]
+id = "release.1-0.extensions-foundation-adoption"
+root = "release.1-0"
+title = "Adopt and prove the gotth-extensions control foundation"
+state = "planned"
+path = "workflow/features/release.1-0/extensions-foundation-adoption"
+source_path = "."
+branch = "workflow/feature/release.1-0.extensions-foundation-adoption"
+dependencies = ["v0.foundation.plugin-runtime"]
+implementation_spec_sections = ["Extensions foundation adoption"]
+verification = ["immutable gotth-extensions pin", "manifest/grant/negotiation/lifecycle conformance", "authenticated handshake and health", "existing seam compatibility", "failure isolation", "go test ./...", "go test -race ./...", "git diff --check"]
+
+[[features]]
+id = "v3.ops-import-admin.extension-management-ui"
+root = "v3.ops-import-admin"
+title = "Host-owned Extensions setup and lifecycle administrator"
+state = "planned"
+path = "workflow/features/v3.ops-import-admin/extension-management-ui"
+source_path = "internal/httpui"
+branch = "workflow/feature/v3.ops-import-admin.extension-management-ui"
+dependencies = ["release.1-0.extensions-foundation-adoption", "v3.ops-import-admin.abuse-bulk-ui"]
+implementation_spec_sections = ["Extensions administrator"]
+verification = ["native server-rendered and ordinary HTML flows", "hostile metadata and secret redaction", "grant and transport binding", "setup/test/enable/disable ordering", "update privilege preview and rollback", "keyboard/mobile/theme accessibility", "cross-product isolation", "go test ./...", "go test -race ./...", "git diff --check"]
 
 [[features]]
 id = "release.1-0.beta-acceptance"
