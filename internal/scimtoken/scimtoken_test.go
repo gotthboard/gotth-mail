@@ -185,6 +185,16 @@ func TestSCIMTokenRejectsStalePlanKindConflictAndAuditFailure(t *testing.T) {
 		}
 	})
 
+	t.Run("invalid verifier", func(t *testing.T) {
+		db := tokenDB(t)
+		if _, err := db.Exec(`INSERT INTO tokens(id,subject_type,subject_id,kind,verifier,label,scope_json,created_at) VALUES ($1,'token','authentik-primary','scim_client','garbage','authentik-primary','[]',CURRENT_TIMESTAMP)`, identity.TokenStorageID("authentik-primary")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := (Service{DB: db}).Preview(context.Background(), "authentik-primary", firstSecret); err == nil || !strings.Contains(err.Error(), "verifier is invalid") {
+			t.Fatalf("invalid verifier err=%v", err)
+		}
+	})
+
 	t.Run("audit rollback", func(t *testing.T) {
 		db := tokenDB(t)
 		if _, err := db.Exec(`CREATE FUNCTION reject_scim_token_audit() RETURNS trigger AS $$ BEGIN IF NEW.action='scim.token.create' THEN RAISE EXCEPTION 'forced token audit failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql; CREATE TRIGGER reject_scim_token_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_scim_token_audit()`); err != nil {

@@ -239,8 +239,9 @@ Requirements:
 - SCIM provisioning can create, update, list, disable, and patch users through Authentik-compatible flows.
 - SCIM failure paths are tested.
 - SCIM client-token preview/apply rejects unsafe secret files, weak values,
-  stale plans, kind collisions, and audit failure; rotation preserves the
-  actor-derived provisioning scope and same-secret retry is a no-op.
+  stale plans, kind collisions, invalid stored verifiers, and audit failure;
+  rotation preserves the actor-derived provisioning scope and same-secret
+  retry is a no-op.
 - SCIM Groups can be created, read, listed, replaced, patched, and deleted with
   same-scope opaque User membership; missing/cross-scope/User-delete conflicts
   fail without partial mutation. Group existence alone grants no role.

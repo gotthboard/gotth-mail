@@ -324,8 +324,9 @@ starts a serializable transaction, locks the current row, rebuilds the plan,
 constant-time compares the digest, and then either performs no write for
 `unchanged` or upserts a fresh PBKDF2 verifier plus `scim.token.<operation>`
 audit event atomically. A row with the stable storage ID but a different kind
-or subject is a hard conflict. The audit carries no file path, digest,
-verifier, or secret.
+or subject is a hard conflict. A malformed existing PBKDF2 verifier fails
+closed instead of being silently treated as a rotation. The audit carries no
+file path, digest, verifier, or secret.
 
 Migration `0004_scim_resources` stores resources, ordered search indexes,
 immutable index contracts, permanent tombstones, and the mailbox-to-resource

@@ -166,7 +166,15 @@ func (s Service) Apply(ctx context.Context, actorID string, secret []byte, confi
 		now = s.Now().UTC()
 	}
 	if state.found {
-		_, err = tx.ExecContext(ctx, `UPDATE tokens SET verifier=$1, revoked_at=NULL WHERE id=$2 AND subject_type='token' AND subject_id=$3 AND kind='scim_client'`, verifier, identity.TokenStorageID(actorID), actorID)
+		var result sql.Result
+		result, err = tx.ExecContext(ctx, `UPDATE tokens SET verifier=$1, revoked_at=NULL WHERE id=$2 AND subject_type='token' AND subject_id=$3 AND kind='scim_client'`, verifier, identity.TokenStorageID(actorID), actorID)
+		if err == nil {
+			var affected int64
+			affected, err = result.RowsAffected()
+			if err == nil && affected != 1 {
+				err = fmt.Errorf("SCIM token update affected %d rows", affected)
+			}
+		}
 	} else {
 		_, err = tx.ExecContext(ctx, `INSERT INTO tokens(id, subject_type, subject_id, kind, verifier, label, scope_json, created_at, revoked_at) VALUES ($1,'token',$2,'scim_client',$3,$2,'[]',$4,NULL)`, identity.TokenStorageID(actorID), actorID, verifier, now)
 	}
@@ -220,6 +228,9 @@ func buildPlan(actorID string, secret []byte, state tokenState) (Plan, error) {
 	}
 	operation := "create"
 	if state.found {
+		if err := daemon.ValidateDjangoPBKDF2SHA256(state.verifier); err != nil {
+			return Plan{}, errors.New("stored SCIM token verifier is invalid")
+		}
 		if daemon.VerifyDjangoPBKDF2SHA256(state.verifier, string(secret)) == nil {
 			if state.revoked {
 				operation = "reactivate"

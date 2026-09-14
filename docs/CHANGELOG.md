@@ -21,9 +21,32 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 20:14 CDT — Harden SCIM token file ownership and CLI proof
+### 2026-09-13 20:16 CDT — Reject corrupt SCIM token state
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- SCIM token planner and failure-path tests
+- identity/provisioning PRD and implementation contract
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Cold review found that a malformed stored verifier was indistinguishable from
+a valid verifier that did not match the requested secret. That would let an
+operator rotation silently overwrite corrupt state. The planner now validates
+the stored PBKDF2 structure first and fails closed, and an update must report
+exactly one affected row before audit and commit.
+
+Verification:
+
+- focused coding-host tests and `git diff --check`: pass
+- real PostgreSQL and race rerun on the development host remains required
+
+### 2026-09-13 20:14 CDT — Harden SCIM token file ownership and CLI proof
+
+Commit: `f23c475`
 
 Affected files:
 
@@ -39,7 +62,9 @@ must now be owned by the command's effective user in addition to being regular,
 non-symlink, and inaccessible to group/world. Added an end-to-end CLI test that
 executes preview and apply through a real migrated PostgreSQL database, verifies
 that output contains neither secret nor path, and confirms verifier plus audit
-admission. Removed an unnecessary test-only hash operation.
+admission. Malformed stored verifiers now fail closed, and credential updates
+must report exactly one affected row. Removed an unnecessary test-only hash
+operation.
 
 Verification:
 
