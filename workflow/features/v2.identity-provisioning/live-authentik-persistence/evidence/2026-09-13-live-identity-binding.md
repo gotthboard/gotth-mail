@@ -1,6 +1,7 @@
 # GOTTH Mail live identity binding — 2026-09-13
 
-Status: local mechanism verified; live provider migration blocked.
+Status: local mechanism verified; superseded for live-provider status by
+[2026-09-13-live-authentik-profile.md](2026-09-13-live-authentik-profile.md).
 
 Product line: `1.0.0-alpha`.
 
@@ -96,12 +97,9 @@ Public discovery probes on 2026-09-13 returned:
 - historical `https://auth.dannyhunn.com/application/o/gophermailforge/`:
   HTTP 200 with the historical issuer.
 
-Therefore no live GOTTH Mail authorization-code, passkey, SCIM lifecycle, or
-deprovisioning proof is claimed. The provider/application/redirect/profile
-must be migrated to the GOTTH Mail namespace. That change requires either an
-admitted licensed `gotth-authentik` release or an explicitly reviewed manual
-desired-state operation. It also requires an interactive browser/passkey
-acceptance and installed SCIM credentials supplied out of band.
+This probe was accurate at the time. The later authorized additive profile
+migration is recorded in the superseding evidence file. This historical record
+must not be rewritten to imply the new issuer existed during the earlier test.
 
 No production deployment, release tag, GitHub mirror, or product-main merge
 was performed by this feature.

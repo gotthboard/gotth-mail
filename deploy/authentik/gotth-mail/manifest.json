@@ -1,0 +1,19 @@
+{
+  "slug": "gotth-mail",
+  "name": "GOTTH Mail",
+  "registration_title": "Register for GOTTH Mail",
+  "user_path": "users/gotth-mail",
+  "access_group": "gotth-mail-users",
+  "launch_url": "http://127.0.0.1:18080/",
+  "provider": {
+    "name": "gotth-mail-oidc",
+    "client_type": "confidential",
+    "client_id": "gotth-mail",
+    "redirect_uris": [
+      "http://127.0.0.1:18080/api/v1/oidc/callback"
+    ],
+    "authorization_flow": "default-provider-authorization-implicit-consent",
+    "invalidation_flow": "default-provider-invalidation-flow",
+    "signing_key": "authentik Self-signed Certificate"
+  }
+}

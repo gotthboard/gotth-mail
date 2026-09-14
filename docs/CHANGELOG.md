@@ -25,6 +25,21 @@ role. The current loopback callback remains a pre-production smoke target;
 public HTTPS callback, browser code redemption, SCIM lifecycle, restart,
 backup, restore, and final old-provider retirement remain blocked gates.
 
+### Verification
+
+- pinned local profile render/check and secret-field scan: pass
+- Authentik 2026.5.2 rollback-only importer transaction: pass
+- root-only PostgreSQL custom-format backup and `pg_restore --list`: pass
+- additive live import and idempotent re-import: pass
+- generated confidential client secret retained across re-import: pass
+- exact new issuer discovery, JWKS, authorization redirect/state, enrollment,
+  and end-session probes: pass
+- historical issuer remains HTTP 200 and live containers remain healthy
+- browser callback: blocked because no GOTTH Mail runtime is deployed at the
+  strict loopback callback
+- Authentik SCIM lifecycle: blocked because the live installation has no SCIM
+  provider and no deployed GOTTH Mail SCIM endpoint
+
 All meaningful repository changes must be recorded here in the same commit that makes the change.
 
 This changelog is operator-facing project history, not a replacement for workflow evidence. Entries must be verbose enough that a reviewer can understand what changed without reading the full diff first.
