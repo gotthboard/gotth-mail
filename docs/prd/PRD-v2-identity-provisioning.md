@@ -23,12 +23,31 @@ mail-client tokens handle IMAP/SMTP clients. These concepts must stay separate.
   API fits, its license permits use, its revision is pinned, and consumer
   evidence passes. Placeholder, unlicensed, unrelated, or mechanism-breaking
   components must not be imported for naming consistency.
-- `IDP-GOTTH-004`: `gotth-authentik` is MIT-licensed and is the candidate
-  desired-state/profile mechanism for the live provider proof. It must not be
-  imported until its exact consumer and release contracts are admitted, and
-  its use does not authorize a live issuer migration.
+- `IDP-GOTTH-004`: The exact MIT-licensed `gotth-authentik` revision recorded
+  in the adoption contract owns the secret-free OIDC application/provider,
+  verified-email enrollment flow, and application access-group desired state.
+  GOTTH Mail owns the manifest, rollout, rollback, secret transfer, runtime
+  configuration, membership decisions, SCIM provider, and product authority.
 - `IDP-GOTTH-005`: The component allocation and exact inspected revisions are
   maintained in [the GOTTH adoption contract](../reference/gotth-stack-adoption.md).
+- `IDP-GOTTH-006`: The canonical Authentik application slug, provider name,
+  client ID, access group, and issuer are respectively `gotth-mail`,
+  `gotth-mail-oidc`, `gotth-mail`, `gotth-mail-users`, and
+  `https://auth.dannyhunn.com/application/o/gotth-mail/`.
+- `IDP-GOTTH-007`: The desired-state manifest and rendered blueprint contain
+  no client secret, bearer token, password, cookie, or private key. Authentik
+  generates the confidential client secret and operators transfer it only
+  through a root-readable runtime secret file.
+- `IDP-GOTTH-008`: Migration is staged beside the historical
+  `gophermailforge` provider. The old provider remains available until the new
+  browser, provisioning, disable/deprovision, restart, backup, restore, and
+  rollback proofs pass; a 200 discovery response alone is not completion.
+- `IDP-GOTTH-009`: `gotth-mail-users` is only an Authentik application-access
+  gate. Membership grants no GOTTH Mail role and is not a substitute for the
+  durable SCIM Group-to-role projection.
+- `IDP-GOTTH-010`: The current strict loopback callback is a bounded
+  pre-production smoke target. Beta and stable require the deployed public
+  HTTPS callback derived from the exact GOTTH Mail public URL.
 
 ## Scope
 
@@ -81,6 +100,9 @@ Requirements:
 - ID-token `groups` claims are not role authority. `gotth-oidc` deliberately
   excludes authorization-shaped claims; roles come only from durable role
   bindings populated by the admitted provisioning/profile path.
+- The Authentik application access group controls only whether a user may
+  enter the OIDC application. It cannot create `global_admin`,
+  `domain_manager`, or `scoped_domain_access` authority.
 
 ### Permission simulator full coverage
 
@@ -181,6 +203,13 @@ Requirements:
 
 - OIDC login works with authorization-code state validation, nonce validation, exact redirect URI validation, and strict token validation.
 - Malformed/unverifiable OIDC tokens and invalid callback state/nonce values are rejected.
+- The canonical `gotth-authentik` manifest renders deterministically at its
+  pinned revision, contains no secret material, imports idempotently into
+  Authentik 2026.5.2, preserves the generated client secret on re-import, and
+  produces the exact `gotth-mail` issuer.
+- Staged migration preserves the historical provider and a tested rollback
+  snapshot until the complete new lifecycle passes. Discovery/authorize/JWKS
+  smoke does not satisfy the browser callback or SCIM acceptance gates.
 - Authentik group/role mappings assign global admin, domain manager, and scoped domain access.
 - Permission simulator explains allow/deny results for identity-backed actors.
 - SCIM provisioning can create, update, list, disable, and patch users through Authentik-compatible flows.

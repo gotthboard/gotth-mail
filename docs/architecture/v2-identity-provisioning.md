@@ -76,6 +76,29 @@ OIDC creates web sessions only. It does not authenticate IMAP/SMTP clients.
 
 Authentik is required and adjacent. It is not embedded.
 
+The pinned `gotth-authentik` renderer is a build-time desired-state tool, not
+a runtime dependency and not a remote-control client. GOTTH Mail owns a small
+JSON manifest and the byte-for-byte rendered blueprint. The manifest fixes the
+application slug `gotth-mail`, provider `gotth-mail-oidc`, client ID
+`gotth-mail`, access group `gotth-mail-users`, and strict callback. The
+blueprint contains no client secret; Authentik generates and retains that
+secret, and the deployment supplies it to GOTTH Mail from a root-readable
+file.
+
+Migration is additive first. The new provider/application/profile is imported
+alongside the historical `gophermailforge` objects and the old provider stays
+recoverable while the new path is tested. The initial loopback callback is
+only a local authorization-code smoke boundary. A deployed public instance
+must replace it with one exact HTTPS callback before beta. The old objects may
+be retired only after browser, SCIM, deprovision, restart, backup, restore, and
+rollback evidence exists.
+
+`gotth-mail-users` is an application admission gate only. It does not project
+product roles, is not read from the ID token, and cannot bypass the durable
+SCIM-to-role mapping. The current `gotth-authentik` contract does not create an
+Authentik SCIM provider; that remains a separate GOTTH Mail-owned live profile
+and evidence gate.
+
 Required mappings:
 
 - global admins
@@ -202,9 +225,11 @@ an authenticated subject to another mailbox is not a rename.
 The authoritative allocation, exact inspected revisions, legal gates, and
 non-adoption reasons live in
 [the GOTTH component adoption contract](../reference/gotth-stack-adoption.md).
-`gotth-authentik` is MIT-licensed and intended for live desired state only
-after its consumer/release contract and separate live-migration authority are
-admitted. `gotth-pg-migrate`, `gotth-release`, and `gotth-infrastructure` are
+`gotth-authentik` is MIT-licensed and admitted at the exact revision in the
+adoption contract for secret-free OIDC/enrollment desired state only. Its
+remote application, rollback, runtime secret handling, access membership, and
+SCIM provider remain consumer/operator responsibilities. `gotth-pg-migrate`,
+`gotth-release`, and `gotth-infrastructure` are
 also MIT-licensed but still require separate compatibility work. `gotth-jobs`
 is not placed in the synchronous login or canonical provisioning transaction.
 

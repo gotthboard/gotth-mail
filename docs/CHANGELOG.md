@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-13 — Admit the GOTTH Authentik profile boundary
+
+### Scope
+
+- 1.0-alpha identity/provisioning PRD, architecture, implementation contract,
+  feature plan, component adoption record, and live evidence
+- canonical secret-free GOTTH Mail Authentik manifest and generated blueprint
+- additive live issuer migration with preserved historical rollback
+
+### Decision
+
+Admitted MIT-licensed `gotth-authentik` revision
+`77c811c18fe3c107f6f3e97ce3f9a3850a685300` as the build-time renderer for
+the GOTTH Mail OIDC provider/application, verified-email enrollment, and
+application access group. The component is not a runtime dependency or remote
+controller. GOTTH Mail retains live apply/rollback, generated-secret transfer,
+membership, SCIM provider, and product authorization ownership.
+
+The migration is additive: `gotth-mail` is created beside
+`gophermailforge`, whose objects and database snapshot remain the rollback
+path. `gotth-mail-users` gates application entry only and grants no product
+role. The current loopback callback remains a pre-production smoke target;
+public HTTPS callback, browser code redemption, SCIM lifecycle, restart,
+backup, restore, and final old-provider retirement remain blocked gates.
+
 All meaningful repository changes must be recorded here in the same commit that makes the change.
 
 This changelog is operator-facing project history, not a replacement for workflow evidence. Entries must be verbose enough that a reviewer can understand what changed without reading the full diff first.

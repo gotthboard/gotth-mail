@@ -12,7 +12,7 @@ is admitted.
 | --- | --- | --- |
 | `gotth-oidc` | `1ae119e52f8efc3392fcc9fa716b1b27c9ffce6c` | Adopted on the 1.0-alpha development line for discovery, Authorization Code, S256 PKCE, protected attempt material, callback parsing, code exchange, and ID-token validation. GOTTH Mail owns durable one-time attempt consumption, browser binding, identity records, application sessions, cookies, and authorization. |
 | `gotth-scim` | `255629e27f7df301d263a116fb37fd315ff54693` | Adopted on the 1.0-alpha development line for SCIM parsing, RFC behavior, opaque IDs, transactions, ETags, PATCH/search/Bulk, tombstones, reconciliation, and write-only password delegation. GOTTH Mail owns bearer authentication, provisioning scopes, PostgreSQL storage, mailbox/password/audit projection, session invalidation, and product policy. |
-| `gotth-authentik` | `77c811c18fe3c107f6f3e97ce3f9a3850a685300` | MIT licensing is admitted. The library remains a candidate for the live Authentik desired-state/profile proof only after its exact consumer and release contracts are reviewed; licensing does not authorize the live issuer migration or make the component a dependency. |
+| `gotth-authentik` | `77c811c18fe3c107f6f3e97ce3f9a3850a685300` | Adopted as a pinned build-time renderer for the secret-free OIDC application/provider, verified-email enrollment, and application-access-group blueprint. GOTTH Mail owns its manifest, live apply/rollback, generated-secret transfer, group membership, SCIM provider, runtime configuration, and all product authority. It is not a runtime dependency or generic Authentik controller. |
 | `gotth-pg-migrate` | `bafb20b5aee66222fb7dd0d6abe7ee970cdb7878` | MIT licensing is admitted. A migration-engine cutover still requires separate review because its six-digit immutable-file ledger is incompatible with GOTTH Mail's existing table-name baseline ledger. It is not mixed into the identity slices. |
 | `gotth-release` | `43e64e693a6fa3d0c1b045d6730fefa1ca767998` | MIT licensing is admitted. Use still requires a product-specific archive manifest and compatibility evidence; the component does not belong in runtime identity code. |
 | `gotth-infrastructure` | `9abafdb2cf6c93f1cd823e91b0e66ca84555664a` | MIT licensing is admitted. Its one-container desired-state contract does not model the complete Postfix/Dovecot/Rspamd/Authentik stack, so product deployment orchestration remains GOTTH Mail-owned and any narrower adoption needs separate proof. |
@@ -42,11 +42,11 @@ is admitted.
    to roles only after the exact stable Authentik Group-to-product-role mapping
    is specified and proven. OIDC authorization-shaped claims are never trusted
    merely because a provider placed them in an ID token.
-6. Review `gotth-authentik` at its MIT-admitted revision for the real
-   provider/application/enrollment profile. Adopt it only after its consumer
-   and release gates are satisfied and Danny separately authorizes the live
-   issuer migration, then run live login, provision, role, disable,
-   deprovision, restart, backup, and restore proofs.
+6. Render and verify the canonical GOTTH Mail provider/application/enrollment
+   profile with the pinned `gotth-authentik` revision. Apply it additively
+   beside the historical provider under Danny's authorized migration, retain
+   rollback, and then run live login, provision, role, disable, deprovision,
+   restart, backup, and restore proofs before retiring the old namespace.
 
 ## OIDC runtime configuration
 
@@ -140,11 +140,11 @@ requires exact subject and verified-email continuity, persists the resulting
 identity/mailbox relation, and foreign-keys sessions to it. It does not parse
 an Authentik-specific groups claim behind `gotth-oidc`'s back.
 
-`gotth-authentik` remains unimported in this slice. Its MIT-admitted source is
-a candidate for desired-state application/provider/group management, but it
-has no admitted consumer contract or release. Importing it merely to increase
-the `gotth-*` count would violate the same component contract this document is
-meant to enforce.
+`gotth-authentik` is admitted only as the pinned build-time renderer for the
+canonical secret-free OIDC/enrollment profile. It does not enter GOTTH Mail's
+runtime graph, apply its own output remotely, distribute the generated client
+secret, configure SCIM, or grant product roles. Those boundaries remain
+explicitly owned by GOTTH Mail and the operator.
 
 ## Live Authentik rename status
 
@@ -163,6 +163,11 @@ or through an explicitly reviewed manual provider migration. MIT selection
 does not authorize either live path. Pointing the new product silently at the
 old issuer would preserve stale identity namespaces and is not an acceptable
 completion claim.
+
+The authorized migration is staged rather than destructive: the new issuer is
+created beside the historical provider and the old namespace remains the
+rollback path until complete lifecycle evidence passes. The loopback callback
+remains a pre-production smoke target; it is not a stable deployment claim.
 
 The present Dovecot verifier projection is deliberately bounded to eight
 active app passwords per mailbox. That retains opaque random one-time secrets
