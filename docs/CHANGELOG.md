@@ -21,9 +21,37 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 20:20 CDT — Extend SCIM token negative coverage
+### 2026-09-13 20:23 CDT — Record SCIM token bootstrap verification
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- SCIM token bootstrap evidence
+- identity coverage map
+- workflow event ledger
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Recorded the verified operator credential boundary and reconciled the stale
+coverage row that still claimed the new live OIDC issuer returned 404. The
+evidence names the exact PostgreSQL, race, full-tree, build, module, profile,
+shell, negative-path, and coverage results and keeps the missing deployment and
+live SCIM provider explicit.
+
+Verification:
+
+- development-host focused PostgreSQL and race suites: pass
+- development-host full tests and full race tests: pass
+- vet, all command builds, module verification, pinned Authentik profile,
+  shell syntax, clean-tree, and diff checks: pass
+- `internal/scimtoken` coverage: 89.7%, with non-injected defensive system
+  error branches documented rather than hidden
+
+### 2026-09-13 20:20 CDT — Extend SCIM token negative coverage
+
+Commit: `7fb2a03`
 
 Affected files:
 
