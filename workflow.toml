@@ -89,7 +89,7 @@ source_path = "."
 branch = "workflow/root/v4.webmail"
 worktree = "/tank/development/linus/gotth-mail-worktrees/v4.webmail"
 dependencies = ["v3.ops-import-admin"]
-required_verification = ["git diff --check", "go test ./...", "IMAP/SMTP/MIME/XSS webmail tests"]
+required_verification = ["git diff --check", "go test ./...", "IMAP/SMTP/MIME/XSS webmail tests", "classic three-pane responsive accessibility browser tests"]
 
 [[root_features]]
 id = "v5.notifications"
@@ -460,14 +460,14 @@ verification = ["external webmail continuity", "IMAP pagination/windowing tests"
 [[features]]
 id = "v4.webmail.search-security-ux"
 root = "v4.webmail"
-title = "Webmail search, MIME/HTML security, attachments, mobile/basic UX"
+title = "Webmail search, MIME/HTML security, attachments, and classic responsive UX"
 state = "in_progress"
 path = "workflow/features/v4.webmail/search-security-ux"
 source_path = "internal/webmail"
 branch = "workflow/feature/v4.webmail.search-security-ux"
 dependencies = ["v4.webmail.provider-imap-compose"]
 implementation_spec_sections = ["Search and UX", "MIME and HTML security", "Control-plane boundary"]
-verification = ["current-folder IMAP SEARCH tests", "CSP/XSS tests", "remote image policy tests", "attachment safety tests", "control-plane action no-bypass tests", "go test ./...", "git diff --check"]
+verification = ["current-folder IMAP SEARCH tests", "CSP/XSS tests", "remote image policy tests", "attachment safety tests", "classic three-pane and command-bar browser tests", "keyboard/context-menu parity tests", "responsive reflow and theme contrast tests", "asset provenance checks", "control-plane action no-bypass tests", "go test ./...", "git diff --check"]
 
 [[features]]
 id = "v2.identity-provisioning.live-authentik-persistence"
@@ -527,7 +527,7 @@ source_path = "internal/webmail"
 branch = "workflow/feature/v4.webmail.production-webmail"
 dependencies = ["v4.webmail.provider-imap-compose", "v4.webmail.search-security-ux"]
 implementation_spec_sections = ["IMAP client", "Compose/send", "MIME and HTML security", "Search and UX"]
-verification = ["live Dovecot IMAP smoke", "live Postfix SMTP submission smoke", "OpenPGP/MIME crypto verification matrix", "raw MIME parser hostile corpus", "browser UI/CSP smoke", "go test ./...", "git diff --check"]
+verification = ["live Dovecot IMAP smoke", "live Postfix SMTP submission smoke", "OpenPGP/MIME crypto verification matrix", "raw MIME parser hostile corpus", "classic three-pane responsive browser UI/CSP smoke", "keyboard and accessibility interaction checks", "go test ./...", "git diff --check"]
 
 [[features]]
 id = "v5.notifications.telegram-plugin-alerts"

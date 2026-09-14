@@ -75,12 +75,48 @@ Web session identity may authorize webmail access, but SMTP submission must use 
 
 Minimum v4 search scope is current-folder IMAP SEARCH with pagination/windowing and documented result limits. Any broader mailbox-wide index/search requires an amended v4 cutline and storage/security review before implementation.
 
-Features:
+The UI implements the
+[GOTTH Mail classic interface language](../reference/classic-interface-language.md)
+with server-rendered Go templates, project-owned Tailwind tokens, and HTMX or
+bounded progressive enhancement. Outlook Classic is a workflow reference, not
+an asset or branding source.
+
+Desktop layout contract:
+
+- left navigation pane: accounts, favorites, folders, and unread counts
+- center pane: compact sortable message rows with sender, subject preview,
+  received time, flags, and attachment state
+- reading pane: right, below, or hidden, with dimensions resizable within
+  accessible minimums
+- traditional command bar: new, reply, reply all, forward, delete, move,
+  mark, rules, and search as applicable to current state
+
+Interaction contract:
 
 - identities/signatures
 - sieve/rules UI if supported by Dovecot/config
-- mobile layout
-- keyboard-safe basic workflows
+- semantic list/table and command markup with visible focus
+- arrow-key navigation, selection, activation, and documented shortcuts
+- context menus only as accelerators; every action also has a visible and
+  keyboard-accessible path
+- sort state announced semantically and never conveyed by color/icon alone
+- light and dark restrained blue/gray themes with equivalent contrast and
+  state meaning
+- original GOTTH or appropriately licensed icons with accessible names
+
+At narrow widths, CSS and server/HTMX navigation collapse the three-pane view
+into accounts/folders, message list, then reader or composer. Back navigation
+retains the previous folder and safe list window. No mobile workflow depends
+on hover, a secondary mouse button, or a squeezed desktop table.
+
+The admin GUI reuses applicable tokens, navigation, table, command, focus, and
+status patterns. Administrative actions remain visually explicit and continue
+through core service/auth/audit paths. Shared CSS or templates must not combine
+the webmail session model with control-plane authority.
+
+Do not include Microsoft trademarks, logos, copyrighted icons, product
+artwork, proprietary strings, or exact branding. Similarity is limited to the
+general three-pane workflow and information density.
 
 ## MIME and HTML security
 
@@ -126,7 +162,17 @@ Required tests:
 - remote image policy tests
 - MIME edge-case tests
 - attachment safety tests
-- mobile/basic workflow smoke tests
+- desktop browser checks for three panes, dense rows, command availability,
+  sortable columns, reading-pane right/below/off placement, and bounded pane
+  resizing
+- keyboard checks for focus order, navigation, selection, activation,
+  shortcuts, command parity, and context-menu alternatives
+- responsive browser checks for folder -> list -> reader/composer drill-down,
+  back-state preservation, touch target size, zoom, and text reflow
+- light/dark theme checks for contrast and non-color focus, selection, unread,
+  flag, attachment, success, warning, and error cues
+- asset provenance check proving shipped icons and artwork are original or
+  appropriately licensed and contain no Microsoft branding
 - webmail control-plane actions route through core service/auth/audit paths without bypass
 - `git diff --check`
 - `go test ./...`

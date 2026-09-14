@@ -45,13 +45,37 @@ Features:
 
 ## Mail UX architecture
 
-Features:
+The presentation follows the
+[GOTTH Mail classic interface language](../reference/classic-interface-language.md).
+It borrows the familiar workflow density of Outlook Classic without copying
+Microsoft branding or assets.
+
+The desktop composition has three regions: account/folder navigation, a dense
+sortable message list, and a configurable reading pane. The reading pane can
+be placed to the right, placed below, or hidden, and pane dimensions can be
+resized within accessible minimums. A traditional command bar exposes primary
+mail actions without hiding required operations behind a context menu.
+
+Features and interaction requirements:
 
 - search across supported mailbox scope
 - identities/signatures
 - sieve/rules UI if supported
-- mobile layout
-- keyboard-safe basic workflows
+- semantic keyboard navigation and documented shortcuts
+- context menus with equivalent visible and keyboard-accessible commands
+- light and dark GOTTH blue/gray themes with original or appropriately
+  licensed icons
+- deterministic mobile drill-down from folders to list to reader/composer
+
+The administration GUI shares design tokens and applicable navigation,
+command, and table patterns so the product feels coherent. It remains a
+separate control surface, and presentation reuse grants webmail no additional
+authority.
+
+Go templates render the authoritative page structure. Tailwind supplies the
+project-owned visual tokens, and HTMX or bounded progressive enhancement may
+update panes and commands. The architecture does not introduce a client-side
+SPA state authority.
 
 ## Security architecture
 
@@ -63,6 +87,9 @@ Required hardening:
 - Content Security Policy
 - no unsafe HTML bypass
 - attachment handling rules
+- keyboard focus, reflow, contrast, reduced-motion, and non-color state cues
+- original GOTTH presentation with no copied Microsoft trademarks, logos,
+  copyrighted icons, product artwork, or exact branding
 
 HTML email is hostile input. Treat it as data, not UI code.
 
@@ -83,7 +110,13 @@ HTML email is hostile input. Treat it as data, not UI code.
 - HTML rendering is XSS-hardened with CSP and no unsafe bypass
 - remote image policy enforced
 - attachments handled safely
-- mobile/basic workflows usable
+- three-pane desktop layout, command bar, reading-pane placement, resizing,
+  sorting, keyboard, and context-menu behavior pass interaction tests
+- mobile drill-down, focus preservation, zoom/reflow, and light/dark contrast
+  pass accessibility-oriented browser checks
+- every context-menu action has an equivalent visible and keyboard-accessible
+  path
+- only original or appropriately licensed presentation assets ship
 - webmail control-plane actions route through core service/auth/audit paths without bypass
 
 ## Mandatory OpenPGP signing

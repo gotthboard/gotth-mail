@@ -38,8 +38,19 @@ Custom webmail must not block the control-plane product.
 - Search.
 - Identities/signatures.
 - Sieve/rules UI if supported.
-- Mobile layout.
-- Keyboard-safe basic workflows.
+- An Outlook Classic-inspired but distinctly GOTTH Mail visual language, as
+  defined by the
+  [classic interface contract](../reference/classic-interface-language.md).
+- Desktop-first three-pane navigation, dense message list, and configurable
+  reading pane with a traditional command bar.
+- Resizable panes, sortable columns, keyboard navigation, and context menus
+  with equivalent visible and keyboard-accessible commands.
+- Responsive mobile drill-down from folders to message list to reader or
+  composer rather than a squeezed desktop layout.
+- Restrained blue/gray light and dark themes using original or appropriately
+  licensed assets.
+- A shared visual language with the administration GUI without merging
+  webmail and control-plane authority.
 
 ### v4.5 Security hardening
 
@@ -67,7 +78,17 @@ Custom webmail must not block the control-plane product.
 - HTML email rendering is XSS-hardened with CSP and no unsafe HTML bypass.
 - Remote image policy is enforced.
 - Attachments are handled safely.
-- Mobile/basic workflows are usable.
+- At desktop widths the primary workflow presents folder navigation, a dense
+  sortable message list, and a reading pane that can be right, below, or off.
+- The command bar, pane resizing, keyboard navigation, and context-menu
+  accelerators remain accessible and have non-context-menu equivalents.
+- Narrow layouts collapse predictably into folder, list, and reader/composer
+  views while preserving safe navigation state.
+- Light and dark themes preserve contrast, focus, selection, unread, flag,
+  attachment, and error meaning without relying on color alone.
+- The interface uses GOTTH Mail branding and original or appropriately
+  licensed assets; it does not copy Microsoft trademarks, copyrighted icons,
+  product artwork, or exact branding.
 - Webmail UI does not bypass core authorization/audit paths for control-plane actions.
 
 ## Mandatory OpenPGP signing

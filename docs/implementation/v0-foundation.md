@@ -317,6 +317,13 @@ No plugin may be loaded in-process.
 
 ## GOTTH shell
 
+The shell uses the shared
+[GOTTH Mail classic interface language](../reference/classic-interface-language.md)
+for applicable typography, spacing, blue/gray light and dark tokens, original
+icons, navigation, command, focus, status, and table patterns. It remains
+visually explicit when an action mutates server or organization state, and
+shared presentation never grants the webmail surface control-plane authority.
+
 Minimum pages:
 
 - login/session shell

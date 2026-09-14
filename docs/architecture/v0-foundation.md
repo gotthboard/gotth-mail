@@ -168,6 +168,13 @@ v0 UI includes only the shell:
 - read-only config/status views
 - Authentik/bootstrap status page
 
+The administration shell shares applicable GOTTH Mail typography, spacing,
+blue/gray theme tokens, original icons, navigation, command, focus, and table
+patterns with the
+[classic webmail interface language](../reference/classic-interface-language.md).
+That visual consistency does not merge its control-plane authority with the
+webmail client.
+
 All mutations route through service/auth/audit layers.
 
 ## Verification gates

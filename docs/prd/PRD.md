@@ -98,7 +98,7 @@ Build operational maturity: audit UI, backup/restore verification, snapshot/roll
 
 ### Custom Webmail (`v4.webmail` historical ID)
 
-Only after the control plane is solid and the v4 cutline is explicitly accepted, build custom GOTTH webmail: IMAP core, MIME-safe message rendering, compose/send, attachments, drafts, search, identities/signatures, sieve/rules, mobile UI, and XSS hardening.
+Only after the control plane is solid and the v4 cutline is explicitly accepted, build custom GOTTH webmail: IMAP core, MIME-safe message rendering, compose/send, attachments, drafts, search, identities/signatures, sieve/rules, XSS hardening, and the responsive Outlook Classic-inspired but distinctly GOTTH three-pane interface defined by the [classic interface language](../reference/classic-interface-language.md).
 
 ### Notifications (`v5.notifications` historical ID)
 
