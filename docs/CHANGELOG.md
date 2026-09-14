@@ -35,6 +35,8 @@ backup, restore, and final old-provider retirement remain blocked gates.
 - exact new issuer discovery, JWKS, authorization redirect/state, enrollment,
   and end-session probes: pass
 - historical issuer remains HTTP 200 and live containers remain healthy
+- development-host full tests, race tests, vet, all three command builds,
+  module verification, shell syntax, clean-tree, and diff checks: pass
 - browser callback: blocked because no GOTTH Mail runtime is deployed at the
   strict loopback callback
 - Authentik SCIM lifecycle: blocked because the live installation has no SCIM

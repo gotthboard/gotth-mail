@@ -73,6 +73,17 @@ deleted, disabled, or rebound.
 - access group: one explicitly reviewed active member (`Dan`)
 - Authentik SCIM provider count: zero
 
+The isolated development-host worktree at reviewed head `c783440` passed:
+
+- `go test -count=1 ./...`;
+- `go test -count=1 -race ./...`;
+- `go vet ./...`;
+- builds for `gotth-mail`, `gotth-mailctl`, and `gotth-mail-plugin`;
+- `go mod verify`;
+- pinned profile render/check and secret-field scan;
+- shell syntax checks for every repository script;
+- clean-tree and `git diff --check` gates.
+
 ## Honest remaining gates
 
 This is not a completed authorization-code login. No GOTTH Mail runtime is

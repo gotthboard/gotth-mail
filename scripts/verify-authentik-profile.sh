@@ -12,8 +12,7 @@ if [ "$actual_revision" != "$expected_revision" ]; then
 	echo "gotth-authentik revision mismatch: $actual_revision" >&2
 	exit 1
 fi
-if ! git -C "$renderer_dir" diff --quiet -- . ||
-	! git -C "$renderer_dir" diff --cached --quiet -- .; then
+if [ -n "$(git -C "$renderer_dir" status --porcelain --untracked-files=all)" ]; then
 	echo "gotth-authentik checkout is dirty" >&2
 	exit 1
 fi
