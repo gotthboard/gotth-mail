@@ -12,12 +12,12 @@ is admitted.
 | --- | --- | --- |
 | `gotth-oidc` | `1ae119e52f8efc3392fcc9fa716b1b27c9ffce6c` | Adopted on the 1.0-alpha development line for discovery, Authorization Code, S256 PKCE, protected attempt material, callback parsing, code exchange, and ID-token validation. GOTTH Mail owns durable one-time attempt consumption, browser binding, identity records, application sessions, cookies, and authorization. |
 | `gotth-scim` | `255629e27f7df301d263a116fb37fd315ff54693` | Adopted on the 1.0-alpha development line for SCIM parsing, RFC behavior, opaque IDs, transactions, ETags, PATCH/search/Bulk, tombstones, reconciliation, and write-only password delegation. GOTTH Mail owns bearer authentication, provisioning scopes, PostgreSQL storage, mailbox/password/audit projection, session invalidation, and product policy. |
-| `gotth-authentik` | `0587d298d317247cd5c86a4beff23c705da395e0` | Intended for the live Authentik desired-state/profile proof after its license is selected and its consumer contract is admitted. It is not imported or copied while unlicensed. |
-| `gotth-pg-migrate` | `6a513260994ab01ad525f7ab8909f8fa65cebe41` | Candidate for a separately reviewed migration-engine cutover. It is not mixed into the identity slices: it is currently unlicensed and its six-digit immutable-file ledger is incompatible with GOTTH Mail's existing table-name baseline ledger. |
-| `gotth-release` | `2d918925dfd8550cb0a58f4569561d624addd5d2` | Intended for deterministic 1.0 alpha/beta/stable artifacts after licensing and a product-specific archive manifest are admitted. It does not belong in runtime identity code. |
-| `gotth-infrastructure` | `785ca581417c8cbaea4594d4e2b0be01828a94be` | Candidate for the control-plane container's desired-state and inspect proof after licensing. Its one-container contract does not model the complete Postfix/Dovecot/Rspamd/Authenik stack, so product deployment orchestration remains GOTTH Mail-owned. |
+| `gotth-authentik` | `77c811c18fe3c107f6f3e97ce3f9a3850a685300` | MIT licensing is admitted. The library remains a candidate for the live Authentik desired-state/profile proof only after its exact consumer and release contracts are reviewed; licensing does not authorize the live issuer migration or make the component a dependency. |
+| `gotth-pg-migrate` | `bafb20b5aee66222fb7dd0d6abe7ee970cdb7878` | MIT licensing is admitted. A migration-engine cutover still requires separate review because its six-digit immutable-file ledger is incompatible with GOTTH Mail's existing table-name baseline ledger. It is not mixed into the identity slices. |
+| `gotth-release` | `43e64e693a6fa3d0c1b045d6730fefa1ca767998` | MIT licensing is admitted. Use still requires a product-specific archive manifest and compatibility evidence; the component does not belong in runtime identity code. |
+| `gotth-infrastructure` | `9abafdb2cf6c93f1cd823e91b0e66ca84555664a` | MIT licensing is admitted. Its one-container desired-state contract does not model the complete Postfix/Dovecot/Rspamd/Authentik stack, so product deployment orchestration remains GOTTH Mail-owned and any narrower adoption needs separate proof. |
 | `gotth-jobs` | `1c7b229f24e61a65c477408282aed74602dd3cab` | Available for later durable asynchronous work with at-least-once semantics. It is deliberately excluded from login and canonical SCIM mutation because those paths require synchronous, fail-closed acceptance rather than eventual projection. |
-| reserved `gotth-*` repositories | current public `main` | Do not import placeholders or unrelated product components. A component becomes eligible only when it has a real API, an applicable mechanism, an acceptable license, exact version provenance, and consumer evidence. |
+| reserved `gotth-*` repositories | current public `main` | Danny selected MIT for all owner-authored GOTTH repositories on 2026-09-13. That clears only the legal selection gate. Do not import placeholders or unrelated product components; eligibility still requires a real API, an applicable mechanism, exact version provenance, and consumer evidence. Third-party dependencies and assets retain their own licenses. |
 
 ## Immediate identity sequence
 
@@ -42,9 +42,11 @@ is admitted.
    to roles only after the exact stable Authentik Group-to-product-role mapping
    is specified and proven. OIDC authorization-shaped claims are never trusted
    merely because a provider placed them in an ID token.
-6. Use `gotth-authentik` for the real provider/application/enrollment profile
-   only after its legal and release gates are satisfied, then run live login,
-   provision, role, disable, deprovision, restart, backup, and restore proofs.
+6. Review `gotth-authentik` at its MIT-admitted revision for the real
+   provider/application/enrollment profile. Adopt it only after its consumer
+   and release gates are satisfied and Danny separately authorizes the live
+   issuer migration, then run live login, provision, role, disable,
+   deprovision, restart, backup, and restore proofs.
 
 ## OIDC runtime configuration
 
@@ -138,9 +140,9 @@ requires exact subject and verified-email continuity, persists the resulting
 identity/mailbox relation, and foreign-keys sessions to it. It does not parse
 an Authentik-specific groups claim behind `gotth-oidc`'s back.
 
-`gotth-authentik` remains unimported in this slice. Its inspected source is a
-candidate for desired-state application/provider/group management, but it has
-no admitted license or release. Copying it or importing it merely to increase
+`gotth-authentik` remains unimported in this slice. Its MIT-admitted source is
+a candidate for desired-state application/provider/group management, but it
+has no admitted consumer contract or release. Importing it merely to increase
 the `gotth-*` count would violate the same component contract this document is
 meant to enforce.
 
@@ -156,10 +158,11 @@ The public provider probe on 2026-09-13 found:
 The local consumer mechanism is therefore admissible, but the live provider is
 not renamed and no live `gotth-mail` authorization-code, provisioning, or
 deprovisioning proof exists yet. The fix belongs in the Authentik desired-state
-profile after `gotth-authentik` has an owner-selected license and admitted
-release, or through an explicitly reviewed manual provider migration. Pointing
-the new product silently at the old issuer would preserve stale identity
-namespaces and is not an acceptable completion claim.
+profile after `gotth-authentik` has an admitted consumer contract and release,
+or through an explicitly reviewed manual provider migration. MIT selection
+does not authorize either live path. Pointing the new product silently at the
+old issuer would preserve stale identity namespaces and is not an acceptable
+completion claim.
 
 The present Dovecot verifier projection is deliberately bounded to eight
 active app passwords per mailbox. That retains opaque random one-time secrets

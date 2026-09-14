@@ -21,6 +21,37 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-13 19:18 CDT — Reconcile the GOTTH-wide MIT decision
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- GOTTH component adoption contract
+- identity/provisioning PRD and architecture
+- live Authentik feature contract
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Danny selected MIT for all owner-authored GOTTH repositories. The adoption
+record now pins the newly admitted `gotth-authentik`, `gotth-pg-migrate`,
+`gotth-release`, and `gotth-infrastructure` revisions and removes stale
+current-state licensing blockers. Licensing is not dependency admission:
+components still require applicable mechanisms, exact consumer evidence, and
+release review. Third-party dependencies and assets retain their own licenses.
+
+The live Authentik issuer migration remains separately gated. This
+documentation change grants no live-mutation authority and changes no runtime,
+tag, release, deployment, or product-main state.
+
+Verification:
+
+- all seventeen Forgejo and GitHub `main` refs match exactly
+- all seventeen canonical repositories expose a standard MIT `LICENSE`
+- current-state identity and component-allocation statements agree
+- `git diff --check`
+
 ### 2026-09-13 19:06 CDT — Specify the GOTTH Mail classic interface language
 
 Commit: current commit; hash assigned by Git after commit

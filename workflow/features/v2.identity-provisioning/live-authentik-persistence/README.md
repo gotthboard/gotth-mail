@@ -9,9 +9,9 @@ sessions atomically with audit, revokes those sessions during SCIM
 deprovisioning, and admits same-mailbox app-password self-service with CSRF.
 
 It must fail closed on missing, ambiguous, disabled, email-mismatched, or
-reassigned identity state. It must not trust ID-token group claims, fabricate
-`gotth-authentik` licensing, revive a revoked session, or treat OIDC cookies as
-mail credentials.
+reassigned identity state. It must not trust ID-token group claims, mistake
+`gotth-authentik` licensing for consumer or live-migration admission, revive a
+revoked session, or treat OIDC cookies as mail credentials.
 
 Live provider/browser, installed Authentik SCIM lifecycle, Dovecot client,
 restart, backup, and restore proof remain separate evidence gates after the

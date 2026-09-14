@@ -23,9 +23,10 @@ mail-client tokens handle IMAP/SMTP clients. These concepts must stay separate.
   API fits, its license permits use, its revision is pinned, and consumer
   evidence passes. Placeholder, unlicensed, unrelated, or mechanism-breaking
   components must not be imported for naming consistency.
-- `IDP-GOTTH-004`: `gotth-authentik` is the desired-state/profile mechanism for
-  the live provider proof once its license and release gate are admitted. Until
-  then, its source must not be copied or imported.
+- `IDP-GOTTH-004`: `gotth-authentik` is MIT-licensed and is the candidate
+  desired-state/profile mechanism for the live provider proof. It must not be
+  imported until its exact consumer and release contracts are admitted, and
+  its use does not authorize a live issuer migration.
 - `IDP-GOTTH-005`: The component allocation and exact inspected revisions are
   maintained in [the GOTTH adoption contract](../reference/gotth-stack-adoption.md).
 

@@ -202,10 +202,11 @@ an authenticated subject to another mailbox is not a rename.
 The authoritative allocation, exact inspected revisions, legal gates, and
 non-adoption reasons live in
 [the GOTTH component adoption contract](../reference/gotth-stack-adoption.md).
-`gotth-authentik` is intended for live desired state after licensing.
-`gotth-pg-migrate`, `gotth-release`, and `gotth-infrastructure` require separate
-licensed compatibility work. `gotth-jobs` is not placed in the synchronous
-login or canonical provisioning transaction.
+`gotth-authentik` is MIT-licensed and intended for live desired state only
+after its consumer/release contract and separate live-migration authority are
+admitted. `gotth-pg-migrate`, `gotth-release`, and `gotth-infrastructure` are
+also MIT-licensed but still require separate compatibility work. `gotth-jobs`
+is not placed in the synchronous login or canonical provisioning transaction.
 
 Authentik is the expected first SCIM client. Authentik calls the GOTTH Mail SCIM endpoint; GOTTH Mail validates requests, enforces domain policy, writes canonical mailbox state, and audits provisioning mutations. Authentik does not write directly to the database or daemon config.
 
