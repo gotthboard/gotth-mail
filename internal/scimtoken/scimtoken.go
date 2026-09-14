@@ -81,6 +81,10 @@ func ReadSecret(path string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("secret file must be regular")
 	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(stat.Uid) != os.Geteuid() {
+		return nil, errors.New("secret file must be owned by the effective user")
+	}
 	if info.Mode().Perm()&0o077 != 0 {
 		return nil, errors.New("secret file must not grant group or world permissions")
 	}

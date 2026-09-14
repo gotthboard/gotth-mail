@@ -311,9 +311,10 @@ gotth-mailctl identity scim-token apply --config <file> \
 The token ID must be a lowercase stable identifier of 1-128 ASCII characters
 using only letters, digits, dot, underscore, and hyphen. The secret file is
 opened without following a final symlink, must be regular, must have no
-group/world permission bits, and must contain 32-512 printable bearer-safe
-ASCII bytes with no leading/trailing whitespace or line breaks. The secret is
-not accepted in argv or the environment and is never included in JSON output.
+group/world permission bits, must be owned by the command's effective user,
+and must contain 32-512 printable bearer-safe ASCII bytes with no
+leading/trailing whitespace or line breaks. The secret is not accepted in argv
+or the environment and is never included in JSON output.
 
 Preview returns only `plan_id`, `actor_id`, and one operation:
 `create|rotate|reactivate|unchanged`. Its digest binds a domain separator,

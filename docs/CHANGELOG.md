@@ -21,9 +21,34 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-13 20:12 CDT — Implement transactional SCIM client-token admission
+### 2026-09-13 20:14 CDT — Harden SCIM token file ownership and CLI proof
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- SCIM token implementation and PostgreSQL tests
+- `gotth-mailctl` end-to-end command test
+- identity/provisioning architecture and implementation contract
+- `docs/CHANGELOG.md`
+
+Explanation:
+
+Tightened the protected-file boundary after cold review: the SCIM bearer file
+must now be owned by the command's effective user in addition to being regular,
+non-symlink, and inaccessible to group/world. Added an end-to-end CLI test that
+executes preview and apply through a real migrated PostgreSQL database, verifies
+that output contains neither secret nor path, and confirms verifier plus audit
+admission. Removed an unnecessary test-only hash operation.
+
+Verification:
+
+- focused coding-host tests and `git diff --check`: pass
+- real PostgreSQL rerun on the development host remains required
+
+### 2026-09-13 20:12 CDT — Implement transactional SCIM client-token admission
+
+Commit: `c3f13b8`
 
 Affected files:
 

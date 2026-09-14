@@ -233,10 +233,11 @@ retry performs no write. The actor ID does not change during rotation, so
 `provisioningScope(actor.ID)` continues to select the same opaque SCIM scope.
 
 Secret-file validation is part of the trust boundary: the path must resolve to
-a regular non-symlink file with no group/world permission bits, and the value
-must be bounded, non-whitespace, printable bearer-safe data with at least 32
-bytes. Command-line and environment secret values are not accepted. This is a
-Linux/Docker operator mechanism, not an end-user credential workflow.
+a regular non-symlink file owned by the command's effective user with no
+group/world permission bits, and the value must be bounded, non-whitespace,
+printable bearer-safe data with at least 32 bytes. Command-line and environment
+secret values are not accepted. This is a Linux/Docker operator mechanism, not
+an end-user credential workflow.
 
 SCIM disable/delete revokes sessions through the mailbox UUID inside the same
 transaction as the mailbox transition and SCIM audit. Changing an
