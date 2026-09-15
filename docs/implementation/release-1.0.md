@@ -97,6 +97,19 @@ Tailwind class list, CSS, redirect, or arbitrary action is admitted. Every
 installed artifact, manifest digest, grant, transport identity, configuration
 revision, and rollback pin is independently recorded and audited.
 
+## Same-domain-only outbound integration
+
+Implement the v1 mail-core per-domain outbound-scope contract before alpha
+integration. The feature is complete only when durable policy/revision state,
+preview/confirm administration, daemon decisions, generated Postfix wiring,
+submission and expansion enforcement, queue disposition/re-evaluation, audit,
+backup/restore, and operator diagnostics are proven together. Unit-only or
+header-only checks are not admissible evidence.
+
+The current live-identity feature retains the single active workflow slot.
+Once that boundary is handed off, this owner-prioritized feature is the next
+implementation assignment before lower-priority new feature work.
+
 ## Release verification
 
 - version grammar unit tests, including rejected zero, leading-zero, `0.x`,
@@ -112,3 +125,6 @@ revision, and rollback pin is independently recorded and audited.
 - extension-foundation conformance plus administrator setup/test/enable/
   disable/update/rollback, secret-redaction, hostile-metadata, and failure-
   isolation tests before beta.
+- same-domain-only outbound hostile-path tests across SMTP, webmail/API,
+  expansions, automated mail, retry/replay, restored queues, and final transport
+  before alpha integration may publish.

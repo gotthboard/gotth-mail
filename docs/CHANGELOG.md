@@ -21,6 +21,48 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-15 10:56 CDT — Prioritize same-domain-only outbound mail
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- v1 mail-core and 1.0 release PRD, architecture, and implementation contracts
+- README blocker summary and coverage posture
+- workflow dependency graph, feature plan, and event ledger
+
+Explanation:
+
+Added the owner-prioritized per-domain `same_domain_only` outbound policy as a
+first-class 1.0 workstream. The contract derives governing domains from the
+authenticated mailbox, admitted envelope sender, system identity, and local
+expansion sources, closing delegated send-as and inbound-forwarding bypasses.
+It uses exact normalized SMTP envelope domains, leaves inbound mailbox delivery
+independent, and covers SMTP, webmail/API, recipient expansion, automatic mail,
+queued retry/replay/restore, and final Postfix transport. Policy uncertainty
+defers rather than permitting delivery. Enabling the restriction
+requires a revision- and digest-bound preview/confirm flow. Because Postfix has
+no honest per-recipient hold primitive, an affected queued recipient places the
+whole queue message on a visible policy hold; this may delay allowed recipients
+but does not delete or automatically release the message.
+
+The active live-identity workstream remains unchanged. This feature is marked
+high priority as the next implementation assignment after that boundary, and
+alpha integration now depends on it.
+
+Verification:
+
+- `git diff --check` passed
+- `workflow.toml` parsed successfully; IDs, roots, dependencies, priority,
+  active-feature preservation, and workflow feature paths were checked
+- every `workflow.events.jsonl` line parsed as a JSON object
+- executable product and deployment verification remain future planned work
+
+Risks / non-goals:
+
+- no runtime code, mail configuration, queue mutation, deployment, credential,
+  tag, release, or product-main merge
+
 ### 2026-09-13 23:07 CDT — Plan the host-owned Extensions administrator
 
 Commit: current commit; hash assigned by Git after commit

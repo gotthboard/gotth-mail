@@ -40,6 +40,76 @@ Responsibilities:
 
 Failure behavior must be explicit: reject, defer, not-found, or error. Do not hide lookup failure behind fake success.
 
+### Per-domain outbound policy boundary
+
+The control-plane database is authoritative for a domain's outbound scope.
+`unrestricted` is the compatibility default; `same_domain_only` is an explicit,
+audited domain policy. The comparison uses normalized SMTP envelope domains:
+lowercase ASCII A-label form with a single terminal dot removed. Equality is
+exact. A subdomain or another hosted domain is not treated as local to the
+sender's policy domain.
+
+The control plane derives a governing policy-domain set from authoritative
+local objects: the authenticated mailbox, admitted envelope sender,
+system-sender binding, and each alias/list/forward/catch-all source that creates
+another delivery. A caller-supplied `From` header never supplies or removes a
+domain. Each `same_domain_only` member of the set must equal the recipient
+domain. If distinct restricted domains govern one action, no recipient can
+satisfy both and the action is rejected as a cross-domain authorization
+conflict. This prevents delegated send-as and chained forwarding from becoming
+bypasses.
+
+Postfix asks the control plane at `RCPT TO`, after each expansion, and again at
+the final transport boundary. Queue entries retain the originating policy-
+domain set but are checked against every current policy revision on retry and
+replay. This double boundary prevents a stale queue or an indirect recipient
+expansion from bypassing a later restriction.
+
+Authenticated SMTP preserves SMTP's per-recipient behavior: each forbidden
+recipient receives `550 5.7.1`, while separately admitted recipients may
+proceed. Webmail and product APIs use atomic submission and reject the whole
+request before queueing if any fully resolved recipient is forbidden. Incoming
+mailbox delivery remains a separate path and is not rejected merely because the
+recipient domain restricts outbound delivery. A forward, autoresponse, or other
+new outbound action triggered by that message adds its authoritative local
+source domain and crosses the outbound boundary normally.
+
+Automatic mail, including notifications, autoresponders, DSNs, and bounces,
+inherits the originating domain identity in durable queue metadata and crosses
+the same policy boundary. A restricted domain must not accept mail and later
+create an external DSN when an SMTP-time rejection was possible. When no safe
+SMTP-time rejection exists, the automatic external message is suppressed,
+given a safe terminal policy disposition, and audited without message content.
+
+Enabling the restriction is a preview/confirm transaction bound to the current
+domain-policy revision and a digest of affected aliases, forwards, and queued
+recipient records. Activation increments the revision. Queued external
+recipients cause their whole Postfix queue message to enter a visible
+product-owned policy hold because Postfix does not provide honest per-recipient
+hold semantics. This can delay otherwise permitted recipients on that message;
+the preview must say so. Held messages are neither delivered nor silently
+deleted. Returning to `unrestricted` is a separate explicit audited operation
+and does not automatically release held mail.
+
+Policy activation and Postfix hold application cannot be one database
+transaction. The database policy becomes authoritative first, so the final
+transport recheck defers any racing external delivery. The reconciler then
+places every affected queue ID on hold idempotently and records success or a
+retryable reconciliation error. Failure to apply a hold may delay mail through
+temporary deferral; it must never permit the external delivery.
+
+Queue control uses Postfix's documented whole-message hold/release operations
+through a narrow privileged helper. The control plane passes one validated long
+queue ID as an argument, never a shell command or arbitrary queue selector.
+Long queue IDs are required, and the reconciler verifies queue metadata before
+and after the hold to reduce queue-ID reuse races. The helper exposes no delete,
+expire, requeue-all, or unrestricted command surface.
+
+Policy uncertainty fails closed for delivery: an unavailable database or
+decision service produces a temporary `451` deferral. There is no permissive
+cache fallback, trusted internal sender bypass, cross-hosted-domain exception,
+or header-based escape hatch.
+
 ### Dovecot contract group
 
 Responsibilities:

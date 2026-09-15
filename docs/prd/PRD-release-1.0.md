@@ -27,7 +27,9 @@ they do not assert published versions.
 Stable `1.0.0` requires all of the following:
 
 1. the foundation and reference deployment workstream;
-2. production Postfix, Dovecot, Rspamd, DNS, TLS, and delivery proof;
+2. production Postfix, Dovecot, Rspamd, DNS, TLS, and delivery proof, including
+   the owner-prioritized per-domain `same_domain_only` outbound policy across
+   every submission, expansion, automatic-message, retry, and replay path;
 3. Authentik-backed web login and SCIM provisioning using the admitted
    `gotth-oidc` and `gotth-scim` libraries through consumer-owned persistence,
    authorization, audit, and product adapters;
@@ -84,6 +86,8 @@ introduced.
 - Every published pre-stable version is an immutable `1.0.0-alpha.N` or
   `1.0.0-beta.N` tag.
 - Beta cannot begin while a required workstream is incomplete.
+- Alpha integration cannot publish until the high-priority per-domain
+  same-domain-only outbound policy has executable hostile-path evidence.
 - Stable cannot be tagged while a required feature, migration, deployment,
   restore, security, accessibility, monitoring, or owner-acceptance gate is
   blocked.

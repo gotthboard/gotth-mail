@@ -72,6 +72,21 @@ as non-browser operations. Constrained extension metadata may describe fields
 and named secret slots, but never executable UI. The webmail and administrator
 may share visual tokens while their authority remains separate.
 
+## Same-domain-only outbound composition
+
+The per-domain outbound scope is a Mail-owned policy, not an identity-provider,
+webmail, plugin, or MTA configuration preference. Authenticated mailbox,
+admitted envelope-sender, system-sender, and expansion-source bindings form the
+governing domain set; the canonical database stores each current policy and
+revision; every submitter resolves recipients; and Postfix provides the final
+enforcement boundary. Other hosted domains do not gain implicit trust. Inbound
+mailbox delivery remains independent, while forwarding remains outbound.
+
+This workstream is owner-prioritized immediately after the active live-identity
+boundary and blocks alpha integration. Release evidence must show that SMTP,
+webmail/API, expansion, automatic mail, queued retry/replay, restore, and final
+transport cannot escape the policy and that policy uncertainty defers mail.
+
 ## Failure boundaries
 
 - OIDC or SCIM unavailability blocks new login/provisioning; it never blocks
