@@ -3,6 +3,7 @@ package outboundpolicy
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +132,100 @@ func TestAdminApplyRejectsStaleOrWrongConfirmation(t *testing.T) {
 	}
 	if _, err := service.Apply(context.Background(), audit.ActorRef{Type: "local_admin", ID: "operator"}, "corr", "example.test", ScopeSameDomainOnly, plan.Digest); err == nil {
 		t.Fatal("stale confirmation accepted")
+	}
+}
+
+func TestAdminApplyRejectsSameCountAliasStateChange(t *testing.T) {
+	db := policyDB(t)
+	insertPolicyDomain(t, db)
+	insertPolicyAlias(t, db, "00000000-0000-4000-8000-000000000812", "team", `["outside@example.net"]`)
+	service := AdminService{DB: db}
+	plan, err := service.Preview(context.Background(), "example.test", ScopeSameDomainOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE aliases SET targets_json='["different@example.net"]' WHERE id='00000000-0000-4000-8000-000000000812'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Apply(context.Background(), audit.ActorRef{Type: "local_admin", ID: "operator"}, "corr-state-change", "example.test", ScopeSameDomainOnly, plan.Digest); err == nil {
+		t.Fatal("same-count alias state change preserved stale confirmation")
+	}
+}
+
+func TestAdminApplyRejectsSameCountQueueStateChange(t *testing.T) {
+	db := policyDB(t)
+	insertPolicyDomain(t, db)
+	mailboxID := "00000000-0000-4000-8000-000000000814"
+	if _, err := db.Exec(`INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ($1,$2,'sender',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, mailboxID, policyDomainID); err != nil {
+		t.Fatal(err)
+	}
+	queue := QueueStore{DB: db}
+	first := QueueRegistration{QueueID: "3Pt2mN2VXxznjll", ArrivalFingerprint: strings.Repeat("a", 64), EnvelopeSender: "sender@example.test", Recipients: []string{"outside@example.net"}, Sources: []QueueSource{{Kind: SourceAuthenticatedMailbox, ObjectID: mailboxID}}}
+	if _, _, err := queue.Register(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	service := AdminService{DB: db}
+	plan, err := service.Preview(context.Background(), "example.test", ScopeSameDomainOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM outbound_queue_messages WHERE queue_id=$1`, first.QueueID); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.QueueID = "BCDFGHJKLMNPz2345"
+	second.ArrivalFingerprint = strings.Repeat("b", 64)
+	if _, _, err := queue.Register(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Apply(context.Background(), audit.ActorRef{Type: "local_admin", ID: "operator"}, "corr-queue-change", "example.test", ScopeSameDomainOnly, plan.Digest); err == nil {
+		t.Fatal("same-count queue replacement preserved stale confirmation")
+	}
+}
+
+func TestActivationApplyHoldsAffectedQueueAndRetriesFailure(t *testing.T) {
+	db := policyDB(t)
+	insertPolicyDomain(t, db)
+	mailboxID := "00000000-0000-4000-8000-000000000814"
+	if _, err := db.Exec(`INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ($1,$2,'sender',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, mailboxID, policyDomainID); err != nil {
+		t.Fatal(err)
+	}
+	registration := QueueRegistration{QueueID: "3Pt2mN2VXxznjll", ArrivalFingerprint: strings.Repeat("c", 64), EnvelopeSender: "sender@example.test", Recipients: []string{"outside@example.net"}, Sources: []QueueSource{{Kind: SourceAuthenticatedMailbox, ObjectID: mailboxID}}}
+	queue := QueueStore{DB: db}
+	if _, _, err := queue.Register(context.Background(), registration); err != nil {
+		t.Fatal(err)
+	}
+	boundary := &fakeQueueBoundary{metadata: queueMetadata(registration), holdErr: errors.New("postsuper failed")}
+	service := ActivationService{
+		Admin:      AdminService{DB: db},
+		Policy:     &EnforcementService{DB: db, Queue: queue, HoldActor: audit.ActorRef{Type: "service", ID: "outbound-policy"}},
+		Reconciler: &QueueReconciler{Store: queue, Inspector: boundary, Holder: boundary},
+	}
+	plan, err := service.Admin.Preview(context.Background(), "example.test", ScopeSameDomainOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Apply(context.Background(), audit.ActorRef{Type: "local_admin", ID: "operator"}, "corr-activation", "example.test", ScopeSameDomainOnly, plan.Digest)
+	if err != nil || !result.Changed || result.Reconciliation == nil || result.Reconciliation.Selected != 1 || result.Reconciliation.Failed != 1 {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	record, err := queue.Load(context.Background(), registration.QueueID)
+	if err != nil || record.HoldState != HoldReconciliationError {
+		t.Fatalf("record=%+v err=%v", record, err)
+	}
+
+	boundary.holdErr = nil
+	retryPlan, err := service.Admin.Preview(context.Background(), "example.test", ScopeSameDomainOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := service.Apply(context.Background(), audit.ActorRef{Type: "local_admin", ID: "operator"}, "corr-activation-retry", "example.test", ScopeSameDomainOnly, retryPlan.Digest)
+	if err != nil || retry.Changed || retry.Reconciliation == nil || retry.Reconciliation.Held != 1 || retry.Reconciliation.Failed != 0 {
+		t.Fatalf("retry=%+v err=%v", retry, err)
+	}
+	record, err = queue.Load(context.Background(), registration.QueueID)
+	if err != nil || record.HoldState != HoldApplied || boundary.holds != 2 {
+		t.Fatalf("record=%+v holds=%d err=%v", record, boundary.holds, err)
 	}
 }
 

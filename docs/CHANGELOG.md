@@ -21,9 +21,47 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 11:58 CDT — Preserve inbound null-sender provenance
+### 2026-09-19 12:09 CDT — Bind activation confirmation and apply queue holds
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- outbound-policy preview/apply state digest and activation coordinator
+- authenticated outbound-policy API wiring
+- PostgreSQL and API activation tests
+- same-domain hostile-path evidence and changelog
+
+Explanation:
+
+Closed two fresh-review defects in policy activation. The preview digest had
+bound only aggregate counts, so an alias target or queued message could be
+replaced by different state with the same counts while preserving a stale
+confirmation. Preview and apply now stream exact bounded alias and active-queue
+identity into a length-framed SHA-256 transcript. The product apply route also
+now drives every affected queue through the normal current-policy decision and
+verified whole-message hold reconciler after the policy transaction commits.
+Failures remain visible in the structured result and durable queue error state;
+a confirmed same-scope apply retries them without releasing mail.
+
+Verification:
+
+- PostgreSQL tests reject same-count alias and queue substitutions after
+  preview
+- activation tests prove helper failure remains a retryable durable error and
+  a same-scope retry reaches the verified held state
+- the authenticated API test applies the restriction and observes one real
+  reconciler hold through the product route
+- focused outbound-policy and API suites passed on the development host
+
+Risks / non-goals:
+
+- no live queue, domain policy, deployment, production credential, tag,
+  release, or external service changed
+
+### 2026-09-19 11:58 CDT — Preserve inbound null-sender provenance
+
+Commit: `97fbd20`
 
 Affected files:
 

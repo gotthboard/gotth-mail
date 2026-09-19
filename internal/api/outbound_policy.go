@@ -76,7 +76,11 @@ func (s Server) registerOutboundPolicyAdmin(mux *http.ServeMux, ids *identity.Se
 			http.Error(w, "outbound policy administration unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		result, err := (outboundpolicy.AdminService{DB: s.AuditDB}).Apply(r.Context(), actor, r.Header.Get("X-Correlation-ID"), request.Domain, request.Scope, request.Confirmation)
+		result, err := (outboundpolicy.ActivationService{
+			Admin:      outboundpolicy.AdminService{DB: s.AuditDB},
+			Policy:     s.Daemon.OutboundPolicy,
+			Reconciler: s.Daemon.OutboundReconciler,
+		}).Apply(r.Context(), actor, r.Header.Get("X-Correlation-ID"), request.Domain, request.Scope, request.Confirmation)
 		if err != nil {
 			http.Error(w, "outbound policy apply failed", http.StatusBadRequest)
 			return

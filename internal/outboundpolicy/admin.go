@@ -5,9 +5,12 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"hash"
+	"strconv"
 	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
@@ -20,18 +23,29 @@ type Impact struct {
 }
 
 type ChangePlan struct {
-	Digest         string `json:"digest"`
-	DomainID       string `json:"domain_id"`
-	Domain         string `json:"domain"`
-	CurrentScope   Scope  `json:"current_scope"`
-	RequestedScope Scope  `json:"requested_scope"`
-	Revision       uint64 `json:"revision"`
-	Impact         Impact `json:"impact"`
+	Digest           string `json:"digest"`
+	DomainID         string `json:"domain_id"`
+	Domain           string `json:"domain"`
+	CurrentScope     Scope  `json:"current_scope"`
+	RequestedScope   Scope  `json:"requested_scope"`
+	Revision         uint64 `json:"revision"`
+	Impact           Impact `json:"impact"`
+	stateDigest      string
+	affectedQueueIDs []string
 }
 
 type ChangeResult struct {
-	Plan    ChangePlan `json:"plan"`
-	Changed bool       `json:"changed"`
+	Plan           ChangePlan                `json:"plan"`
+	Changed        bool                      `json:"changed"`
+	Reconciliation *ActivationReconciliation `json:"reconciliation,omitempty"`
+}
+
+type ActivationReconciliation struct {
+	Selected        int `json:"selected"`
+	Held            int `json:"held"`
+	AlreadyHeld     int `json:"already_held"`
+	NoLongerBlocked int `json:"no_longer_blocked"`
+	Failed          int `json:"failed"`
 }
 
 type AdminService struct {
@@ -39,11 +53,18 @@ type AdminService struct {
 	Now func() time.Time
 }
 
+type ActivationService struct {
+	Admin      AdminService
+	Policy     *EnforcementService
+	Reconciler *QueueReconciler
+}
+
 const (
-	maxPolicyAliases        = 100_000
-	maxAliasTargetJSONBytes = 1 << 20
-	maxAliasTargets         = 10_000
-	maxPolicyTargetBytes    = 64 << 20
+	maxPolicyAliases          = 100_000
+	maxAliasTargetJSONBytes   = 1 << 20
+	maxAliasTargets           = 10_000
+	maxPolicyTargetBytes      = 64 << 20
+	maxPolicyQueuedRecipients = 1_000_000
 )
 
 type policyQueryer interface {
@@ -127,6 +148,76 @@ func (s AdminService) Apply(ctx context.Context, actor audit.ActorRef, correlati
 	return ChangeResult{Plan: plan, Changed: true}, nil
 }
 
+// Apply commits the revision-bound policy change first, then drives every
+// affected active queue through the normal transport decision and verified
+// whole-message hold boundary. A reconciliation failure is returned in the
+// structured result because the authoritative policy has already committed.
+// Repeating a confirmed same-scope apply retries incomplete holds without
+// implicitly releasing anything.
+func (s ActivationService) Apply(ctx context.Context, actor audit.ActorRef, correlationID, domain string, requested Scope, confirmation string) (ChangeResult, error) {
+	result, err := s.Admin.Apply(ctx, actor, correlationID, domain, requested, confirmation)
+	if err != nil || requested != ScopeSameDomainOnly {
+		return result, err
+	}
+	summary := &ActivationReconciliation{Selected: len(result.Plan.affectedQueueIDs)}
+	result.Reconciliation = summary
+	if summary.Selected == 0 {
+		return result, nil
+	}
+	if s.Policy == nil || s.Reconciler == nil {
+		summary.Failed = summary.Selected
+		return result, nil
+	}
+	for _, queueID := range result.Plan.affectedQueueIDs {
+		record, loadErr := s.Reconciler.Store.Load(ctx, queueID)
+		if loadErr != nil {
+			summary.Failed++
+			continue
+		}
+		requiresHold := false
+		failed := false
+		for index, recipient := range record.Recipients {
+			decision, decisionErr := s.Policy.Decide(ctx, activationCorrelationID(correlationID, queueID, index, "decision"), EnforcementRequest{Stage: StageTransport, QueueID: queueID, Recipient: recipient})
+			if decisionErr != nil {
+				failed = true
+				break
+			}
+			if decision.Action == ActionDefer && decision.Reason == ReasonPolicyHold {
+				requiresHold = true
+				break
+			}
+			if decision.Action != ActionOK {
+				failed = true
+				break
+			}
+		}
+		if failed {
+			summary.Failed++
+			continue
+		}
+		if !requiresHold {
+			summary.NoLongerBlocked++
+			continue
+		}
+		reconciled, reconcileErr := s.Reconciler.Reconcile(ctx, actor, activationCorrelationID(correlationID, queueID, 0, "reconcile"), queueID)
+		if reconcileErr != nil {
+			summary.Failed++
+			continue
+		}
+		if reconciled.Changed {
+			summary.Held++
+		} else {
+			summary.AlreadyHeld++
+		}
+	}
+	return result, nil
+}
+
+func activationCorrelationID(base, queueID string, index int, phase string) string {
+	digest := sha256.Sum256([]byte(base + "\x00" + queueID + "\x00" + phase + "\x00" + strconv.Itoa(index)))
+	return "outbound-activation:" + hex.EncodeToString(digest[:16])
+}
+
 // now supplies one UTC audit/update timestamp source.
 // Complexity: time O(1), Omega(1), tight Theta(1); auxiliary space O(1),
 // Omega(1), tight Theta(1).
@@ -166,14 +257,17 @@ func loadChangePlan(ctx context.Context, queryer policyQueryer, rawDomain string
 	if !validScope(plan.CurrentScope) || plan.Revision == 0 {
 		return ChangePlan{}, errors.New("stored outbound policy state is invalid")
 	}
-	plan.Impact, err = loadAliasImpact(ctx, queryer, plan.DomainID, plan.Domain)
+	var aliasDigest string
+	plan.Impact, aliasDigest, err = loadAliasImpact(ctx, queryer, plan.DomainID, plan.Domain)
 	if err != nil {
 		return ChangePlan{}, err
 	}
-	plan.Impact.QueuedRecipients, err = loadQueuedRecipientImpact(ctx, queryer, plan.DomainID, plan.Domain)
+	var queueDigest string
+	plan.Impact.QueuedRecipients, queueDigest, plan.affectedQueueIDs, err = loadQueuedRecipientImpact(ctx, queryer, plan.DomainID, plan.Domain)
 	if err != nil {
 		return ChangePlan{}, err
 	}
+	plan.stateDigest = digestStrings([]string{"gotth-mail/outbound-policy-state/v1", aliasDigest, queueDigest})
 	plan.Digest, err = planDigest(plan)
 	if err != nil {
 		return ChangePlan{}, err
@@ -187,7 +281,7 @@ func loadChangePlan(ctx context.Context, queryer policyQueryer, rawDomain string
 // Complexity: database time O(q*s+r), Omega(1), tight worst-case Theta(q*s+r);
 // auxiliary process space O(1), Omega(1), where q is active queue messages, s
 // is bounded sources per message, and r is their recipient rows.
-func loadQueuedRecipientImpact(ctx context.Context, queryer policyQueryer, domainID, domain string) (int, error) {
+func loadQueuedRecipientImpact(ctx context.Context, queryer policyQueryer, domainID, domain string) (int, string, []string, error) {
 	var unresolved int64
 	if err := queryer.QueryRowContext(ctx, `SELECT count(*)
 FROM outbound_queue_sources s
@@ -196,13 +290,12 @@ LEFT JOIN mailboxes m ON s.source_kind IN ('authenticated_mailbox','envelope_sen
 LEFT JOIN aliases a ON s.source_kind IN ('alias','forward','list','catch_all') AND a.id::text=s.object_id
 LEFT JOIN outbound_system_senders y ON s.source_kind='system_sender' AND y.id=s.object_id
 WHERE q.hold_state <> 'released' AND m.id IS NULL AND a.id IS NULL AND y.id IS NULL`).Scan(&unresolved); err != nil {
-		return 0, err
+		return 0, "", nil, err
 	}
 	if unresolved != 0 {
-		return 0, errors.New("active outbound queue contains unresolved policy sources")
+		return 0, "", nil, errors.New("active outbound queue contains unresolved policy sources")
 	}
-	var count int64
-	if err := queryer.QueryRowContext(ctx, `SELECT count(*)
+	rows, err := queryer.QueryContext(ctx, `SELECT q.queue_id,q.arrival_fingerprint,q.recipient_set_digest,q.source_set_digest,r.recipient
 FROM outbound_queue_recipients r
 JOIN outbound_queue_messages q ON q.queue_id=r.queue_id
 WHERE q.hold_state <> 'released'
@@ -214,13 +307,39 @@ WHERE q.hold_state <> 'released'
       LEFT JOIN aliases a ON s.source_kind IN ('alias','forward','list','catch_all') AND a.id::text=s.object_id
       LEFT JOIN outbound_system_senders y ON s.source_kind='system_sender' AND y.id=s.object_id
       WHERE s.queue_id=q.queue_id AND (m.domain_id=$1 OR a.domain_id=$1 OR y.domain_id=$1)
-  )`, domainID, domain).Scan(&count); err != nil {
-		return 0, err
+  )
+ORDER BY q.queue_id,r.recipient`, domainID, domain)
+	if err != nil {
+		return 0, "", nil, err
 	}
-	if count < 0 || uint64(count) > uint64(^uint(0)>>1) {
-		return 0, errors.New("outbound queue recipient impact exceeds process integer range")
+	defer rows.Close()
+	digest := newPolicyStateDigest("gotth-mail/outbound-policy-queue-state/v1")
+	count := 0
+	queueIDs := make([]string, 0)
+	lastQueueID := ""
+	for rows.Next() {
+		if count >= maxPolicyQueuedRecipients {
+			return 0, "", nil, errors.New("outbound queue recipient impact limit exceeded")
+		}
+		var queueID, arrival, recipients, sources, recipient string
+		if err := rows.Scan(&queueID, &arrival, &recipients, &sources, &recipient); err != nil {
+			return 0, "", nil, err
+		}
+		canonical, recipientDomain, err := normalizeQueueRecipient(recipient)
+		if !validLongQueueID(queueID) || !validLowerHexDigest(arrival) || !validLowerHexDigest(recipients) || !validLowerHexDigest(sources) || err != nil || canonical != recipient || recipientDomain == domain {
+			return 0, "", nil, errors.New("active outbound queue state is invalid")
+		}
+		if queueID != lastQueueID {
+			queueIDs = append(queueIDs, queueID)
+			lastQueueID = queueID
+		}
+		writePolicyStateDigest(digest, queueID, arrival, recipients, sources, recipient)
+		count++
 	}
-	return int(count), nil
+	if err := rows.Err(); err != nil {
+		return 0, "", nil, err
+	}
+	return count, hex.EncodeToString(digest.Sum(nil)), queueIDs, nil
 }
 
 // loadAliasImpact counts only enabled source aliases that currently expand to
@@ -228,38 +347,40 @@ WHERE q.hold_state <> 'released'
 // Complexity: worst-case time O(b), Omega(1), tight Theta(b); auxiliary space
 // O(j), Omega(1), where b is at most maxPolicyTargetBytes and j is at most
 // maxAliasTargetJSONBytes. The query caps rows at maxPolicyAliases+1.
-func loadAliasImpact(ctx context.Context, queryer policyQueryer, domainID, domain string) (Impact, error) {
-	rows, err := queryer.QueryContext(ctx, `SELECT octet_length(targets_json), CASE WHEN octet_length(targets_json) <= $3 THEN targets_json ELSE NULL END FROM aliases WHERE domain_id=$1 AND enabled=true LIMIT $2`, domainID, maxPolicyAliases+1, maxAliasTargetJSONBytes)
+func loadAliasImpact(ctx context.Context, queryer policyQueryer, domainID, domain string) (Impact, string, error) {
+	rows, err := queryer.QueryContext(ctx, `SELECT id::text,local_part,octet_length(targets_json),CASE WHEN octet_length(targets_json) <= $3 THEN targets_json ELSE NULL END FROM aliases WHERE domain_id=$1 AND enabled=true ORDER BY id LIMIT $2`, domainID, maxPolicyAliases+1, maxAliasTargetJSONBytes)
 	if err != nil {
-		return Impact{}, err
+		return Impact{}, "", err
 	}
 	defer rows.Close()
 	var impact Impact
+	digest := newPolicyStateDigest("gotth-mail/outbound-policy-alias-state/v1")
 	aliases := 0
 	totalBytes := 0
 	for rows.Next() {
 		aliases++
 		if aliases > maxPolicyAliases {
-			return Impact{}, errors.New("outbound policy alias limit exceeded")
+			return Impact{}, "", errors.New("outbound policy alias limit exceeded")
 		}
+		var id, localPart string
 		var encodedBytes int
 		var encoded sql.NullString
-		if err := rows.Scan(&encodedBytes, &encoded); err != nil {
-			return Impact{}, err
+		if err := rows.Scan(&id, &localPart, &encodedBytes, &encoded); err != nil {
+			return Impact{}, "", err
 		}
-		if encodedBytes < 0 || encodedBytes > maxAliasTargetJSONBytes || !encoded.Valid || totalBytes > maxPolicyTargetBytes-encodedBytes {
-			return Impact{}, errors.New("outbound policy alias target data limit exceeded")
+		if !validQueueObjectID(id) || localPart == "" || encodedBytes < 0 || encodedBytes > maxAliasTargetJSONBytes || !encoded.Valid || totalBytes > maxPolicyTargetBytes-encodedBytes {
+			return Impact{}, "", errors.New("outbound policy alias target data limit exceeded")
 		}
 		totalBytes += encodedBytes
 		var targets []string
 		if err := json.Unmarshal([]byte(encoded.String), &targets); err != nil || len(targets) == 0 || len(targets) > maxAliasTargets {
-			return Impact{}, errors.New("stored alias targets are invalid")
+			return Impact{}, "", errors.New("stored alias targets are invalid")
 		}
 		external := 0
 		for _, target := range targets {
 			targetDomain, err := recipientDomain(target)
 			if err != nil {
-				return Impact{}, errors.New("stored alias target is invalid")
+				return Impact{}, "", errors.New("stored alias target is invalid")
 			}
 			if targetDomain != domain {
 				external++
@@ -269,11 +390,12 @@ func loadAliasImpact(ctx context.Context, queryer policyQueryer, domainID, domai
 			impact.Aliases++
 			impact.ExternalTargets += external
 		}
+		writePolicyStateDigest(digest, id, localPart, encoded.String)
 	}
 	if err := rows.Err(); err != nil {
-		return Impact{}, err
+		return Impact{}, "", err
 	}
-	return impact, nil
+	return impact, hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 // planDigest binds confirmation to all current policy and bounded impact data.
@@ -289,13 +411,34 @@ func planDigest(plan ChangePlan) (string, error) {
 		RequestedScope Scope  `json:"requested_scope"`
 		Revision       uint64 `json:"revision"`
 		Impact         Impact `json:"impact"`
-	}{"gotth-mail/outbound-policy-plan/v1", plan.DomainID, plan.Domain, plan.CurrentScope, plan.RequestedScope, plan.Revision, plan.Impact}
+		StateDigest    string `json:"state_digest"`
+	}{"gotth-mail/outbound-policy-plan/v2", plan.DomainID, plan.Domain, plan.CurrentScope, plan.RequestedScope, plan.Revision, plan.Impact, plan.stateDigest}
+	if !validLowerHexDigest(plan.stateDigest) {
+		return "", errors.New("invalid outbound policy state digest")
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+// newPolicyStateDigest and writePolicyStateDigest stream exact bounded state
+// into a length-framed SHA-256 transcript without retaining every row.
+func newPolicyStateDigest(contract string) hash.Hash {
+	digest := sha256.New()
+	writePolicyStateDigest(digest, contract)
+	return digest
+}
+
+func writePolicyStateDigest(digest hash.Hash, values ...string) {
+	var size [8]byte
+	for _, value := range values {
+		binary.BigEndian.PutUint64(size[:], uint64(len(value)))
+		_, _ = digest.Write(size[:])
+		_, _ = digest.Write([]byte(value))
+	}
 }
 
 // validScope recognizes the complete closed outbound-policy enum.

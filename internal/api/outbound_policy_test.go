@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/store"
@@ -20,11 +22,27 @@ func TestOutboundPolicyAdminAPIRequiresScopedPreviewAndConfirmation(t *testing.T
 	if _, err := db.Exec(`INSERT INTO domains(id,name,enabled,outbound_scope,outbound_policy_revision,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000a01','example.test',true,'unrestricted',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
 		t.Fatal(err)
 	}
+	const mailboxID = "00000000-0000-4000-8000-000000000a02"
+	if _, err := db.Exec(`INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ($1,'00000000-0000-4000-8000-000000000a01','sender',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, mailboxID); err != nil {
+		t.Fatal(err)
+	}
+	queue := outboundpolicy.QueueStore{DB: db}
+	registration := outboundpolicy.QueueRegistration{
+		QueueID: "3Pt2mN2VXxznjll", ArrivalFingerprint: strings.Repeat("a", 64), EnvelopeSender: "sender@example.test",
+		Recipients: []string{"outside@example.net"}, Sources: []outboundpolicy.QueueSource{{Kind: outboundpolicy.SourceAuthenticatedMailbox, ObjectID: mailboxID}},
+	}
+	if _, _, err := queue.Register(context.Background(), registration); err != nil {
+		t.Fatal(err)
+	}
+	boundary := &apiActivationBoundary{metadata: outboundpolicy.QueueMetadata{QueueID: registration.QueueID, ArrivalFingerprint: registration.ArrivalFingerprint, EnvelopeSender: registration.EnvelopeSender, Recipients: registration.Recipients}}
+	policy := &outboundpolicy.EnforcementService{DB: db, Queue: queue, HoldActor: audit.ActorRef{Type: "service", ID: "outbound-policy"}}
 	ids := identity.NewService("example.test")
 	if err := ids.AddTokenWithScopes("domain-admin", "api_token", "domain-admin-secret", "domain:admin:example.test"); err != nil {
 		t.Fatal(err)
 	}
-	handler := (Server{AuditDB: db, Identity: ids, Authz: authz.StaticAuthorizer{}}).Handler()
+	handler := (Server{AuditDB: db, Identity: ids, Authz: authz.StaticAuthorizer{}, Daemon: daemon.Service{
+		OutboundPolicy: policy, OutboundReconciler: &outboundpolicy.QueueReconciler{Store: queue, Inspector: boundary, Holder: boundary},
+	}}).Handler()
 	body := `{"domain":"example.test","scope":"same_domain_only"}`
 	unauthorized := httptest.NewRecorder()
 	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/api/v1/domains/outbound-policy/preview", strings.NewReader(body)))
@@ -53,6 +71,10 @@ func TestOutboundPolicyAdminAPIRequiresScopedPreviewAndConfirmation(t *testing.T
 	if applyResponse.Code != http.StatusOK {
 		t.Fatalf("apply status=%d body=%s", applyResponse.Code, applyResponse.Body.String())
 	}
+	var applied outboundpolicy.ChangeResult
+	if err := json.Unmarshal(applyResponse.Body.Bytes(), &applied); err != nil || applied.Reconciliation == nil || applied.Reconciliation.Held != 1 || boundary.holds != 1 {
+		t.Fatalf("applied=%#v holds=%d err=%v", applied, boundary.holds, err)
+	}
 	var scope string
 	var revision uint64
 	if err := db.QueryRowContext(context.Background(), `SELECT outbound_scope,outbound_policy_revision FROM domains WHERE name='example.test'`).Scan(&scope, &revision); err != nil {
@@ -61,4 +83,19 @@ func TestOutboundPolicyAdminAPIRequiresScopedPreviewAndConfirmation(t *testing.T
 	if scope != string(outboundpolicy.ScopeSameDomainOnly) || revision != 2 {
 		t.Fatalf("scope=%q revision=%d", scope, revision)
 	}
+}
+
+type apiActivationBoundary struct {
+	metadata outboundpolicy.QueueMetadata
+	holds    int
+}
+
+func (b *apiActivationBoundary) Inspect(context.Context, string) (outboundpolicy.QueueMetadata, error) {
+	return b.metadata, nil
+}
+
+func (b *apiActivationBoundary) Hold(context.Context, string) error {
+	b.holds++
+	b.metadata.Held = true
+	return nil
 }

@@ -130,6 +130,19 @@ preview digest and a valid correlation ID. Restore verification compares the
 captured verifier and quota. Focused API/outbound-policy/operations normal and
 race suites passed, including new authorization and corruption tests.
 
+A later activation pass found that the preview confirmation bound only impact
+counts rather than the exact alias and queue state, and that the authenticated
+apply route committed policy without driving those queues into visible holds.
+Preview and apply now hash a length-framed transcript of every enabled alias
+identity/target document and every affected queue/recipient identity. Tests
+replace an alias and a queue with different same-count state and prove the old
+confirmation is rejected. After commit, the product route re-evaluates every
+selected queue through the normal transport policy and invokes the verified
+whole-message reconciler. Helper failure remains a durable retryable error;
+repeating a confirmed same-scope apply retries the hold without implicit
+release. The API integration test observes the queue reach `held` through this
+real route.
+
 The repaired-tree pass found that unauthenticated inbound queue admission
 treated a reverse path matching a hosted mailbox as authoritative local sender
 provenance. That trusted spoofable envelope text and could inject an unintended
