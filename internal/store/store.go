@@ -250,6 +250,15 @@ const scimGroupMembersMigrationSQL = `CREATE TABLE scim_group_members (
 CREATE INDEX scim_group_members_user_idx
     ON scim_group_members (scope, user_id, group_id);`
 
+const outboundPolicyMigrationVersion = "0008_outbound_policy"
+const outboundPolicyMigrationSQL = `ALTER TABLE domains
+    ADD COLUMN outbound_scope text NOT NULL DEFAULT 'unrestricted',
+    ADD COLUMN outbound_policy_revision bigint NOT NULL DEFAULT 1,
+    ADD CONSTRAINT domains_outbound_scope_check
+        CHECK (outbound_scope IN ('unrestricted', 'same_domain_only')),
+    ADD CONSTRAINT domains_outbound_policy_revision_check
+        CHECK (outbound_policy_revision > 0);`
+
 var upgradeMigrations = []Migration{
 	newMigration(notificationDeliveryEvidenceMigrationVersion, notificationDeliveryEvidenceMigrationSQL),
 	newMigration(oidcProtectedAttemptsMigrationVersion, oidcProtectedAttemptsMigrationSQL),
@@ -257,6 +266,7 @@ var upgradeMigrations = []Migration{
 	newMigration(appPasswordContractMigrationVersion, appPasswordContractMigrationSQL),
 	newMigration(oidcSCIMIdentityBindingMigrationVersion, oidcSCIMIdentityBindingMigrationSQL),
 	newMigration(scimGroupMembersMigrationVersion, scimGroupMembersMigrationSQL),
+	newMigration(outboundPolicyMigrationVersion, outboundPolicyMigrationSQL),
 }
 
 func newMigration(version, sql string) Migration {

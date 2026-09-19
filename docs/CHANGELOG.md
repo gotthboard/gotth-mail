@@ -21,6 +21,68 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-19 07:00 CDT — Start same-domain outbound enforcement
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/outboundpolicy/`
+- `internal/store/store.go` and migration parity tests
+- `migrations/0008_outbound_policy.sql`
+- `go.mod`
+- workflow state, event ledger, coverage evidence, and changelog
+- same-domain feature status README
+
+Explanation:
+
+Started the owner-priority alpha blocker in its dedicated durable worktree.
+The new policy core normalizes domains with an explicit non-transitional UTS
+#46/IDNA2008 lookup profile, discards the library's documented partial result
+on every conversion error, compares exact lowercase A-labels, and fails closed
+when authority, scope, revision, stage, recipient, or transport queue identity
+is unavailable. Submission mismatches reject; transport mismatches defer for a
+policy hold; conflicting restricted governing domains reject.
+
+Added the compatibility-preserving PostgreSQL domain policy migration. Existing
+and new rows remain `unrestricted` at revision `1`; closed enum and positive
+revision constraints reject corrupt state. Added serializable, revision- and
+digest-bound preview/apply administration. Preview currently reports bounded
+alias and external-target counts, not addresses; queued-recipient counting is
+still open. Apply re-reads and locks current state, rejects stale, malformed,
+or oversized confirmation, increments the revision atomically, and includes
+the confirmation digest and counts in the atomic redacted audit. Audit failure
+rolls back; commit failure is returned without claiming success.
+
+The live identity feature is now honestly `blocked`, not complete: its
+remaining proof requires a deployed public endpoint. The single active
+workflow slot advances to this feature under Danny's instruction to finish the
+alpha; that instruction does not silently authorize deployment.
+
+Verification:
+
+- clean baseline `go test ./...`
+- expected-red focused tests before each production unit
+- `go test ./internal/outboundpolicy -count=1`
+- `go test ./internal/store -count=1`
+- `go test -race ./internal/outboundpolicy ./internal/store -count=1`
+- `go vet ./internal/outboundpolicy ./internal/store`
+- `go test -p=1 ./... -count=1`
+- PostgreSQL upgrade/default/constraint, stale-confirmation, and atomic
+  audit-rollback tests passed
+- runtime contract inspected against Go 1.26.6 and `golang.org/x/net` v0.56.0
+- Postfix long queue-ID alphabet and shape checked against the official
+  `postconf(5)` manual
+
+Risks / non-goals:
+
+- this is an in-progress foundation batch, not feature completion
+- queue metadata/hold reconciliation, daemon wiring, submission and expansion
+  enforcement, automatic mail, diagnostics, backup/restore, and container
+  evidence remain open
+- no deployment, DNS, credential, tag, release, product-main merge, or live
+  mail mutation occurred
+
 ### 2026-09-15 10:56 CDT — Prioritize same-domain-only outbound mail
 
 Commit: current commit; hash assigned by Git after commit

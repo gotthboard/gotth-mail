@@ -70,7 +70,7 @@ func TestNotificationDeliveryEvidenceMigrationFileMatchesRuntime(t *testing.T) {
 	if fileSQL != notificationDeliveryEvidenceMigrationSQL {
 		t.Fatalf("migration file/runtime drift\nfile: %q\nruntime: %q", fileSQL, notificationDeliveryEvidenceMigrationSQL)
 	}
-	if len(upgradeMigrations) != 6 || upgradeMigrations[0].Version != notificationDeliveryEvidenceMigrationVersion || upgradeMigrations[0].SQL != fileSQL {
+	if len(upgradeMigrations) != 7 || upgradeMigrations[0].Version != notificationDeliveryEvidenceMigrationVersion || upgradeMigrations[0].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -85,7 +85,7 @@ func TestOIDCProtectedAttemptsMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 6 || upgradeMigrations[1].Version != oidcProtectedAttemptsMigrationVersion || upgradeMigrations[1].SQL != fileSQL {
+	if len(upgradeMigrations) != 7 || upgradeMigrations[1].Version != oidcProtectedAttemptsMigrationVersion || upgradeMigrations[1].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -100,7 +100,7 @@ func TestSCIMResourcesMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 6 || upgradeMigrations[2].Version != scimResourcesMigrationVersion || upgradeMigrations[2].SQL != fileSQL {
+	if len(upgradeMigrations) != 7 || upgradeMigrations[2].Version != scimResourcesMigrationVersion || upgradeMigrations[2].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -115,7 +115,7 @@ func TestAppPasswordContractMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 6 || upgradeMigrations[3].Version != appPasswordContractMigrationVersion || upgradeMigrations[3].SQL != fileSQL {
+	if len(upgradeMigrations) != 7 || upgradeMigrations[3].Version != appPasswordContractMigrationVersion || upgradeMigrations[3].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -130,7 +130,7 @@ func TestOIDCSCIMIdentityBindingMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 6 || upgradeMigrations[4].Version != oidcSCIMIdentityBindingMigrationVersion || upgradeMigrations[4].SQL != fileSQL {
+	if len(upgradeMigrations) != 7 || upgradeMigrations[4].Version != oidcSCIMIdentityBindingMigrationVersion || upgradeMigrations[4].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -145,12 +145,80 @@ func TestSCIMGroupMembersMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 6 || upgradeMigrations[5].Version != scimGroupMembersMigrationVersion || upgradeMigrations[5].SQL != fileSQL {
+	if len(upgradeMigrations) != 7 || upgradeMigrations[5].Version != scimGroupMembersMigrationVersion || upgradeMigrations[5].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
 	if got, want := upgradeMigrations[5].Checksum, hex.EncodeToString(sum[:]); got != want {
 		t.Fatalf("runtime checksum=%q file checksum=%q", got, want)
+	}
+}
+
+func TestOutboundPolicyMigrationFileMatchesRuntime(t *testing.T) {
+	data, err := os.ReadFile("../../migrations/0008_outbound_policy.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileSQL := strings.TrimSpace(string(data))
+	if len(upgradeMigrations) != 7 || upgradeMigrations[6].Version != outboundPolicyMigrationVersion || upgradeMigrations[6].SQL != fileSQL {
+		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
+	}
+	sum := sha256.Sum256([]byte(fileSQL))
+	if got, want := upgradeMigrations[6].Checksum, hex.EncodeToString(sum[:]); got != want {
+		t.Fatalf("runtime checksum=%q file checksum=%q", got, want)
+	}
+}
+
+func TestOutboundPolicyMigrationPreservesUnrestrictedDefault(t *testing.T) {
+	db := testpg.DB(t, func(ctx context.Context, db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		var runner Runner
+		if err := runner.MigrateEmpty(); err != nil {
+			return err
+		}
+		for _, migration := range runner.Applied {
+			if _, err := tx.ExecContext(ctx, migration.SQL); err != nil {
+				return err
+			}
+		}
+		for _, migration := range runner.Applied {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at, checksum, dirty) VALUES ($1,$2,$3,false)`, migration.Version, migration.AppliedAt, migration.Checksum); err != nil {
+				return err
+			}
+		}
+		for _, migration := range upgradeMigrations[:6] {
+			if _, err := tx.ExecContext(ctx, migration.SQL); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at, checksum, dirty) VALUES ($1,CURRENT_TIMESTAMP,$2,false)`, migration.Version, migration.Checksum); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO domains(id,name,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000801','example.test',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
+	if err := MigrateSQL(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	var scope string
+	var revision int64
+	if err := db.QueryRow(`SELECT outbound_scope, outbound_policy_revision FROM domains WHERE name='example.test'`).Scan(&scope, &revision); err != nil {
+		t.Fatal(err)
+	}
+	if scope != "unrestricted" || revision != 1 {
+		t.Fatalf("scope=%q revision=%d, want unrestricted/1", scope, revision)
+	}
+	if _, err := db.Exec(`UPDATE domains SET outbound_scope='invalid' WHERE name='example.test'`); err == nil {
+		t.Fatal("invalid outbound scope accepted")
+	}
+	if _, err := db.Exec(`UPDATE domains SET outbound_policy_revision=0 WHERE name='example.test'`); err == nil {
+		t.Fatal("non-positive outbound policy revision accepted")
 	}
 }
 

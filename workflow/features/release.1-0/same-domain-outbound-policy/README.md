@@ -2,9 +2,9 @@
 
 ## State
 
-Planned. High priority by owner direction. This is the next implementation
-feature after the currently active live-identity boundary and is a dependency
-of `release.1-0.alpha-integration`.
+In progress. Owner direction advanced this feature after the live-identity
+boundary became deployment-blocked. It remains a dependency of
+`release.1-0.alpha-integration`.
 
 ## Objective
 
@@ -41,6 +41,6 @@ forwarding bypasses. Inbound mailbox delivery remains independent.
 
 ## Admission boundary
 
-Documentation and workflow planning do not complete this feature. It remains
-`planned` until implementation, tests, deployment evidence, queue/restore
+The admitted foundation batch does not complete this feature. It remains
+`in_progress` until implementation, tests, deployment evidence, queue/restore
 proof, review, and handoff satisfy the declared verification matrix.
