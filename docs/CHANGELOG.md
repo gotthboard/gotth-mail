@@ -21,9 +21,39 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 12:17 CDT — Preserve JSON metadata on pending activation
+### 2026-09-19 12:25 CDT — Complete same-domain outbound-policy admission
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- workflow manifest, event log, feature state, and hostile-path evidence
+- changelog
+
+Explanation:
+
+Marked the same-domain outbound-policy feature done only after the final
+committed tree passed its repository-wide gates, rebuilt reference-stack smoke,
+and two independent clean admission reviews. Advanced the single active
+repository slot to the remaining production-webmail alpha work. This is a
+repository handoff, not a deployment or release.
+
+Verification:
+
+- `go test -p=2 ./... -count=1` and `go test -race -p=2 ./... -count=1`
+- `go vet ./...` and all four command builds
+- shell syntax, Compose render, clean-tree, and diff checks
+- rebuilt-container end-to-end outbound-policy smoke
+- two independent final clean reviews
+
+Risks / non-goals:
+
+- no live queue, domain policy, deployment, production credential, DNS record,
+  tag, release, or external service changed
+
+### 2026-09-19 12:17 CDT — Preserve JSON metadata on pending activation
+
+Commit: `ba851a9`
 
 Affected files:
 

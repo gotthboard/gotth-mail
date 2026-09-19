@@ -2,9 +2,9 @@
 
 ## State
 
-In progress. Owner direction advanced this feature after the live-identity
-boundary became deployment-blocked. It remains a dependency of
-`release.1-0.alpha-integration`.
+Done. The implementation, hostile-path tests, reference-stack proof, repository
+gates, and two independent final clean reviews are recorded in this feature's
+evidence. It remains a completed dependency of `release.1-0.alpha-integration`.
 
 ## Objective
 
@@ -36,11 +36,10 @@ forwarding bypasses. Inbound mailbox delivery remains independent.
   the policy boundary;
 - no implicit trust for subdomains or other locally hosted domains;
 - no header-based policy, internal-sender bypass, or permissive failure mode;
-- no automatic hold release when the policy returns to `unrestricted`;
-- no runtime change in this documentation-planning feature.
+- no automatic hold release when the policy returns to `unrestricted`.
 
 ## Admission boundary
 
-The admitted foundation batch does not complete this feature. It remains
-`in_progress` until implementation, tests, deployment evidence, queue/restore
-proof, review, and handoff satisfy the declared verification matrix.
+The feature is admitted as complete on the repository line. This is not a live
+deployment claim: no production domain policy, queue, credential, DNS record,
+tag, release, or external service was changed.

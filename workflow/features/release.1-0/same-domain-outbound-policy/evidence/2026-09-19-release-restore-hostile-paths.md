@@ -2,8 +2,8 @@
 
 Date: 2026-09-19 09:28 CDT
 
-State: implementation complete; final repository gates and cold admission
-reviews remain before workflow completion.
+State: complete. Repository gates, reference-stack proof, and the required two
+independent final clean admission reviews passed on commit `ba851a9`.
 
 ## Release boundary
 
@@ -82,7 +82,7 @@ reviews remain before workflow completion.
     relay transaction, and verified exactly one immutable
     `system:mailer-daemon@example.test` provenance row.
 
-The final disposable held queue ID was `4hnF160N5dzg8VL`. The cleanup trap
+The final disposable held queue ID was `4hnGXw0JJWzhPMN`. The cleanup trap
 removed the entire Compose project and its volumes.
 
 ## Verification completed in this checkpoint
@@ -206,9 +206,22 @@ exactly one list source and no system source, explicitly released and relayed
 it, then separately proved that locally generated null-sender mail receives
 the durable mailer-daemon source.
 
-## Remaining admission work
+## Final admission
 
-- repository-wide serial, race, vet, command-build, Compose-render, and workflow
-  traceability gates on the final tree;
-- one cold Judge pass, repair of any real finding, then two independent fresh
-  clean passes as required by the feature handoff discipline.
+The committed `ba851a9` tree passed:
+
+- repository-wide serial tests with `go test -p=2 ./... -count=1`;
+- repository-wide race tests with `go test -race -p=2 ./... -count=1`;
+- `go vet ./...`;
+- builds of `gotth-mail`, `gotth-mailctl`, `gotth-mail-plugin`, and
+  `gotth-mail-postfix-gate`;
+- shell syntax checks, `docker compose config --quiet`, `git diff --check`, and
+  a clean worktree;
+- a final rebuilt-container smoke covering held inbound forwarding, explicit
+  release, one unrestricted two-recipient relay, authenticated system-sender
+  submission/final transport, and locally generated null-sender transport.
+
+A fresh final review of submission, transport, helper, and release boundaries
+returned clean. An independent second review of persistence, migrations,
+backup/restore, queue identity, state transitions, and failure visibility also
+returned clean. No live service or production state was changed.
