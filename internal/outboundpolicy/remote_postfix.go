@@ -119,7 +119,14 @@ func (b *RemotePostfixBoundary) Retry(ctx context.Context, queueID string) error
 	if !validLongQueueID(queueID) {
 		return errors.New("invalid Postfix retry request")
 	}
-	return b.callOptional(ctx, "/v1/queue/retry", queueID, nil)
+	err := b.callOptional(ctx, "/v1/queue/retry", queueID, nil)
+	if err == nil {
+		return nil
+	}
+	if _, snapshotErr := b.Snapshot(ctx, queueID); errors.Is(snapshotErr, ErrQueueIDNotFound) {
+		return nil
+	}
+	return err
 }
 
 // call performs one bounded authenticated JSON request to a fixed endpoint.

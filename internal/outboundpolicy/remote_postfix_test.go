@@ -4,10 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
 
 func TestRemotePostfixBoundaryUsesFixedAuthenticatedEndpoints(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
@@ -120,5 +128,59 @@ func TestRemotePostfixBoundaryClassifiesMissingExactQueueID(t *testing.T) {
 	}
 	if _, err := boundary.Snapshot(context.Background(), "BCDFGHJKLMNPz6789"); !errors.Is(err, ErrQueueIDNotFound) {
 		t.Fatalf("missing queue ID classification=%v", err)
+	}
+}
+
+func TestRemotePostfixBoundaryReconcilesLostRetryResponse(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	const releaseToken = "abcdef0123456789abcdef0123456789"
+	const queueID = "BCDFGHJKLMNPz6789"
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		switch request.URL.Path {
+		case "/v1/queue/retry":
+			if request.Header.Get("Authorization") != "Bearer "+releaseToken {
+				t.Fatalf("retry authorization=%q", request.Header.Get("Authorization"))
+			}
+			return nil, errors.New("response lost after helper execution")
+		case "/v1/queue/summary":
+			if request.Header.Get("Authorization") != "Bearer "+token {
+				t.Fatalf("summary authorization=%q", request.Header.Get("Authorization"))
+			}
+			return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("queue ID not found\n")), Request: request}, nil
+		default:
+			t.Fatalf("unexpected path %q", request.URL.Path)
+			return nil, nil
+		}
+	})}
+	boundary := &RemotePostfixBoundary{BaseURL: "http://postfix-helper.test", Token: token, ReleaseToken: releaseToken, Client: client}
+	if err := boundary.Retry(context.Background(), queueID); err != nil {
+		t.Fatalf("lost response with vanished exact ID was not reconciled: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests=%d", requests)
+	}
+}
+
+func TestRemotePostfixBoundaryRetainsRetryFailureWhenExactIDRemains(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	const releaseToken = "abcdef0123456789abcdef0123456789"
+	const queueID = "BCDFGHJKLMNPz6789"
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/v1/queue/retry":
+			return &http.Response{StatusCode: http.StatusConflict, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("queue retry failed\n")), Request: request}, nil
+		case "/v1/queue/summary":
+			body := `{"deferred":1,"total":1,"digest":"` + strings.Repeat("a", 64) + `"}`
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+		default:
+			t.Fatalf("unexpected path %q", request.URL.Path)
+			return nil, nil
+		}
+	})}
+	boundary := &RemotePostfixBoundary{BaseURL: "http://postfix-helper.test", Token: token, ReleaseToken: releaseToken, Client: client}
+	if err := boundary.Retry(context.Background(), queueID); err == nil {
+		t.Fatal("retry failure was hidden while the exact queue ID remained")
 	}
 }

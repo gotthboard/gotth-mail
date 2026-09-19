@@ -84,6 +84,14 @@ exists, expires stale executions, makes audit dependencies mandatory, records
 fixed-code denied events for unsupported updates, preserves initiator
 attribution, and rejects unwired notification servers as unavailable.
 
+The next fresh pass found that exact-retry reconciliation stopped at the local
+Postfix command boundary. Production crosses an authenticated HTTP helper, so
+a successfully executed retry with a lost 204 response still looked failed to
+core. The remote boundary now reads the exact queue ID after any retry error,
+accepts only the typed not-found result as completed, and preserves the
+original error when the ID remains or the snapshot cannot prove absence. The
+implementation no longer claims undocumented blanket repeatability.
+
 Verification:
 
 - full serial Go suite and focused race suite

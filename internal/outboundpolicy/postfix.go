@@ -134,7 +134,8 @@ func (b PostfixBoundary) Flush(ctx context.Context) error {
 }
 
 // Retry schedules immediate delivery of one exact deferred queue ID. This is
-// postqueue(1) `-i`, not postsuper requeueing, so retry is safely repeatable.
+// postqueue(1) `-i`, not postsuper requeueing. A failed call is reconciled
+// against the exact live queue ID instead of assuming the operation repeats.
 func (b PostfixBoundary) Retry(ctx context.Context, queueID string) error {
 	if !validLongQueueID(queueID) {
 		return errors.New("invalid Postfix retry request")
