@@ -1,6 +1,6 @@
 # Production notification runtime admission — 2026-09-19
 
-Candidate repair commits: `3f34aa5`, `78ce26e`, `23075c5`
+Candidate repair commits: `3f34aa5`, `78ce26e`, `23075c5`, `38db220`
 
 ## Admitted behavior
 
@@ -76,6 +76,15 @@ the remote client boundary. Only typed not-found proves completion; a present
 ID or an unavailable/invalid observation retains the original mutation error.
 The regression suite simulates a lost helper response and separately proves
 that a still-present queue ID cannot hide a failed retry.
+
+An independent product-contract pass found that the PRD, architecture, and
+implementation spec still described config apply, DKIM rotation, rollback,
+and break-glass as supported approval workflows while the admitted alpha and
+feature decomposition intentionally implement only queue flush/retry. Commit
+`38db220` makes that boundary honest: queue approvals are enabled; the other
+candidate classes remain rejected until separately specified and proven core
+mutation mechanisms exist. The correction does not add a fake generic
+chat-to-function path or weaken confirmation policy.
 
 ## Verification
 
