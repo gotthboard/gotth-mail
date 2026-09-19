@@ -1,6 +1,6 @@
 # Production notification runtime admission — 2026-09-19
 
-Candidate line: `de21330` plus the cold-review repair commit under review
+Candidate repair commit: `3f34aa5`
 
 ## Admitted behavior
 
@@ -23,22 +23,50 @@ Candidate line: `de21330` plus the cold-review repair commit under review
   helper admits only documented `postqueue -f` and exact-ID `postqueue -i`
   scheduling operations. Leased SQL execution recovers crash/failure paths;
   success consumption and audit commit transactionally.
+- The authenticated queue flush/retry API creates an inert SQL approval,
+  delivers the bound Telegram prompt, and only then activates the request.
+  Creation, activation, lease claims, retries, completion, invalidation, and
+  their audit records share transactions. Telegram returns fixed denial text
+  and never serializes internal execution or audit errors.
 - The owner-only Telegram actor mapping file transactionally replaces the
-  configured mapping set. Operational doctor, certificate, backup, queue,
-  abuse/rate-limit, deployment, and plugin-health events have production
-  dispatch points through the configured delivery service.
-- Plugin status responses no longer serialize service credentials.
+  configured mapping set, including an explicit empty replacement that
+  revokes stale mappings. Operational doctor, certificate, backup, queue,
+  abuse/rate-limit, deployment, and plugin-health transitions are polled from
+  authoritative state, durably deduplicated, retried after delivery failure,
+  and sent through the configured delivery service.
+- Plugin health uses the authenticated live gRPC health RPC. Plugin status
+  responses fail closed when a probe is unavailable and never serialize
+  service credentials or backend diagnostics. Domain summaries come from SQL,
+  and read-only HTTP endpoints no longer dispatch alerts as a side effect.
+- The reference Compose stack selects exactly one notification sink. The
+  default is Telegram; the signed-email overlay replaces it with the mandatory
+  OpenPGP sink. Core waits for the selected Unix socket, and the Telegram actor
+  map is copied to a private runtime file before startup.
 - Migration `0013_notification_approval_binding` rejects legacy unbound
   prompts; `0014_notification_approval_execution` adds recoverable execution
-  state and `0015_notification_telegram_updates` adds webhook deduplication.
+  state; `0015_notification_telegram_updates` adds webhook deduplication; and
+  `0016_notification_event_states` adds durable transition/delivery state.
+
+## Cold-review repair
+
+The rejected candidate at `bd52079` had seven material defects: no production
+approval initiator, GET-triggered alert spam, non-authoritative command data,
+stale actor mappings that could not be revoked, leaked Telegram errors and
+discarded audit failures, a Compose profile that did not actually select
+signed email, and no container proof of an approved real Postfix mutation.
+Commit `3f34aa5` closes all seven rather than narrowing the claims around them.
 
 ## Verification
 
-- `go test -p=2 ./...`
-- `go test -race -p=2 ./internal/notification ./internal/notifyruntime ./internal/outboundpolicy ./internal/postfixgate ./internal/api ./cmd/gotth-mail ./cmd/gotth-mail-plugin ./cmd/gotth-mail-postfix-gate`
-- `go vet ./...`
-- `scripts/containerized-notification-plugin-smoke.sh`
-- normal and signed-email-profile `docker compose config`
+- `GOMAXPROCS=4 go test -count=1 -p=2 ./...`
+- `GOMAXPROCS=4 go test -race -count=1 -p=2 ./...`
+- `GOMAXPROCS=4 go vet ./...`
+- `scripts/containerized-notification-plugin-smoke.sh` passed, including
+  authenticated initiation, captured prompt, real `postqueue -f`, observed
+  SMTP delivery, injected post-mutation ambiguity, stale-lease recovery,
+  replay rejection, and exact SQL audit cardinality.
+- `scripts/verify-notification-compose.sh`
+- normal and signed-email-overlay `docker compose config`
 - focused SQL migration, gRPC, Telegram API, webhook, command, approval,
   exact-sender email, and secret-redaction tests
 - `git diff --check`
