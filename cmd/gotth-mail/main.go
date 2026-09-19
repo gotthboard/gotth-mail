@@ -23,6 +23,9 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/diag"
 	"forgejo/gotthboard/gotth-mail/internal/httpui"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/notifyruntime"
+	"forgejo/gotthboard/gotth-mail/internal/ops"
 	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/store"
@@ -52,6 +55,13 @@ func main() {
 	}
 	if err := configureWebmailFromEnv(&server); err != nil {
 		log.Fatalf("configure webmail: %v", err)
+	}
+	notificationBackend, err := configureNotificationsFromEnv(&server)
+	if err != nil {
+		log.Fatalf("configure notifications: %v", err)
+	}
+	if notificationBackend != nil {
+		defer notificationBackend.Close()
 	}
 	if policyAddr := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_POLICY_LISTEN")); policyAddr != "" {
 		go servePostfixPolicy(policyAddr, server.Daemon)
@@ -112,9 +122,84 @@ func runtimeMux(server api.Server) http.Handler {
 	mux.Handle("/readyz", serverHandler)
 	mux.Handle("/webmail", serverHandler)
 	mux.Handle("/webmail/", serverHandler)
+	if server.NotificationReceiver != nil {
+		mux.Handle("/internal/v1/notifications/telegram", server.NotificationReceiver)
+	}
 	sessions, _ := server.OIDCStore.(authn.IdentitySessionStore)
 	mux.Handle("/", httpui.HandlerWithAdminIdentityAndSessions(referenceAdminStore(), server.Identity, server.Authz, sessions, server.OIDCNow))
 	return mux
+}
+
+func configureNotificationsFromEnv(server *api.Server) (*notifyruntime.GRPCNotificationBackend, error) {
+	name := strings.TrimSpace(os.Getenv("GOTTH_MAIL_NOTIFICATION_PLUGIN_NAME"))
+	endpoint := strings.TrimSpace(os.Getenv("GOTTH_MAIL_NOTIFICATION_PLUGIN_ENDPOINT"))
+	token, err := secretFromEnvOrFile("GOTTH_MAIL_NOTIFICATION_PLUGIN_SERVICE_TOKEN", "GOTTH_MAIL_NOTIFICATION_PLUGIN_SERVICE_TOKEN_FILE")
+	if err != nil {
+		return nil, err
+	}
+	webhookSecret, err := secretFromEnvOrFile("GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET", "GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET_FILE")
+	if err != nil {
+		return nil, err
+	}
+	configured := name != "" || endpoint != "" || token != ""
+	if !configured {
+		if webhookSecret != "" {
+			return nil, fmt.Errorf("notification plugin configuration is required with Telegram webhook reception")
+		}
+		return nil, nil
+	}
+	if name == "" || endpoint == "" || token == "" {
+		return nil, fmt.Errorf("GOTTH_MAIL_NOTIFICATION_PLUGIN_NAME, GOTTH_MAIL_NOTIFICATION_PLUGIN_ENDPOINT, and notification plugin service token are required together")
+	}
+	if server.AuditDB == nil {
+		return nil, fmt.Errorf("GOTTH_MAIL_DATABASE_URL or GOTTH_MAIL_DATABASE_URL_FILE is required when notifications are enabled")
+	}
+	registration, err := plugin.FirstMechanismPlugin(name, token)
+	if err != nil || registration.Seam != plugin.Notification {
+		return nil, fmt.Errorf("unsupported notification plugin %q", name)
+	}
+	registration.Endpoint = endpoint
+	backend, err := notifyruntime.NewGRPCNotificationBackend(endpoint, token)
+	if err != nil {
+		return nil, err
+	}
+	recorder := notification.SQLRecorder{DB: server.AuditDB}
+	server.NotificationRecorder = recorder
+	server.NotificationService = &notification.Service{Backend: backend, Recorder: recorder}
+	server.NotificationPrompter = backend
+	if server.Plugins.Plugins == nil {
+		server.Plugins.Plugins = map[string]plugin.Registration{}
+	}
+	server.Plugins.Plugins[name] = registration
+	mapper := notification.SQLActorMapper{DB: server.AuditDB}
+	approvals := notification.SQLApprovalStore{DB: server.AuditDB, Audit: audit.SQLWriter{DB: server.AuditDB}}
+	if name == plugin.FirstNotifyName {
+		if server.Queue == nil {
+			server.Queue = &ops.Queue{}
+		}
+		server.ApprovalService = &notifyruntime.ApprovalService{Mapper: mapper, Authorizer: server.Authz, Store: approvals, Prompter: backend, Queue: server.Queue}
+	}
+	if webhookSecret != "" {
+		if name != plugin.FirstNotifyName {
+			_ = backend.Close()
+			return nil, fmt.Errorf("Telegram webhook reception requires %s", plugin.FirstNotifyName)
+		}
+		if len(webhookSecret) < 16 || len(webhookSecret) > 256 || strings.ContainsAny(webhookSecret, " \t\r\n") {
+			_ = backend.Close()
+			return nil, fmt.Errorf("valid Telegram webhook secret required")
+		}
+		executor := notifyruntime.ApprovalExecutor{Mapper: mapper, Approvals: approvals, Authorizer: server.Authz, Queue: server.Queue, Audit: audit.SQLWriter{DB: server.AuditDB}}
+		provider := notifyruntime.RuntimeCommandProvider{Queue: server.Queue, Daemon: &server.Daemon, Plugins: server.Plugins}
+		receiver := notification.TelegramReceiver{
+			Commands: notification.CommandService{Mapper: mapper, Authorizer: server.Authz, Provider: provider, Audit: audit.SQLWriter{DB: server.AuditDB}},
+			ExecuteApproval: func(ctx context.Context, id, bindingToken string, actor notification.TransportActor) error {
+				_, err := executor.ExecuteTelegramApproval(ctx, id, bindingToken, actor)
+				return err
+			},
+		}
+		server.NotificationReceiver = receiver.HandlerWithSecret(webhookSecret)
+	}
+	return backend, nil
 }
 
 func configureSCIMFromEnv(server *api.Server) error {

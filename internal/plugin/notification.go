@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"encoding/base64"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ type NotificationPrompt struct {
 	ID, CorrelationID, Transport, ExternalActorID string
 	ActorType, ActorID                            string
 	Action, ResourceType, ResourceID              string
-	RequestHash, ExpiresAt                        string
+	RequestHash, ExpiresAt, ConfirmationToken     string
 	Title, Summary                                string
 }
 
@@ -116,7 +117,7 @@ func (s NotificationServer) SendPrompt(ctx context.Context, in *pluginv1.SendPro
 	if sink == nil {
 		sink = LocalNotificationSink{}
 	}
-	result, err := sink.SendPrompt(ctx, NotificationPrompt{ID: in.GetId(), CorrelationID: in.GetCorrelationId(), Transport: in.GetTransport(), ExternalActorID: in.GetExternalActorId(), ActorType: in.GetActorType(), ActorID: in.GetActorId(), Action: in.GetAction(), ResourceType: in.GetResourceType(), ResourceID: in.GetResourceId(), RequestHash: in.GetRequestHash(), ExpiresAt: in.GetExpiresAt(), Title: in.GetTitle(), Summary: in.GetSummary()})
+	result, err := sink.SendPrompt(ctx, NotificationPrompt{ID: in.GetId(), CorrelationID: in.GetCorrelationId(), Transport: in.GetTransport(), ExternalActorID: in.GetExternalActorId(), ActorType: in.GetActorType(), ActorID: in.GetActorId(), Action: in.GetAction(), ResourceType: in.GetResourceType(), ResourceID: in.GetResourceId(), RequestHash: in.GetRequestHash(), ExpiresAt: in.GetExpiresAt(), Title: in.GetTitle(), Summary: in.GetSummary(), ConfirmationToken: in.GetConfirmationToken()})
 	if err != nil {
 		return nil, notificationSinkError(err)
 	}
@@ -139,7 +140,8 @@ func (LocalNotificationSink) SendPrompt(ctx context.Context, p NotificationPromp
 	if err := ctx.Err(); err != nil {
 		return PromptResult{}, status.Error(codes.DeadlineExceeded, "deadline exceeded")
 	}
-	if strings.TrimSpace(p.ID) == "" || strings.TrimSpace(p.CorrelationID) == "" || strings.TrimSpace(p.Transport) == "" || strings.TrimSpace(p.ExternalActorID) == "" || strings.TrimSpace(p.ActorType) == "" || strings.TrimSpace(p.ActorID) == "" || strings.TrimSpace(p.Action) == "" || strings.TrimSpace(p.ResourceType) == "" || strings.TrimSpace(p.ResourceID) == "" || strings.TrimSpace(p.RequestHash) == "" || strings.TrimSpace(p.ExpiresAt) == "" {
+	binding, bindingErr := base64.RawURLEncoding.DecodeString(p.ConfirmationToken)
+	if strings.TrimSpace(p.ID) == "" || strings.TrimSpace(p.CorrelationID) == "" || strings.TrimSpace(p.Transport) == "" || strings.TrimSpace(p.ExternalActorID) == "" || strings.TrimSpace(p.ActorType) == "" || strings.TrimSpace(p.ActorID) == "" || strings.TrimSpace(p.Action) == "" || strings.TrimSpace(p.ResourceType) == "" || strings.TrimSpace(p.ResourceID) == "" || strings.TrimSpace(p.RequestHash) == "" || strings.TrimSpace(p.ExpiresAt) == "" || len(p.ConfirmationToken) != 22 || bindingErr != nil || len(binding) != 16 {
 		return PromptResult{}, status.Error(codes.InvalidArgument, "complete prompt binding required")
 	}
 	if strings.Contains(strings.ToLower(p.Summary+p.Title), "password=") || strings.Contains(strings.ToLower(p.Summary+p.Title), "token=") || strings.Contains(strings.ToLower(p.Summary+p.Title), "secret=") {

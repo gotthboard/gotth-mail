@@ -354,6 +354,19 @@ const webmailDeliveryUncertainMigrationSQL = `ALTER TABLE webmail_drafts
     ADD CONSTRAINT webmail_drafts_state_check
         CHECK (state IN ('draft','queued_for_submission','submitted','sent','failed','delivery_uncertain'));`
 
+const notificationApprovalBindingMigrationVersion = "0013_notification_approval_binding"
+const notificationApprovalBindingMigrationSQL = `ALTER TABLE notification_approvals
+    ADD COLUMN confirmation_binding_hash text NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000';
+
+UPDATE notification_approvals
+SET result = 'rejected', updated_at = CURRENT_TIMESTAMP
+WHERE result = 'pending';
+
+ALTER TABLE notification_approvals
+    ALTER COLUMN confirmation_binding_hash DROP DEFAULT,
+    ADD CONSTRAINT notification_approvals_binding_hash_required
+        CHECK (confirmation_binding_hash ~ '^[0-9a-f]{64}$');`
+
 var upgradeMigrations = []Migration{
 	newMigration(notificationDeliveryEvidenceMigrationVersion, notificationDeliveryEvidenceMigrationSQL),
 	newMigration(oidcProtectedAttemptsMigrationVersion, oidcProtectedAttemptsMigrationSQL),
@@ -366,6 +379,7 @@ var upgradeMigrations = []Migration{
 	newMigration(outboundQueueReleaseMigrationVersion, outboundQueueReleaseMigrationSQL),
 	newMigration(webmailCCBCCMigrationVersion, webmailCCBCCMigrationSQL),
 	newMigration(webmailDeliveryUncertainMigrationVersion, webmailDeliveryUncertainMigrationSQL),
+	newMigration(notificationApprovalBindingMigrationVersion, notificationApprovalBindingMigrationSQL),
 }
 
 func newMigration(version, sql string) Migration {

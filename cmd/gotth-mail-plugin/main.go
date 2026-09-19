@@ -67,7 +67,22 @@ func run() error {
 func notificationSinkFor(name string, getenv func(string) string) (plugin.NotificationSink, error) {
 	switch name {
 	case plugin.FirstNotifyName:
-		return plugin.LocalNotificationSink{}, nil
+		if getenv("GOTTH_MAIL_REFERENCE_FIXTURE") == "1" {
+			return plugin.LocalNotificationSink{}, nil
+		}
+		botToken, err := privateSecret(getenv("GOTTH_MAIL_TELEGRAM_BOT_TOKEN"), getenv("GOTTH_MAIL_TELEGRAM_BOT_TOKEN_FILE"), "Telegram bot token")
+		if err != nil {
+			return nil, fmt.Errorf("configure %s: %w", plugin.FirstNotifyName, err)
+		}
+		backend, err := notifyruntime.NewTelegramBackend(notifyruntime.TelegramConfig{
+			BotToken: botToken, AlertChatID: getenv("GOTTH_MAIL_TELEGRAM_ALERT_CHAT_ID"),
+			AllowedChatIDs: strings.Split(getenv("GOTTH_MAIL_TELEGRAM_ALLOWED_CHAT_IDS"), ","),
+			APIBaseURL:     getenv("GOTTH_MAIL_TELEGRAM_API_BASE_URL"),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("configure %s: %w", plugin.FirstNotifyName, err)
+		}
+		return backend, nil
 	case plugin.FirstEmailName:
 		policy, err := notifyruntime.NewHTTPPolicyClient(getenv("GOTTH_MAIL_OUTBOUND_POLICY_URL"))
 		if err != nil {
@@ -97,33 +112,36 @@ func notificationSinkFor(name string, getenv func(string) string) (plugin.Notifi
 }
 
 func notificationSMTPPassword(getenv func(string) string) (string, error) {
+	return privateSecret(getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD"), getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD_FILE"), "SMTP password")
+}
+
+func privateSecret(direct, path, label string) (string, error) {
 	const maxBytes = 4 << 10
-	direct := getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD")
-	path := strings.TrimSpace(getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD_FILE"))
+	path = strings.TrimSpace(path)
 	if direct != "" && path != "" {
-		return "", fmt.Errorf("SMTP password and password file are mutually exclusive")
+		return "", fmt.Errorf("%s and secret file are mutually exclusive", label)
 	}
 	if path == "" {
 		if len(direct) > maxBytes {
-			return "", fmt.Errorf("SMTP password exceeds %d bytes", maxBytes)
+			return "", fmt.Errorf("%s exceeds %d bytes", label, maxBytes)
 		}
 		return direct, nil
 	}
 	handle, err := os.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("open SMTP password file: %w", err)
+		return "", fmt.Errorf("open %s file: %w", label, err)
 	}
 	defer handle.Close()
 	info, err := handle.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("SMTP password file must be a private regular file")
+		return "", fmt.Errorf("%s file must be a private regular file", label)
 	}
 	data, err := io.ReadAll(io.LimitReader(handle, maxBytes+1))
 	if err != nil {
-		return "", fmt.Errorf("read SMTP password file: %w", err)
+		return "", fmt.Errorf("read %s file: %w", label, err)
 	}
 	if len(data) > maxBytes {
-		return "", fmt.Errorf("SMTP password file exceeds %d bytes", maxBytes)
+		return "", fmt.Errorf("%s file exceeds %d bytes", label, maxBytes)
 	}
 	return strings.TrimRight(string(data), "\r\n"), nil
 }

@@ -34,13 +34,24 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestNotificationSinkForPreservesTelegramWithoutEmailConfig(t *testing.T) {
-	sink, err := notificationSinkFor(plugin.FirstNotifyName, func(string) string { return "" })
+func TestNotificationSinkForKeepsLocalTelegramSinkFixtureOnly(t *testing.T) {
+	sink, err := notificationSinkFor(plugin.FirstNotifyName, func(name string) string {
+		if name == "GOTTH_MAIL_REFERENCE_FIXTURE" {
+			return "1"
+		}
+		return ""
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := sink.(plugin.LocalNotificationSink); !ok {
 		t.Fatalf("telegram sink = %T, want plugin.LocalNotificationSink", sink)
+	}
+}
+
+func TestNotificationSinkForRequiresTelegramProductionConfig(t *testing.T) {
+	if _, err := notificationSinkFor(plugin.FirstNotifyName, func(string) string { return "" }); err == nil || !strings.Contains(err.Error(), "bot token") {
+		t.Fatalf("missing Telegram config accepted: %v", err)
 	}
 }
 

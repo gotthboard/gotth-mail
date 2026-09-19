@@ -12,6 +12,10 @@ services:
       GOTTH_MAIL_POSTFIX_HELPER_TOKEN: ${GOTTH_MAIL_POSTFIX_HELPER_TOKEN:-reference-postfix-helper-token-32bytes}
       GOTTH_MAIL_POSTFIX_RELEASE_TOKEN: ${GOTTH_MAIL_POSTFIX_RELEASE_TOKEN:-reference-postfix-release-token-32byte}
       GOTTH_MAIL_NOTIFICATION_EMAIL_FROM: ${GOTTH_MAIL_NOTIFICATION_EMAIL_FROM:-}
+      GOTTH_MAIL_NOTIFICATION_PLUGIN_NAME: ${GOTTH_MAIL_NOTIFICATION_PLUGIN_NAME:-telegram-notification-sink}
+      GOTTH_MAIL_NOTIFICATION_PLUGIN_ENDPOINT: ${GOTTH_MAIL_NOTIFICATION_PLUGIN_ENDPOINT:-notification-plugin:9443}
+      GOTTH_MAIL_NOTIFICATION_PLUGIN_SERVICE_TOKEN: ${GOTTH_MAIL_NOTIFICATION_PLUGIN_SERVICE_TOKEN:-dev-plugin-token}
+      GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET: ${GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET:-reference-telegram-webhook-secret}
       GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ID: system:mailer-daemon@example.test
       GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ADDRESS: mailer-daemon@example.test
     ports:
@@ -260,6 +264,7 @@ services:
     environment:
       GOTTH_MAIL_PLUGIN_NAME: telegram-notification-sink
       GOTTH_MAIL_PLUGIN_SERVICE_TOKEN: dev-plugin-token
+      GOTTH_MAIL_REFERENCE_FIXTURE: "1"
   signed-email-notification-plugin:
     profiles: ["signed-email-notification"]
     build:

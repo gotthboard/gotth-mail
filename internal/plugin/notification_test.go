@@ -95,7 +95,7 @@ func TestNotificationBackendGRPCSendsAlertAndPromptWithServiceIdentity(t *testin
 	if alert.GetStatus() != "delivered" || !strings.Contains(alert.GetReason(), "accepted") {
 		t.Fatalf("bad alert response: %#v", alert)
 	}
-	prompt, err := client.SendPrompt(ctx, &pluginv1.SendPromptRequest{Id: "prompt-1", CorrelationId: "corr-1", Transport: "telegram", ExternalActorId: "chat:42:user:99", ActorType: "api_token", ActorId: "ops", Action: "queue:flush", ResourceType: "queue", ResourceId: "default", RequestHash: "sha256:abc", ExpiresAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339), Title: "Approve queue flush", Summary: "Flush deferred queue"})
+	prompt, err := client.SendPrompt(ctx, &pluginv1.SendPromptRequest{Id: "prompt-1", CorrelationId: "corr-1", Transport: "telegram", ExternalActorId: "chat:42:user:99", ActorType: "api_token", ActorId: "ops", Action: "queue:flush", ResourceType: "queue", ResourceId: "default", RequestHash: "sha256:abc", ExpiresAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339), Title: "Approve queue flush", Summary: "Flush deferred queue", ConfirmationToken: "abcdefghijklmnopqrstuv"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestNotificationBackendRejectsWrongTokenAndUnsafePayloads(t *testing.T) {
 	if _, err := client.SendAlert(goodCtx, &pluginv1.SendAlertRequest{Alert: &pluginv1.AlertMessage{Id: "alert-1", Class: "doctor.failure", Severity: "nonsense", Title: "x", Summary: "y", CorrelationId: "corr-1"}}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("bad alert accepted: %v", err)
 	}
-	if _, err := client.SendPrompt(goodCtx, &pluginv1.SendPromptRequest{Id: "prompt-1", CorrelationId: "corr-1", Transport: "telegram", ExternalActorId: "chat:42:user:99", ActorType: "api_token", ActorId: "ops", Action: "queue:flush", ResourceType: "queue", ResourceId: "default", RequestHash: "sha256:abc", ExpiresAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339), Title: "Approve", Summary: "token=secret"}); status.Code(err) != codes.InvalidArgument {
+	if _, err := client.SendPrompt(goodCtx, &pluginv1.SendPromptRequest{Id: "prompt-1", CorrelationId: "corr-1", Transport: "telegram", ExternalActorId: "chat:42:user:99", ActorType: "api_token", ActorId: "ops", Action: "queue:flush", ResourceType: "queue", ResourceId: "default", RequestHash: "sha256:abc", ExpiresAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339), Title: "Approve", Summary: "token=secret", ConfirmationToken: "abcdefghijklmnopqrstuv"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unsafe prompt accepted: %v", err)
 	}
 }
@@ -301,5 +301,5 @@ func TestNotificationBackendRemovesSecretMarkedEvidenceAtGRPCBoundary(t *testing
 }
 
 func validPromptRequest() *pluginv1.SendPromptRequest {
-	return &pluginv1.SendPromptRequest{Id: "prompt-1", CorrelationId: "corr-1", Transport: "telegram", ExternalActorId: "chat:42:user:99", ActorType: "api_token", ActorId: "ops", Action: "queue:flush", ResourceType: "queue", ResourceId: "default", RequestHash: "sha256:abc", ExpiresAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339), Title: "Approve queue flush", Summary: "Flush deferred queue"}
+	return &pluginv1.SendPromptRequest{Id: "prompt-1", CorrelationId: "corr-1", Transport: "telegram", ExternalActorId: "chat:42:user:99", ActorType: "api_token", ActorId: "ops", Action: "queue:flush", ResourceType: "queue", ResourceId: "default", RequestHash: "sha256:abc", ExpiresAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339), Title: "Approve queue flush", Summary: "Flush deferred queue", ConfirmationToken: "abcdefghijklmnopqrstuv"}
 }

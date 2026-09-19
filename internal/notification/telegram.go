@@ -2,48 +2,69 @@ package notification
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 )
 
-type ApprovalConfirmer interface {
-	Get(context.Context, string) (ApprovalRequest, bool, error)
-	Confirm(context.Context, ApprovalConfirmation) (ApprovalRequest, error)
-}
-
 type TelegramReceiver struct {
-	Commands  CommandService
-	Mapper    ActorMapper
-	Approvals ApprovalConfirmer
-	Now       func() time.Time
+	Commands        CommandService
+	ExecuteApproval func(context.Context, string, string, TransportActor) error
+	Now             func() time.Time
 }
 
 type TelegramReply struct {
+	Method string `json:"method,omitempty"`
 	ChatID string `json:"chat_id"`
 	Text   string `json:"text"`
 }
 
 func (r TelegramReceiver) Handler() http.Handler {
+	return r.handler("")
+}
+
+func (r TelegramReceiver) HandlerWithSecret(secret string) http.Handler {
+	if strings.TrimSpace(secret) == "" {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "telegram receiver unavailable", http.StatusServiceUnavailable)
+		})
+	}
+	return r.handler(secret)
+}
+
+func (r TelegramReceiver) handler(secret string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if secret != "" && subtle.ConstantTimeCompare([]byte(req.Header.Get("X-Telegram-Bot-Api-Secret-Token")), []byte(secret)) != 1 {
+			http.Error(w, "telegram update unauthorized", http.StatusUnauthorized)
+			return
+		}
 		defer req.Body.Close()
 		var update telegramUpdate
-		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 64<<10)).Decode(&update); err != nil {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, req.Body, 64<<10))
+		if err := decoder.Decode(&update); err != nil {
+			http.Error(w, "invalid telegram update", http.StatusBadRequest)
+			return
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 			http.Error(w, "invalid telegram update", http.StatusBadRequest)
 			return
 		}
 		reply, err := r.Process(req.Context(), update)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusForbidden)
+			http.Error(w, "telegram update denied", http.StatusForbidden)
 			return
 		}
+		reply.Method = "sendMessage"
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(reply)
 	})
@@ -72,30 +93,15 @@ func (r TelegramReceiver) processMessage(ctx context.Context, msg telegramMessag
 }
 
 func (r TelegramReceiver) processCallback(ctx context.Context, cb telegramCallbackQuery) (TelegramReply, error) {
-	id, ok := parseApprovalCallback(cb.Data)
+	id, bindingToken, ok := parseApprovalCallback(cb.Data)
 	if !ok {
 		return TelegramReply{ChatID: cb.ChatID(), Text: "unsupported callback"}, nil
 	}
-	if r.Mapper == nil || r.Approvals == nil {
+	if r.ExecuteApproval == nil {
 		return TelegramReply{ChatID: cb.ChatID(), Text: "approval service unavailable"}, errors.New("approval service unavailable")
 	}
 	transportActor := cb.Actor()
-	actor, mapped, err := r.Mapper.Map(ctx, transportActor)
-	if err != nil {
-		return TelegramReply{ChatID: cb.ChatID(), Text: "approval mapping failed"}, err
-	}
-	if !mapped {
-		return TelegramReply{ChatID: cb.ChatID(), Text: "approval actor unmapped"}, errors.New("notification actor mapping required")
-	}
-	req, found, err := r.Approvals.Get(ctx, id)
-	if err != nil {
-		return TelegramReply{ChatID: cb.ChatID(), Text: "approval lookup failed"}, err
-	}
-	if !found {
-		return TelegramReply{ChatID: cb.ChatID(), Text: "approval not found"}, errors.New("approval request not found")
-	}
-	_, err = r.Approvals.Confirm(ctx, ApprovalConfirmation{ID: id, TransportActor: transportActor, Actor: actor, Action: req.Action, Resource: req.Resource, RequestHash: req.RequestHash, Now: r.now()})
-	if err != nil {
+	if err := r.ExecuteApproval(ctx, id, bindingToken, transportActor); err != nil {
 		return TelegramReply{ChatID: cb.ChatID(), Text: "approval rejected: " + boundLine(err.Error(), 120)}, err
 	}
 	return TelegramReply{ChatID: cb.ChatID(), Text: "approval accepted"}, nil
@@ -135,16 +141,20 @@ func parseTelegramCommand(text string) (ReadOnlyCommand, bool) {
 	}
 }
 
-func parseApprovalCallback(data string) (string, bool) {
+func parseApprovalCallback(data string) (string, string, bool) {
 	data = strings.TrimSpace(data)
-	if !strings.HasPrefix(data, "gotth-mail:approve:") {
-		return "", false
+	if !strings.HasPrefix(data, "gm:a:") || len(data) > 64 {
+		return "", "", false
 	}
-	id := strings.TrimSpace(strings.TrimPrefix(data, "gotth-mail:approve:"))
-	if id == "" || strings.ContainsAny(id, " \t\r\n/") || len(id) > 128 {
-		return "", false
+	parts := strings.Split(strings.TrimPrefix(data, "gm:a:"), ":")
+	if len(parts) != 2 {
+		return "", "", false
 	}
-	return id, true
+	id, token := parts[0], parts[1]
+	if id == "" || strings.ContainsAny(id, " \t\r\n/") || len(id) > 36 || !validBindingToken(token) {
+		return "", "", false
+	}
+	return id, token, true
 }
 
 type telegramUpdate struct {

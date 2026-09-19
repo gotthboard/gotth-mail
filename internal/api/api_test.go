@@ -106,6 +106,15 @@ plugins:
 	}
 }
 
+func TestPluginStatusNeverSerializesServiceCredential(t *testing.T) {
+	handler := Server{Plugins: plugin.Registry{Plugins: map[string]plugin.Registration{"notify": {Name: "notify", Seam: plugin.Notification, Endpoint: "notification-plugin:9443", Enabled: true, ServiceToken: "credential-must-not-leak", Capabilities: []string{"notification.alert.send"}}}}}.Handler()
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/plugins", nil))
+	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "credential-must-not-leak") || strings.Contains(rr.Body.String(), "service_token") {
+		t.Fatalf("unsafe plugin status response status=%d body=%q", rr.Code, rr.Body.String())
+	}
+}
+
 func TestStatusReportsReleaseIdentity(t *testing.T) {
 	t.Parallel()
 	h := (Server{}).Handler()

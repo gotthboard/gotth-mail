@@ -68,5 +68,6 @@ message SendPromptRequest {
   string expires_at = 11;
   string title = 12;
   string summary = 13;
+  string confirmation_token = 14;
 }
 message PromptResponse { bool accepted = 1; string message = 2; }

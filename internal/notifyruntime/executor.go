@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
 	"forgejo/gotthboard/gotth-mail/internal/ops"
 )
@@ -16,11 +17,12 @@ type ApprovalStore interface {
 }
 
 type ApprovalExecutor struct {
-	Mapper    notification.ActorMapper
-	Approvals ApprovalStore
-	Queue     *ops.Queue
-	Audit     audit.Writer
-	Now       func() time.Time
+	Mapper     notification.ActorMapper
+	Approvals  ApprovalStore
+	Authorizer authz.Authorizer
+	Queue      *ops.Queue
+	Audit      audit.Writer
+	Now        func() time.Time
 }
 
 type ExecutionResult struct {
@@ -30,8 +32,8 @@ type ExecutionResult struct {
 	Executed   bool   `json:"executed"`
 }
 
-func (e ApprovalExecutor) ExecuteTelegramApproval(ctx context.Context, approvalID string, actor notification.TransportActor) (ExecutionResult, error) {
-	if e.Mapper == nil || e.Approvals == nil {
+func (e ApprovalExecutor) ExecuteTelegramApproval(ctx context.Context, approvalID, bindingToken string, actor notification.TransportActor) (ExecutionResult, error) {
+	if e.Mapper == nil || e.Approvals == nil || e.Authorizer == nil {
 		return ExecutionResult{}, errors.New("approval execution dependencies required")
 	}
 	mapped, ok, err := e.Mapper.Map(ctx, actor)
@@ -48,7 +50,23 @@ func (e ApprovalExecutor) ExecuteTelegramApproval(ctx context.Context, approvalI
 	if !found {
 		return ExecutionResult{}, errors.New("approval request not found")
 	}
-	confirmed, err := e.Approvals.Confirm(ctx, notification.ApprovalConfirmation{ID: approvalID, TransportActor: actor, Actor: mapped, Action: req.Action, Resource: req.Resource, RequestHash: req.RequestHash, Now: e.now()})
+	if req.UsedAt != nil || req.Result != "pending" {
+		return ExecutionResult{}, errors.New("approval replay rejected")
+	}
+	decision, err := e.Authorizer.Decide(ctx, mapped, req.Action, req.Resource)
+	if err != nil {
+		_ = e.writeAudit(ctx, req, "failure", "authorization_failed")
+		return ExecutionResult{}, err
+	}
+	if !decision.Allow {
+		_ = e.writeAudit(ctx, req, "denied", "authorization_denied")
+		return ExecutionResult{}, errors.New("approval action unauthorized")
+	}
+	if err := e.preflight(req); err != nil {
+		_ = e.writeAudit(ctx, req, "denied", err.Error())
+		return ExecutionResult{}, err
+	}
+	confirmed, err := e.Approvals.Confirm(ctx, notification.ApprovalConfirmation{ID: approvalID, TransportActor: actor, Actor: mapped, Action: req.Action, Resource: req.Resource, RequestHash: req.RequestHash, BindingToken: bindingToken, Now: e.now()})
 	if err != nil {
 		return ExecutionResult{}, err
 	}
@@ -61,7 +79,30 @@ func (e ApprovalExecutor) ExecuteTelegramApproval(ctx context.Context, approvalI
 	return result, e.writeAudit(ctx, confirmed, "success", "")
 }
 
+func (e ApprovalExecutor) preflight(r notification.ApprovalRequest) error {
+	if r.Action != "queue:flush" && r.Action != "queue:retry" {
+		return errors.New("unsupported approved mutation")
+	}
+	if r.Resource.Type != "queue" && r.Resource.Type != "postfix_queue" {
+		return errors.New("queue approval resource required")
+	}
+	if e.Queue == nil {
+		return errors.New("queue runtime required")
+	}
+	requestHash, err := queueApprovalRequestHash(r.Action, r.Resource, e.Queue)
+	if err != nil {
+		return err
+	}
+	if requestHash != r.RequestHash {
+		return errors.New("approval request changed")
+	}
+	return nil
+}
+
 func (e ApprovalExecutor) execute(ctx context.Context, r notification.ApprovalRequest) error {
+	if err := e.preflight(r); err != nil {
+		return err
+	}
 	switch r.Action {
 	case "queue:flush":
 		if e.Queue == nil {

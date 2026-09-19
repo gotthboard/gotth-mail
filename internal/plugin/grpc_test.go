@@ -94,7 +94,7 @@ func TestLiveNotificationBackendOverGRPC(t *testing.T) {
 	if alert.GetStatus() != "delivered" {
 		t.Fatalf("bad live alert response: %#v", alert)
 	}
-	prompt, err := client.SendPrompt(ctx, &pluginv1.SendPromptRequest{Id: "prompt-live-1", CorrelationId: "live-notify-smoke", Transport: "telegram", ExternalActorId: "chat:42:user:99", ActorType: "api_token", ActorId: "ops", Action: "queue:flush", ResourceType: "queue", ResourceId: "default", RequestHash: "sha256:abc", ExpiresAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339), Title: "Approve queue flush", Summary: "Flush deferred queue"})
+	prompt, err := client.SendPrompt(ctx, &pluginv1.SendPromptRequest{Id: "prompt-live-1", CorrelationId: "live-notify-smoke", Transport: "telegram", ExternalActorId: "chat:42:user:99", ActorType: "api_token", ActorId: "ops", Action: "queue:flush", ResourceType: "queue", ResourceId: "default", RequestHash: "sha256:abc", ExpiresAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339), Title: "Approve queue flush", Summary: "Flush deferred queue", ConfirmationToken: "abcdefghijklmnopqrstuv"})
 	if err != nil {
 		t.Fatal(err)
 	}

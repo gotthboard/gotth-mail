@@ -690,22 +690,23 @@ func (x *DeliveryResponse) GetEvidence() *DeliveryEvidence {
 }
 
 type SendPromptRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	CorrelationId   string                 `protobuf:"bytes,2,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	Transport       string                 `protobuf:"bytes,3,opt,name=transport,proto3" json:"transport,omitempty"`
-	ExternalActorId string                 `protobuf:"bytes,4,opt,name=external_actor_id,json=externalActorId,proto3" json:"external_actor_id,omitempty"`
-	ActorType       string                 `protobuf:"bytes,5,opt,name=actor_type,json=actorType,proto3" json:"actor_type,omitempty"`
-	ActorId         string                 `protobuf:"bytes,6,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
-	Action          string                 `protobuf:"bytes,7,opt,name=action,proto3" json:"action,omitempty"`
-	ResourceType    string                 `protobuf:"bytes,8,opt,name=resource_type,json=resourceType,proto3" json:"resource_type,omitempty"`
-	ResourceId      string                 `protobuf:"bytes,9,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
-	RequestHash     string                 `protobuf:"bytes,10,opt,name=request_hash,json=requestHash,proto3" json:"request_hash,omitempty"`
-	ExpiresAt       string                 `protobuf:"bytes,11,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
-	Title           string                 `protobuf:"bytes,12,opt,name=title,proto3" json:"title,omitempty"`
-	Summary         string                 `protobuf:"bytes,13,opt,name=summary,proto3" json:"summary,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Id                string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	CorrelationId     string                 `protobuf:"bytes,2,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Transport         string                 `protobuf:"bytes,3,opt,name=transport,proto3" json:"transport,omitempty"`
+	ExternalActorId   string                 `protobuf:"bytes,4,opt,name=external_actor_id,json=externalActorId,proto3" json:"external_actor_id,omitempty"`
+	ActorType         string                 `protobuf:"bytes,5,opt,name=actor_type,json=actorType,proto3" json:"actor_type,omitempty"`
+	ActorId           string                 `protobuf:"bytes,6,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
+	Action            string                 `protobuf:"bytes,7,opt,name=action,proto3" json:"action,omitempty"`
+	ResourceType      string                 `protobuf:"bytes,8,opt,name=resource_type,json=resourceType,proto3" json:"resource_type,omitempty"`
+	ResourceId        string                 `protobuf:"bytes,9,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	RequestHash       string                 `protobuf:"bytes,10,opt,name=request_hash,json=requestHash,proto3" json:"request_hash,omitempty"`
+	ExpiresAt         string                 `protobuf:"bytes,11,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	Title             string                 `protobuf:"bytes,12,opt,name=title,proto3" json:"title,omitempty"`
+	Summary           string                 `protobuf:"bytes,13,opt,name=summary,proto3" json:"summary,omitempty"`
+	ConfirmationToken string                 `protobuf:"bytes,14,opt,name=confirmation_token,json=confirmationToken,proto3" json:"confirmation_token,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SendPromptRequest) Reset() {
@@ -829,6 +830,13 @@ func (x *SendPromptRequest) GetSummary() string {
 	return ""
 }
 
+func (x *SendPromptRequest) GetConfirmationToken() string {
+	if x != nil {
+		return x.ConfirmationToken
+	}
+	return ""
+}
+
 type PromptResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Accepted      bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
@@ -935,7 +943,7 @@ const file_proto_gotth_mail_plugin_v1_plugin_proto_rawDesc = "" +
 	"\x10DeliveryResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12B\n" +
-	"\bevidence\x18\x03 \x01(\v2&.gotth.mail.plugin.v1.DeliveryEvidenceR\bevidence\"\x9e\x03\n" +
+	"\bevidence\x18\x03 \x01(\v2&.gotth.mail.plugin.v1.DeliveryEvidenceR\bevidence\"\xcd\x03\n" +
 	"\x11SendPromptRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12%\n" +
 	"\x0ecorrelation_id\x18\x02 \x01(\tR\rcorrelationId\x12\x1c\n" +
@@ -953,7 +961,8 @@ const file_proto_gotth_mail_plugin_v1_plugin_proto_rawDesc = "" +
 	"\n" +
 	"expires_at\x18\v \x01(\tR\texpiresAt\x12\x14\n" +
 	"\x05title\x18\f \x01(\tR\x05title\x12\x18\n" +
-	"\asummary\x18\r \x01(\tR\asummary\"F\n" +
+	"\asummary\x18\r \x01(\tR\asummary\x12-\n" +
+	"\x12confirmation_token\x18\x0e \x01(\tR\x11confirmationToken\"F\n" +
 	"\x0ePromptResponse\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage2\xa3\x02\n" +

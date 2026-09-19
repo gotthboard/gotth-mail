@@ -3,6 +3,7 @@ package notification
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,6 +30,11 @@ func TestTelegramReceiverRoutesReadOnlyCommandThroughCommandService(t *testing.T
 	if provider.got != CommandDoctorSummary || reply.ChatID != "42" || !strings.Contains(reply.Text, "[REDACTED]") || strings.Contains(reply.Text, "hunter2") {
 		t.Fatalf("bad reply=%#v provider=%s", reply, provider.got)
 	}
+	rr := httptest.NewRecorder()
+	recv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/telegram", strings.NewReader(`{"message":{"message_id":7,"from":{"id":99},"chat":{"id":42},"text":"/doctor"}}`)))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"method":"sendMessage"`) {
+		t.Fatalf("webhook reply status=%d body=%q", rr.Code, rr.Body.String())
+	}
 }
 
 func TestTelegramReceiverRejectsUnmappedCommandActor(t *testing.T) {
@@ -54,12 +60,24 @@ func TestTelegramReceiverConfirmsApprovalThroughSQLStoreOnce(t *testing.T) {
 	if err != nil || created.ID == "" {
 		t.Fatalf("create=%#v err=%v", created, err)
 	}
-	recv := TelegramReceiver{Mapper: mapper, Approvals: approvals, Now: func() time.Time { return now.Add(10 * time.Second) }}
-	reply, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-1", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gotth-mail:approve:approval-1"}})
+	recv := TelegramReceiver{ExecuteApproval: func(ctx context.Context, id, token string, transportActor TransportActor) error {
+		mapped, ok, err := mapper.Map(ctx, transportActor)
+		if err != nil || !ok {
+			return errors.New("notification actor mapping required")
+		}
+		req, found, err := approvals.Get(ctx, id)
+		if err != nil || !found {
+			return errors.New("approval request not found")
+		}
+		_, err = approvals.Confirm(ctx, ApprovalConfirmation{ID: id, TransportActor: transportActor, Actor: mapped, Action: req.Action, Resource: req.Resource, RequestHash: req.RequestHash, BindingToken: token, Now: now.Add(10 * time.Second)})
+		return err
+	}}
+	callback := "gm:a:approval-1:" + created.BindingToken
+	reply, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-1", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: callback}})
 	if err != nil || reply.Text != "approval accepted" {
 		t.Fatalf("approval rejected reply=%#v err=%v", reply, err)
 	}
-	if _, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-2", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gotth-mail:approve:approval-1"}}); err == nil || !strings.Contains(err.Error(), "replay") {
+	if _, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-2", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: callback}}); err == nil || !strings.Contains(err.Error(), "replay") {
 		t.Fatalf("approval replay accepted: %v", err)
 	}
 }
@@ -77,9 +95,15 @@ func TestTelegramReceiverRejectsWrongCallbackActor(t *testing.T) {
 	if _, err := approvals.Create(context.Background(), ApprovalRequest{ID: "approval-1", TransportActor: transportActor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: "sha256:abc", CorrelationID: "corr-1", ExpiresAt: now.Add(time.Minute)}, now); err != nil {
 		t.Fatal(err)
 	}
-	recv := TelegramReceiver{Mapper: mapper, Approvals: approvals, Now: func() time.Time { return now.Add(10 * time.Second) }}
-	reply, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-1", From: telegramUser{ID: 100}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gotth-mail:approve:approval-1"}})
-	if err == nil || !strings.Contains(err.Error(), "mapping") || !strings.Contains(reply.Text, "unmapped") {
+	recv := TelegramReceiver{ExecuteApproval: func(ctx context.Context, id, token string, transportActor TransportActor) error {
+		_, ok, err := mapper.Map(ctx, transportActor)
+		if err != nil || !ok {
+			return errors.New("notification actor mapping required")
+		}
+		return nil
+	}}
+	reply, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-1", From: telegramUser{ID: 100}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gm:a:approval-1:" + strings.Repeat("a", 22)}})
+	if err == nil || !strings.Contains(err.Error(), "mapping") || !strings.Contains(reply.Text, "rejected") {
 		t.Fatalf("wrong callback actor accepted reply=%#v err=%v", reply, err)
 	}
 }
@@ -95,5 +119,27 @@ func TestTelegramReceiverHTTPHandlerBoundsAndRejectsBadJSON(t *testing.T) {
 	recv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/telegram", bytes.NewBufferString("{")))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("bad json status=%d", rr.Code)
+	}
+	rr = httptest.NewRecorder()
+	recv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/telegram", bytes.NewBufferString(`{} {}`)))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("trailing json status=%d", rr.Code)
+	}
+}
+
+func TestTelegramReceiverHTTPHandlerRequiresWebhookSecret(t *testing.T) {
+	recv := TelegramReceiver{}
+	handler := recv.HandlerWithSecret("webhook-secret")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/telegram", bytes.NewBufferString(`{}`)))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("missing secret status=%d", rr.Code)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/telegram", bytes.NewBufferString(`{}`))
+	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", "webhook-secret")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden || strings.Contains(strings.ToLower(rr.Body.String()), "unsupported") {
+		t.Fatalf("authenticated error leaked detail status=%d body=%q", rr.Code, rr.Body.String())
 	}
 }

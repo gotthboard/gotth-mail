@@ -17,6 +17,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/diag"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/notifyruntime"
 	"forgejo/gotthboard/gotth-mail/internal/ops"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/render"
@@ -46,6 +47,10 @@ type Server struct {
 	WebmailClient        *webmail.Client
 	WebmailSender        *webmail.Sender
 	NotificationRecorder notification.Recorder
+	NotificationService  *notification.Service
+	NotificationPrompter plugin.NotificationSink
+	ApprovalService      *notifyruntime.ApprovalService
+	NotificationReceiver http.Handler
 	SCIM                 http.Handler
 }
 
@@ -355,7 +360,18 @@ func (s Server) Handler() http.Handler {
 		if !method(w, r, "GET") {
 			return
 		}
-		writeJSON(w, s.Plugins.Plugins)
+		type pluginStatus struct {
+			Name         string      `json:"name"`
+			Seam         plugin.Seam `json:"seam"`
+			Endpoint     string      `json:"endpoint"`
+			Enabled      bool        `json:"enabled"`
+			Capabilities []string    `json:"capabilities"`
+		}
+		out := make(map[string]pluginStatus, len(s.Plugins.Plugins))
+		for name, registration := range s.Plugins.Plugins {
+			out[name] = pluginStatus{Name: registration.Name, Seam: registration.Seam, Endpoint: registration.Endpoint, Enabled: registration.Enabled, Capabilities: append([]string(nil), registration.Capabilities...)}
+		}
+		writeJSON(w, out)
 	})
 	s.Daemon.Register(mux)
 	queue := s.Queue
