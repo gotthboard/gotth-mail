@@ -95,7 +95,7 @@ Mapping sources may include:
 
 Approval workflows cannot be enabled until mapping is configured and verified.
 
-The SQL core provides this mapping store, and the configured read-only command dispatcher consumes it. `GOTTH_MAIL_TELEGRAM_ACTOR_MAPPINGS_FILE` is a bounded owner-only JSON file that transactionally replaces the Telegram mapping set at startup, so stale authority is removed rather than accumulated. Runtime summaries query live Postfix state and current SQL backup/snapshot records. The Telegram webhook requires the Bot API secret-token header before bounded JSON decoding, rejects oversized or trailing JSON, and admits an actor only from an authenticated, well-formed update. Unauthenticated or malformed HTTP requests fail closed without a fabricated Telegram identity. Admitted commands, callbacks, approvals, and unsupported update shapes map exact chat/user actors and write audit events; application denials receive HTTP 200 with a bounded safe reply, and update IDs are durably deduplicated. Live deployment still requires operator-owned bot credentials, mappings, and webhook registration.
+The SQL core provides this mapping store, and the configured read-only command dispatcher consumes it. `GOTTH_MAIL_TELEGRAM_ACTOR_MAPPINGS_FILE` is a bounded owner-only JSON file that transactionally replaces the Telegram mapping set at startup, so stale authority is removed rather than accumulated. Runtime summaries query live Postfix state and current SQL backup/snapshot records. The Telegram webhook requires the Bot API secret-token header before bounded JSON decoding, rejects oversized or trailing JSON, and admits an actor only from an authenticated, well-formed actor-bearing update. Unauthenticated or malformed HTTP requests fail closed without a fabricated Telegram identity. Admitted commands and callbacks, including unsupported payloads, map exact chat/user actors and write audit events. Authenticated update envelopes with no recognized actor-bearing shape are denied and audited as unmapped transport input; they cannot authorize an action. Application denials receive HTTP 200 with a bounded safe reply, and update IDs are durably deduplicated. Live deployment still requires operator-owned bot credentials, mappings, and webhook registration.
 
 ## Approval workflow
 
@@ -170,8 +170,9 @@ Required tests:
 - alerts deliver without exposing secrets
 - delivery failures are visible in core status
 - read-only commands authenticate actor, map identity, authorize read, audit request, and return bounded summaries
-- authenticated, well-formed unsupported updates map identity and produce a
-  denied audit event; unauthenticated or malformed HTTP input fails closed
+- authenticated, well-formed unsupported actor-bearing payloads map identity
+  and produce a denied audit event; actorless update envelopes produce an
+  unmapped denied event; unauthenticated or malformed HTTP input fails closed
   before actor admission
 - chat membership alone does not authorize commands or approvals
 - approval workflows use core authorization/confirmation/mutation/audit paths

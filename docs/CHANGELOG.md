@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-19 — Telegram actorless update boundary
+
+- Corrected the Telegram audit contract for authenticated update envelopes that
+  contain no recognized actor-bearing message or callback. They are denied and
+  audited as unmapped transport input; exact identity mapping remains mandatory
+  for actor-bearing commands and callbacks. Added regression coverage for the
+  actorless audit path.
+
 ## 2026-09-19 — Telegram actor-admission contract correction
 
 - Clarified that Telegram identity mapping and action audit begin only after

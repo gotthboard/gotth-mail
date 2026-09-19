@@ -110,9 +110,11 @@ These remain notification backends, not authorities.
 - alerts deliver without exposing secrets
 - notification delivery failures are visible in core status
 - read-only commands return bounded summaries
-- every authenticated, well-formed Telegram update maps to an identity and an
-  audit event, including unsupported commands, callbacks, and update shapes;
-  unauthenticated or malformed HTTP input fails closed before actor admission
+- every authenticated, well-formed Telegram command or callback with an exact
+  actor maps to identity and an audit event, including unsupported command and
+  callback payloads; actorless update envelopes are denied and audited as
+  unmapped transport input, while unauthenticated or malformed HTTP input fails
+  closed before actor admission
 - approval workflows use core authorization/confirmation/mutation/audit paths
 - approval workflows reject stale/replayed/mismatched/expired approvals
 - actions outside the admitted queue flush/retry set are rejected before claim

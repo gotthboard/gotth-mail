@@ -155,9 +155,15 @@ func TestTelegramReceiverMapsAndAuditsUnsupportedRequests(t *testing.T) {
 	if reply, err := receiver.Process(context.Background(), telegramUpdate{UpdateID: 2, CallbackQuery: &telegramCallbackQuery{ID: "cb-unsafe", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "unsafe"}}); err == nil || reply.Text != "unsupported callback" {
 		t.Fatalf("unsupported callback was not denied: reply=%#v err=%v", reply, err)
 	}
+	if reply, err := receiver.Process(context.Background(), telegramUpdate{UpdateID: 3}); err == nil || reply != (TelegramReply{}) {
+		t.Fatalf("actorless update was not denied: reply=%#v err=%v", reply, err)
+	}
 	var count int
 	if err := db.QueryRow(`SELECT count(*) FROM audit_events WHERE actor_id='ops' AND action='notification.telegram.unsupported' AND result='denied'`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("unsupported request audits=%d err=%v", count, err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM audit_events WHERE actor_type='unmapped' AND actor_id='telegram:update:3' AND action='notification.telegram.unsupported' AND result='denied'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("actorless update audits=%d err=%v", count, err)
 	}
 }
 
