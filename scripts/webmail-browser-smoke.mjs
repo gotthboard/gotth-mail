@@ -100,8 +100,10 @@ try {
   const panes = await evaluate(cdp, "['folder-pane','list-pane','reader-pane'].every(id=>!!document.getElementById(id))");
   if (!panes) throw new Error('three-pane structure missing');
   if (!(await evaluate(cdp, "document.querySelector('.folder-button').textContent.includes('2 unread') && document.querySelector('.message-row').classList.contains('has-attachment')"))) throw new Error('unread count or attachment state missing');
+  const folderRequests = await evaluate(cdp, "performance.getEntriesByType('resource').filter(function(entry){return entry.name.endsWith('/api/v1/webmail/folders')}).length");
   await evaluate(cdp, "document.querySelector('.message-row').click()");
   await waitFor(cdp, "!document.getElementById('message-reader').hidden && document.getElementById('message-body').textContent.includes('Safe browser message body')", 'message reader');
+  await waitFor(cdp, "performance.getEntriesByType('resource').filter(function(entry){return entry.name.endsWith('/api/v1/webmail/folders')}).length>" + folderRequests, 'folder state refresh after mark read');
   await evaluate(cdp, "document.querySelector('[data-command=forward]').click()");
   if (!(await evaluate(cdp, "document.getElementById('composer').open && document.querySelectorAll('#compose-existing-list button').length===1"))) throw new Error('forward attachment state missing');
   await evaluate(cdp, "document.querySelector('#compose-existing-list button').click()");
