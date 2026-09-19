@@ -27,6 +27,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/version"
+	"forgejo/gotthboard/gotth-mail/internal/webmail"
 	gotthoidc "github.com/gotthboard/gotth-oidc/pkg/oidc"
 	_ "github.com/lib/pq"
 )
@@ -49,6 +50,9 @@ func main() {
 	if err := configurePostfixHelperFromEnv(&server); err != nil {
 		log.Fatalf("configure Postfix helper: %v", err)
 	}
+	if err := configureWebmailFromEnv(&server); err != nil {
+		log.Fatalf("configure webmail: %v", err)
+	}
 	if policyAddr := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_POLICY_LISTEN")); policyAddr != "" {
 		go servePostfixPolicy(policyAddr, server.Daemon)
 	}
@@ -64,6 +68,31 @@ func main() {
 		addr = ":8080"
 	}
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+// configureWebmailFromEnv installs the production mailbox-specific IMAP,
+// SMTP, and OpenPGP runtime only when its protected registry is explicit.
+// Partial configuration fails startup instead of leaving reachable 503 seams
+// or silently sending unsigned mail.
+func configureWebmailFromEnv(server *api.Server) error {
+	path := strings.TrimSpace(os.Getenv("GOTTH_MAIL_WEBMAIL_RUNTIME_FILE"))
+	if path == "" {
+		return nil
+	}
+	if server.AuditDB == nil || server.Daemon.OutboundPolicy == nil {
+		return fmt.Errorf("GOTTH_MAIL_DATABASE_URL or GOTTH_MAIL_DATABASE_URL_FILE is required when production webmail is enabled")
+	}
+	runtime, err := webmail.NewRuntimeRegistryFromFile(path)
+	if err != nil {
+		return err
+	}
+	server.WebmailClient = &webmail.Client{IMAP: runtime}
+	server.WebmailSender = &webmail.Sender{
+		Store: webmail.SQLDraftStore{DB: server.AuditDB}, SMTP: runtime,
+		Signer: runtime, Verifier: runtime, Resolver: runtime,
+		Audit: audit.SQLWriter{DB: server.AuditDB}, Policy: server.Daemon.OutboundPolicy,
+	}
+	return nil
 }
 
 func runtimeMux(server api.Server) http.Handler {

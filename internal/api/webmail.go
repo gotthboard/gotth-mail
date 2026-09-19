@@ -61,6 +61,25 @@ func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
 		}
 		writeJSON(w, map[string]any{"folders": folders})
 	})
+	mux.HandleFunc("/api/v1/webmail/quota", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, http.MethodGet) {
+			return
+		}
+		_, mailbox, ok := require(w, r)
+		if !ok {
+			return
+		}
+		if client == nil {
+			http.Error(w, "webmail client unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		used, limit, err := client.Quota(r.Context(), mailbox)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, map[string]int64{"used_bytes": used, "limit_bytes": limit})
+	})
 	mux.HandleFunc("/api/v1/webmail/messages/", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, http.MethodGet) {
 			return

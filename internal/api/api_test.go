@@ -1021,7 +1021,7 @@ func (f apiFakeIMAP) ReadMessage(ctx context.Context, user, folder, id string) (
 func (f apiFakeIMAP) Search(ctx context.Context, user, folder, query, cursor string, limit int) ([]webmail.Message, error) {
 	return f.messages, nil
 }
-func (f apiFakeIMAP) Quota(context.Context) (int64, int64, error) { return 0, 0, nil }
+func (f apiFakeIMAP) Quota(context.Context, string) (int64, int64, error) { return 0, 0, nil }
 
 type apiFakeSMTP struct{ sent bool }
 
@@ -1034,6 +1034,10 @@ type apiFakeSigner struct{}
 
 func (apiFakeSigner) SignMIME(ctx context.Context, id webmail.Identity, b []byte) ([]byte, webmail.SignatureStatus, error) {
 	return append([]byte("From: "+id.Address+"\r\nMIME-Version: 1.0\r\nContent-Type: multipart/signed; protocol=\"application/pgp-signature\"; micalg=pgp-sha256; boundary=\"sig\"\r\n\r\n--sig\r\nContent-Type: multipart/mixed; boundary=\"fake\"\r\nX-GOTTH-Mail-Signed-From: "+id.Address+"\r\nX-GOTTH-Mail-Signing-Fingerprint: "+id.Fingerprint+"\r\n\r\n"), append(b, []byte("\r\n--sig\r\nContent-Type: application/pgp-signature\r\n\r\n-----BEGIN PGP SIGNATURE-----\r\n\r\nfake-signature\r\n-----END PGP SIGNATURE-----\r\n--sig--\r\n")...)...), webmail.SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
+}
+
+func (apiFakeSigner) VerifyExactSender(ctx context.Context, signed []byte, id webmail.Identity) (webmail.SignatureStatus, error) {
+	return webmail.SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
 }
 
 type apiFakeResolver struct{}
@@ -1105,6 +1109,13 @@ func TestWebmailAPIRoutesRequireAuthAndReachClientSender(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "INBOX") {
 		t.Fatalf("folders status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = v3Req(http.MethodGet, "/api/v1/webmail/quota", "")
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "used_bytes") {
+		t.Fatalf("quota status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	req = v3Req(http.MethodGet, "/api/v1/webmail/messages/INBOX/m1", "")
 	req.Header.Set("Authorization", "Bearer web-secret-token")

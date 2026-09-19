@@ -110,6 +110,8 @@ services:
       GOTTH_MAIL_OUTBOUND_RELAY_ADDR: ${GOTTH_MAIL_OUTBOUND_RELAY_ADDR:-127.0.0.1:9}
       GOTTH_MAIL_SYSTEM_SENDER_SMTP_USERNAME: ${GOTTH_MAIL_SYSTEM_SENDER_SMTP_USERNAME:-system:alerts@example.test}
       GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD: ${GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD:-reference-system-sender-smtp-secret}
+      GOTTH_MAIL_WEBMAIL_SMTP_USERNAME: ${GOTTH_MAIL_WEBMAIL_SMTP_USERNAME:-smoke@example.test}
+      GOTTH_MAIL_WEBMAIL_SMTP_PASSWORD: ${GOTTH_MAIL_WEBMAIL_SMTP_PASSWORD:-smoke-secret}
     command:
       - /bin/sh
       - -lc
@@ -125,6 +127,9 @@ services:
         test -n "$$GOTTH_MAIL_SYSTEM_SENDER_SMTP_USERNAME"
         test -n "$$GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD"
         printf '%s' "$$GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD" | saslpasswd2 -c -p -f /etc/sasldb2 -a smtp "$$GOTTH_MAIL_SYSTEM_SENDER_SMTP_USERNAME"
+        test -n "$$GOTTH_MAIL_WEBMAIL_SMTP_USERNAME"
+        test -n "$$GOTTH_MAIL_WEBMAIL_SMTP_PASSWORD"
+        printf '%s' "$$GOTTH_MAIL_WEBMAIL_SMTP_PASSWORD" | saslpasswd2 -c -p -f /etc/sasldb2 -a smtp "$$GOTTH_MAIL_WEBMAIL_SMTP_USERNAME"
         chown root:postfix /etc/sasldb2
         chmod 0640 /etc/sasldb2
         until curl -fsS http://gotth-mail:8080/healthz >/dev/null; do sleep 1; done

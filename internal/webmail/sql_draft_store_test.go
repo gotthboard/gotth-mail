@@ -85,6 +85,22 @@ func TestSQLDraftStoreRejectsCrossMailboxOverwrite(t *testing.T) {
 	}
 }
 
+func TestSQLDraftStoreClaimsSubmissionExactlyOnce(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	st := SQLDraftStore{DB: db}
+	ctx := context.Background()
+	if err := st.PutDraft(ctx, Draft{ID: "draft-claim", From: "a@example.test", To: "to@example.test", Subject: "s", Body: "b", State: "draft"}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := st.ClaimDraftForSubmission(ctx, "draft-claim")
+	if err != nil || !ok || claimed.State != "queued_for_submission" {
+		t.Fatalf("first claim=%#v ok=%v err=%v", claimed, ok, err)
+	}
+	if _, ok, err := st.ClaimDraftForSubmission(ctx, "draft-claim"); err != nil || ok {
+		t.Fatalf("second claim ok=%v err=%v", ok, err)
+	}
+}
+
 func TestSenderSubmitPersistsSQLDraftState(t *testing.T) {
 	db := testpg.DB(t, store.MigrateSQL)
 	smtp := &fakeSMTP{}

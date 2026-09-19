@@ -59,22 +59,27 @@ func (f *fakeIMAP) Search(ctx context.Context, user, folder, query, cursor strin
 	}
 	return out, nil
 }
-func (f *fakeIMAP) Quota(context.Context) (int64, int64, error) { return 1, 10, nil }
+func (f *fakeIMAP) Quota(context.Context, string) (int64, int64, error) { return 1, 10, nil }
 
 type fakeSMTP struct {
 	submitted bool
+	calls     int
 	body      []byte
 	envelope  Envelope
+	err       error
 }
 
 func (f *fakeSMTP) Submit(ctx context.Context, e Envelope, b []byte) error {
 	f.submitted = true
+	f.calls++
 	f.body = b
 	f.envelope = e
-	return nil
+	return f.err
 }
 
 type fakeSigner struct{ fail bool }
+
+type fakeVerifier struct{ fail bool }
 
 type fakeResolver struct{}
 
@@ -117,6 +122,80 @@ func (f fakeSigner) SignMIME(ctx context.Context, id Identity, b []byte) ([]byte
 	return append([]byte("From: "+id.Address+"\r\nMIME-Version: 1.0\r\nContent-Type: multipart/signed; protocol=\"application/pgp-signature\"; micalg=pgp-sha256; boundary=\"sig\"\r\n\r\n--sig\r\nContent-Type: multipart/mixed; boundary=\"fake\"\r\nX-GOTTH-Mail-Signed-From: "+id.Address+"\r\nX-GOTTH-Mail-Signing-Fingerprint: "+id.Fingerprint+"\r\n\r\n"), append(b, []byte("\r\n--sig\r\nContent-Type: application/pgp-signature\r\n\r\n-----BEGIN PGP SIGNATURE-----\r\n\r\nfake-signature\r\n-----END PGP SIGNATURE-----\r\n--sig--\r\n")...)...), SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
 }
 
+func (f fakeSigner) VerifyExactSender(ctx context.Context, signed []byte, id Identity) (SignatureStatus, error) {
+	if f.fail {
+		return SignatureStatus{}, errors.New("verify fail")
+	}
+	return SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
+}
+
+func (f fakeVerifier) VerifyExactSender(ctx context.Context, signed []byte, id Identity) (SignatureStatus, error) {
+	if f.fail {
+		return SignatureStatus{}, errors.New("verify fail")
+	}
+	return SignatureStatus{Fingerprint: id.Fingerprint, Identity: id.Address, Signed: true}, nil
+}
+
+func TestSubmitCryptographicallyVerifiesBeforeSMTP(t *testing.T) {
+	smtp := &fakeSMTP{}
+	s := &Sender{
+		SMTP: smtp, Signer: fakeSigner{}, Verifier: fakeVerifier{fail: true}, Resolver: fakeResolver{},
+		Policy: fakeOutboundPolicy{}, Drafts: map[string]Draft{},
+	}
+	d := s.SaveDraft(Draft{From: "a@example.test", To: "b@example.test", Subject: "s", Body: "b", SigningFingerprint: "FP"})
+	if _, err := s.Submit(context.Background(), d.ID); err == nil {
+		t.Fatal("unverified signed message accepted")
+	}
+	if smtp.submitted {
+		t.Fatal("SMTP ran before exact-sender verification")
+	}
+}
+
+func TestSubmitPreservesAmbiguousAcceptanceAndRefusesDuplicateRetry(t *testing.T) {
+	smtp := &fakeSMTP{err: &SMTPDeliveryError{Class: SMTPFailureAmbiguous, Phase: "data_accept", Err: errors.New("eof")}}
+	s := &Sender{
+		SMTP: smtp, Signer: fakeSigner{}, Resolver: fakeResolver{}, Policy: fakeOutboundPolicy{}, Drafts: map[string]Draft{},
+	}
+	d := s.SaveDraft(Draft{From: "a@example.test", To: "b@example.test", Subject: "s", Body: "b", SigningFingerprint: "FP"})
+	got, err := s.Submit(context.Background(), d.ID)
+	if err == nil || got.State != "delivery_uncertain" || smtp.calls != 1 {
+		t.Fatalf("first submit state=%q calls=%d err=%v", got.State, smtp.calls, err)
+	}
+	if _, err := s.Submit(context.Background(), d.ID); err == nil {
+		t.Fatal("ambiguous delivery was retried")
+	}
+	if smtp.calls != 1 {
+		t.Fatalf("ambiguous delivery produced %d SMTP attempts", smtp.calls)
+	}
+}
+
+func TestSubmitDoesNotClaimDraftWhenRuntimeDependencyIsMissing(t *testing.T) {
+	s := &Sender{SMTP: &fakeSMTP{}, Signer: fakeSigner{}, Resolver: fakeResolver{}, Drafts: map[string]Draft{}}
+	d := s.SaveDraft(Draft{From: "a@example.test", To: "b@example.test", Subject: "s", Body: "b", SigningFingerprint: "FP"})
+	if _, err := s.Submit(context.Background(), d.ID); err == nil {
+		t.Fatal("missing policy accepted")
+	}
+	got, ok := s.Draft(d.ID)
+	if !ok || got.State != "draft" {
+		t.Fatalf("unconfigured submit claimed draft: %#v", got)
+	}
+}
+
+func TestSubmitInvalidRecipientDoesNotStrandClaimedDraft(t *testing.T) {
+	s := &Sender{
+		SMTP: &fakeSMTP{}, Signer: fakeSigner{}, Resolver: fakeResolver{},
+		Policy: fakeOutboundPolicy{}, Drafts: map[string]Draft{},
+	}
+	d := s.SaveDraft(Draft{From: "a@example.test", To: "bad\nrecipient", Subject: "s", Body: "b", SigningFingerprint: "FP"})
+	if _, err := s.Submit(context.Background(), d.ID); err == nil {
+		t.Fatal("invalid recipient accepted")
+	}
+	got, ok := s.Draft(d.ID)
+	if !ok || got.State != "failed" {
+		t.Fatalf("invalid recipient stranded claimed draft: %#v", got)
+	}
+}
+
 func fixtureClient() (*Client, *fakeIMAP) {
 	im := &fakeIMAP{folders: []string{"INBOX"}, messages: []Message{{ID: "1", Folder: "INBOX", From: "a@example.test", Subject: "Hello <x>", BodyHTML: `<b ok onclick="x">hi</b><script>bad()</script><img src="https://evil/x">`, BodyText: "hello body", Date: time.Unix(1, 0), Attachments: []Attachment{{Filename: "../x.txt", ContentType: "text/plain", Size: 1, Content: []byte("x")}}}, {ID: "2", Folder: "INBOX", From: "b@example.test", Subject: "Other", BodyText: "search term", Date: time.Unix(2, 0)}}}
 	return &Client{ExternalProviderUsable: true, IMAP: im}, im
@@ -130,7 +209,7 @@ func TestIMAPFolderListReadPaginationQuotaSearch(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0] != "INBOX" {
 		t.Fatalf("folders=%#v err=%v", got, err)
 	}
-	used, limit, err := c.Quota(context.Background())
+	used, limit, err := c.Quota(context.Background(), "u@example.test")
 	if err != nil || used != 1 || limit != 10 {
 		t.Fatalf("quota %d/%d %v", used, limit, err)
 	}

@@ -51,6 +51,9 @@ func TestMigrateSQLOnPostgres(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO webmail_drafts(id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, created_at, updated_at) VALUES ('draft-b','user@example.test','to@example.test','s','b','fp','garbage',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err == nil {
 		t.Fatal("expected draft state check constraint")
 	}
+	if _, err := db.Exec(`INSERT INTO webmail_drafts(id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, created_at, updated_at) VALUES ('draft-c','user@example.test','to@example.test','s','b','fp','delivery_uncertain',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatalf("webmail delivery uncertainty state missing: %v", err)
+	}
 	aw := audit.SQLWriter{DB: db}
 	if err := aw.Write(context.Background(), audit.Event{Actor: audit.ActorRef{Type: "local_admin", ID: "test"}, Source: &audit.RequestSource{IP: "127.0.0.1", UserAgent: "test-agent"}, Action: "config.apply", Resource: audit.ResourceRef{Type: "generated_config_set", ID: "abc"}, BeforeRedacted: map[string]any{"token": "secret"}, Result: "success"}); err != nil {
 		t.Fatal(err)

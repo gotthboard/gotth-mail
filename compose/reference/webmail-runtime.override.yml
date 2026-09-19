@@ -1,0 +1,39 @@
+services:
+  gotth-mail:
+    environment:
+      GOTTH_MAIL_WEBMAIL_RUNTIME_FILE: /run/secrets/webmail-runtime.json
+    volumes:
+      - type: bind
+        source: ${GOTTH_MAIL_WEBMAIL_RUNTIME_CONFIG_SOURCE}
+        target: /run/secrets/webmail-runtime.json
+        read_only: true
+      - type: bind
+        source: ${GOTTH_MAIL_WEBMAIL_IMAP_PASSWORD_SOURCE}
+        target: /run/secrets/webmail-imap-password
+        read_only: true
+      - type: bind
+        source: ${GOTTH_MAIL_WEBMAIL_SMTP_PASSWORD_SOURCE}
+        target: /run/secrets/webmail-smtp-password
+        read_only: true
+      - type: bind
+        source: ${GOTTH_MAIL_WEBMAIL_PRIVATE_KEY_SOURCE}
+        target: /run/secrets/webmail-signing-key.asc
+        read_only: true
+  test-runner:
+    volumes:
+      - type: bind
+        source: ${GOTTH_MAIL_WEBMAIL_RUNTIME_CONFIG_SOURCE}
+        target: /run/secrets/webmail-runtime.json
+        read_only: true
+      - type: bind
+        source: ${GOTTH_MAIL_WEBMAIL_IMAP_PASSWORD_SOURCE}
+        target: /run/secrets/webmail-imap-password
+        read_only: true
+      - type: bind
+        source: ${GOTTH_MAIL_WEBMAIL_SMTP_PASSWORD_SOURCE}
+        target: /run/secrets/webmail-smtp-password
+        read_only: true
+      - type: bind
+        source: ${GOTTH_MAIL_WEBMAIL_PRIVATE_KEY_SOURCE}
+        target: /run/secrets/webmail-signing-key.asc
+        read_only: true

@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -49,7 +50,7 @@ type IMAPClient interface {
 	ListMessages(context.Context, string, string, string, int) ([]Message, error)
 	ReadMessage(context.Context, string, string, string) (Message, error)
 	Search(context.Context, string, string, string, string, int) ([]Message, error)
-	Quota(context.Context) (int64, int64, error)
+	Quota(context.Context, string) (int64, int64, error)
 }
 type SMTPSubmitter interface {
 	Submit(context.Context, Envelope, []byte) error
@@ -86,11 +87,11 @@ func (c Client) FolderList(ctx context.Context, user string) ([]string, error) {
 	sort.Strings(fs)
 	return fs, err
 }
-func (c Client) Quota(ctx context.Context) (int64, int64, error) {
+func (c Client) Quota(ctx context.Context, user string) (int64, int64, error) {
 	if c.IMAP == nil {
 		return 0, 0, errors.New("imap client required")
 	}
-	return c.IMAP.Quota(ctx)
+	return c.IMAP.Quota(ctx, user)
 }
 func (c Client) List(ctx context.Context, user, folder, cursor string, limit int) (ListResult, error) {
 	if c.IMAP == nil {
@@ -168,11 +169,17 @@ type DraftStore interface {
 	Draft(context.Context, string) (Draft, bool, error)
 }
 
+type DraftSubmitClaimer interface {
+	ClaimDraftForSubmission(context.Context, string) (Draft, bool, error)
+}
+
 type Sender struct {
+	mu       sync.Mutex
 	Drafts   map[string]Draft
 	Store    DraftStore
 	SMTP     SMTPSubmitter
 	Signer   OpenPGPSigner
+	Verifier ExactSenderVerifier
 	Resolver SenderIdentityResolver
 	Audit    audit.Writer
 	Policy   OutboundPolicyEvaluator
@@ -247,27 +254,50 @@ func (s SQLDraftStore) Draft(ctx context.Context, id string) (Draft, bool, error
 	if s.DB == nil {
 		return Draft{}, false, errors.New("webmail draft db required")
 	}
-	var d Draft
-	var attachments, cc, bcc string
-	err := s.DB.QueryRowContext(ctx, `SELECT id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, reply_to, forward_of, attachments_json, cc_json, bcc_json FROM webmail_drafts WHERE id=$1`, id).Scan(&d.ID, &d.From, &d.To, &d.Subject, &d.Body, &d.SigningFingerprint, &d.State, &d.ReplyTo, &d.ForwardOf, &attachments, &cc, &bcc)
+	d, err := scanSQLDraft(s.DB.QueryRowContext(ctx, `SELECT id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, reply_to, forward_of, attachments_json, cc_json, bcc_json FROM webmail_drafts WHERE id=$1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Draft{}, false, nil
 	}
 	if err != nil {
 		return Draft{}, false, err
 	}
-	if attachments != "" {
-		if err := json.Unmarshal([]byte(attachments), &d.Attachments); err != nil {
-			return Draft{}, false, err
-		}
+	return d, true, nil
+}
+
+func (s SQLDraftStore) ClaimDraftForSubmission(ctx context.Context, id string) (Draft, bool, error) {
+	if s.DB == nil {
+		return Draft{}, false, errors.New("webmail draft db required")
 	}
-	if err := json.Unmarshal([]byte(cc), &d.Cc); err != nil {
-		return Draft{}, false, err
+	d, err := scanSQLDraft(s.DB.QueryRowContext(ctx, `UPDATE webmail_drafts SET state='queued_for_submission',updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND state IN ('draft','failed') RETURNING id,mailbox,to_addr,subject,body_text,signing_fingerprint,state,reply_to,forward_of,attachments_json,cc_json,bcc_json`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Draft{}, false, nil
 	}
-	if err := json.Unmarshal([]byte(bcc), &d.Bcc); err != nil {
+	if err != nil {
 		return Draft{}, false, err
 	}
 	return d, true, nil
+}
+
+type sqlDraftScanner interface{ Scan(...any) error }
+
+func scanSQLDraft(row sqlDraftScanner) (Draft, error) {
+	var d Draft
+	var attachments, cc, bcc string
+	if err := row.Scan(&d.ID, &d.From, &d.To, &d.Subject, &d.Body, &d.SigningFingerprint, &d.State, &d.ReplyTo, &d.ForwardOf, &attachments, &cc, &bcc); err != nil {
+		return Draft{}, err
+	}
+	if attachments != "" {
+		if err := json.Unmarshal([]byte(attachments), &d.Attachments); err != nil {
+			return Draft{}, err
+		}
+	}
+	if err := json.Unmarshal([]byte(cc), &d.Cc); err != nil {
+		return Draft{}, err
+	}
+	if err := json.Unmarshal([]byte(bcc), &d.Bcc); err != nil {
+		return Draft{}, err
+	}
+	return d, nil
 }
 
 func (s *Sender) draftStore() DraftStore {
@@ -324,19 +354,33 @@ func (s *Sender) DraftContext(ctx context.Context, id string) (Draft, bool, erro
 	return s.draftStore().Draft(ctx, id)
 }
 
+func (s *Sender) claimDraftForSubmission(ctx context.Context, id string) (Draft, bool, error) {
+	store := s.draftStore()
+	if claimer, ok := store.(DraftSubmitClaimer); ok {
+		return claimer.ClaimDraftForSubmission(ctx, id)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok, err := store.Draft(ctx, id)
+	if err != nil || !ok {
+		return d, ok, err
+	}
+	if d.State != "" && d.State != "draft" && d.State != "failed" {
+		return Draft{}, false, nil
+	}
+	d.State = "queued_for_submission"
+	if err := store.PutDraft(ctx, d); err != nil {
+		return Draft{}, false, err
+	}
+	return d, true, nil
+}
+
 // Submit applies atomic outbound policy before signing or SMTP, then preserves
 // the existing exact-sender and delivery-acceptance boundaries.
 // Complexity: time O(r*(p+n)+m+a), Omega(r+m); auxiliary space O(r*n+m+a),
 // where r is bounded recipients, p policy latency, n address bytes, m MIME
 // bytes, and a attachment bytes; signing, store, audit, and SMTP are additive.
 func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
-	d, ok, err := s.DraftContext(ctx, id)
-	if err != nil {
-		return Draft{}, err
-	}
-	if !ok {
-		return Draft{}, errors.New("draft not found")
-	}
 	if s.SMTP == nil {
 		return Draft{}, errors.New("smtp submitter required")
 	}
@@ -346,11 +390,27 @@ func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 	if s.Resolver == nil {
 		return Draft{}, errors.New("exact sender resolver required")
 	}
+	verifier := s.Verifier
+	if verifier == nil {
+		verifier, _ = s.Signer.(ExactSenderVerifier)
+	}
+	if verifier == nil {
+		return Draft{}, errors.New("exact sender verifier required")
+	}
 	if s.Policy == nil {
 		return Draft{}, errors.New("outbound policy evaluator required")
 	}
+	d, ok, err := s.claimDraftForSubmission(ctx, id)
+	if err != nil {
+		return Draft{}, err
+	}
+	if !ok {
+		return Draft{}, errors.New("draft not found or no longer submittable")
+	}
 	recipients, err := draftRecipients(d)
 	if err != nil {
+		d.State = "failed"
+		_ = s.putDraft(ctx, d)
 		return Draft{}, errors.New("invalid recipient")
 	}
 	for i, recipient := range recipients {
@@ -379,10 +439,6 @@ func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 		d.State = "failed"
 		_ = s.putDraft(ctx, d)
 		return d, errors.New("OpenPGP signing identity required")
-	}
-	d.State = "queued_for_submission"
-	if err := s.putDraft(ctx, d); err != nil {
-		return d, err
 	}
 	identity, err := s.Resolver.ResolveSender(ctx, d.SigningFingerprint, d.From, "")
 	if err != nil || identity.Address != d.From || identity.Fingerprint != d.SigningFingerprint {
@@ -420,9 +476,23 @@ func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 		_ = s.putDraft(ctx, d)
 		return d, err
 	}
+	verified, err := verifier.VerifyExactSender(ctx, signed, identity)
+	if err != nil || !verified.Signed || verified.Identity != d.From || verified.Fingerprint != d.SigningFingerprint {
+		s.audit(ctx, d, "failure", "openpgp exact sender verification failed", verified)
+		d.State = "failed"
+		_ = s.putDraft(ctx, d)
+		if err != nil {
+			return d, err
+		}
+		return d, errors.New("OpenPGP exact sender verification failed")
+	}
 	if err := s.SMTP.Submit(ctx, Envelope{From: d.From, To: recipients}, signed); err != nil {
 		s.audit(ctx, d, "failure", err.Error(), status)
 		d.State = "failed"
+		var deliveryErr *SMTPDeliveryError
+		if errors.As(err, &deliveryErr) && deliveryErr.Class == SMTPFailureAmbiguous {
+			d.State = "delivery_uncertain"
+		}
 		_ = s.putDraft(ctx, d)
 		return d, err
 	}

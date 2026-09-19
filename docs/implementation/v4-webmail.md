@@ -26,7 +26,13 @@ Required capabilities:
 - quota display
 - safe MIME parsing foundation
 
-IMAP connection configuration is derived from core state/config. The production transport adapter is `webmail.NetIMAPClient`, which talks TCP IMAP to Dovecot for folder/list/search/read operations. The webmail client does not read mailbox files directly and does not replace Dovecot.
+IMAP connection configuration is derived from a bounded protected runtime
+registry. The production registry selects one exact mailbox entry and reloads
+its owner-only password file for each connection. It delegates to
+`webmail.NetIMAPClient`, which talks TCP IMAP to Dovecot for
+folder/list/search/read/quota operations. Plaintext IMAP is accepted only on a
+loopback/private address or a single-label private service name. The webmail
+client does not read mailbox files directly and does not replace Dovecot.
 
 Message list response shape:
 
@@ -56,6 +62,7 @@ State machine:
 ```text
 draft -> queued_for_submission -> submitted -> sent
                          |-> failed
+                         |-> delivery_uncertain
 ```
 
 Features:
@@ -67,9 +74,23 @@ Features:
 - send failure reporting
 - honest app-password/session boundary
 
-Configured SQL draft storage persists mailbox ownership, submit state, reply/forward linkage, and attachment metadata/content. Draft creation at the API boundary ignores caller-supplied draft IDs and binds ownership to the authenticated mailbox; SQL updates refuse cross-mailbox overwrites.
+Configured SQL draft storage persists mailbox ownership, submit state, reply/forward linkage, and attachment metadata/content. Draft creation at the API boundary ignores caller-supplied draft IDs and binds ownership to the authenticated mailbox; SQL updates refuse cross-mailbox overwrites. Submission claims a draft with one conditional SQL update, so concurrent requests cannot produce duplicate SMTP attempts. `submitted`, `sent`, and `delivery_uncertain` drafts are not automatically retryable. Transport loss at the SMTP acceptance boundary becomes `delivery_uncertain` instead of an ordinary failure because an automatic retry could duplicate accepted mail.
 
-Web session identity may authorize webmail access, but SMTP submission must use the configured submission path and must not pretend OIDC is an SMTP protocol.
+`GOTTH_MAIL_WEBMAIL_RUNTIME_FILE` enables production wiring. The owner-only JSON
+registry contains private-service IMAP/SMTP addresses and, per mailbox, paths
+to distinct owner-only IMAP password, SMTP password, and OpenPGP private-key
+files plus the required fingerprint. Password and key files are reloaded on
+use, making rotation visible without storing cleartext credentials in the
+database. SMTP uses CRAM-MD5 with the exact mailbox address as its
+authenticated identity; that same identity is rechecked by outbound policy at
+submission and final transport. Startup fails on partial, unsafe, duplicate,
+or mismatched configuration.
+
+Web session identity may authorize webmail access, but SMTP submission must use
+the configured mailbox credential and must not pretend OIDC is an SMTP
+protocol. The sender cryptographically verifies the generated OpenPGP/MIME
+signature, outer From, signed binding assertion, and fingerprint before any
+SMTP command is allowed.
 
 ## Search and UX
 

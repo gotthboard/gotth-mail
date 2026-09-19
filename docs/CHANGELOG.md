@@ -21,9 +21,47 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 12:25 CDT — Complete same-domain outbound-policy admission
+### 2026-09-19 12:52 CDT — Wire the production webmail transport and signing runtime
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- production webmail runtime registry and exact-sender send path
+- IMAP quota adapter and webmail API
+- durable draft migration and SQL submission claim
+- main binary wiring, reference Compose harness, tests, docs, and evidence
+
+Explanation:
+
+Replaced the unwired production webmail API seam with an explicit
+mailbox-specific runtime. Owner-only files provide per-mailbox IMAP/SMTP
+credentials and OpenPGP key material; unsafe or mismatched configuration fails
+startup. Sending now cryptographically verifies exact-sender proof before SMTP,
+claims each SQL draft once, and preserves uncertain SMTP acceptance without a
+duplicate-prone automatic retry. Added real IMAP quota reporting and a rebuilt
+reference-stack flow through signing, authenticated Postfix submission, final
+policy transport, Dovecot delivery, IMAP search, and Dovecot quota retrieval.
+A cold state-machine review also caught and repaired an invalid-recipient path
+that could otherwise strand a claimed draft before policy or SMTP.
+
+Verification:
+
+- focused store, webmail, API, and `gotth-mail` command tests
+- migration file/runtime parity and `git diff --check`
+- shell syntax and merged Compose render
+- rebuilt `containerized-webmail-runtime-smoke.sh` end to end
+
+Risks / non-goals:
+
+- the interactive custom webmail UX remains open and the feature remains
+  `in_progress`
+- no live credential, mailbox, queue, deployment, DNS record, tag, release, or
+  external service changed
+
+### 2026-09-19 12:25 CDT — Complete same-domain outbound-policy admission
+
+Commit: `180a5ae`
 
 Affected files:
 

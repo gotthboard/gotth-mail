@@ -348,6 +348,12 @@ const webmailCCBCCMigrationSQL = `ALTER TABLE webmail_drafts
     ADD COLUMN cc_json text NOT NULL DEFAULT '[]',
     ADD COLUMN bcc_json text NOT NULL DEFAULT '[]';`
 
+const webmailDeliveryUncertainMigrationVersion = "0012_webmail_delivery_uncertain"
+const webmailDeliveryUncertainMigrationSQL = `ALTER TABLE webmail_drafts
+    DROP CONSTRAINT webmail_drafts_state_check,
+    ADD CONSTRAINT webmail_drafts_state_check
+        CHECK (state IN ('draft','queued_for_submission','submitted','sent','failed','delivery_uncertain'));`
+
 var upgradeMigrations = []Migration{
 	newMigration(notificationDeliveryEvidenceMigrationVersion, notificationDeliveryEvidenceMigrationSQL),
 	newMigration(oidcProtectedAttemptsMigrationVersion, oidcProtectedAttemptsMigrationSQL),
@@ -359,6 +365,7 @@ var upgradeMigrations = []Migration{
 	newMigration(outboundQueueMigrationVersion, outboundQueueMigrationSQL),
 	newMigration(outboundQueueReleaseMigrationVersion, outboundQueueReleaseMigrationSQL),
 	newMigration(webmailCCBCCMigrationVersion, webmailCCBCCMigrationSQL),
+	newMigration(webmailDeliveryUncertainMigrationVersion, webmailDeliveryUncertainMigrationSQL),
 }
 
 func newMigration(version, sql string) Migration {

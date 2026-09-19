@@ -35,6 +35,10 @@ func TestNetIMAPClientFoldersListSearchReadWithFakeServer(t *testing.T) {
 	if err != nil || msg.From != "sender@example.test" {
 		t.Fatalf("read=%#v err=%v", msg, err)
 	}
+	used, limit, err := c.Quota(context.Background(), "u@example.test")
+	if err != nil || used != 12*1024 || limit != 1024*1024 {
+		t.Fatalf("quota=%d/%d err=%v", used, limit, err)
+	}
 }
 
 func TestIMAPMailboxNameParsesQuotedAndAtomNames(t *testing.T) {
@@ -102,7 +106,7 @@ func containsString(values []string, want string) bool {
 
 func fakeIMAPServer(t *testing.T, ln net.Listener) {
 	t.Helper()
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
@@ -140,6 +144,8 @@ func handleFakeIMAP(conn net.Conn) {
 			write("* SEARCH 1\r\n" + tag + " OK search done\r\n")
 		case "FETCH":
 			write("* 1 FETCH (BODY[] {" + strconv.Itoa(len(msg)) + "}\r\n" + msg + ")\r\n" + tag + " OK fetch done\r\n")
+		case "GETQUOTAROOT":
+			write("* QUOTAROOT INBOX \"\"\r\n* QUOTA \"\" (STORAGE 12 1024)\r\n" + tag + " OK quota done\r\n")
 		case "LOGOUT":
 			write("* BYE\r\n" + tag + " OK logout\r\n")
 			return

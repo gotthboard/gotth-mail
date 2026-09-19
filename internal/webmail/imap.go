@@ -107,7 +107,38 @@ func (c NetIMAPClient) Search(ctx context.Context, user, folder, query, cursor s
 	return out, nil
 }
 
-func (c NetIMAPClient) Quota(ctx context.Context) (int64, int64, error) { return 0, 0, nil }
+func (c NetIMAPClient) Quota(ctx context.Context, user string) (int64, int64, error) {
+	ic, err := c.connect(ctx, user)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer ic.close()
+	lines, err := ic.cmd(`GETQUOTAROOT "INBOX"`)
+	if err != nil {
+		return 0, 0, err
+	}
+	var used, limit int64
+	found := false
+	for _, line := range lines {
+		match := quotaStorage.FindStringSubmatch(line)
+		if len(match) != 3 {
+			continue
+		}
+		u, uerr := strconv.ParseInt(match[1], 10, 64)
+		l, lerr := strconv.ParseInt(match[2], 10, 64)
+		if uerr != nil || lerr != nil || u < 0 || l < 0 || u > (1<<63-1)/1024 || l > (1<<63-1)/1024 {
+			return 0, 0, errors.New("invalid imap storage quota")
+		}
+		if found {
+			return 0, 0, errors.New("ambiguous imap storage quota")
+		}
+		used, limit, found = u*1024, l*1024, true
+	}
+	if !found {
+		return 0, 0, errors.New("imap storage quota unavailable")
+	}
+	return used, limit, nil
+}
 
 func (c NetIMAPClient) connect(ctx context.Context, user string) (*imapConn, error) {
 	addr := strings.TrimSpace(c.Addr)
@@ -189,6 +220,7 @@ func (c *imapConn) cmd(command string) ([]string, error) {
 }
 
 var literalSuffix = regexp.MustCompile(`\{([0-9]+)\}$`)
+var quotaStorage = regexp.MustCompile(`(?i)\bSTORAGE[[:space:]]+([0-9]+)[[:space:]]+([0-9]+)`)
 
 func (c *imapConn) readLineWithLiteral(lines *[]string) (string, error) {
 	line, err := c.readLine()
