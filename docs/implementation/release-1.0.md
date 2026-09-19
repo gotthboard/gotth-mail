@@ -91,6 +91,17 @@ host grant, version negotiation, lifecycle validation, handshake, and health.
 Mail's DNS, notification, backup, webmail, certificate, and import operations
 remain separate versioned protocols.
 
+The admitted consumer pin is
+`v0.0.0-20260914032833-3822dd722bc8`. Each existing built-in mechanism keeps
+its Mail-owned seam RPC and receives a deterministic instance identity plus an
+exact foundation manifest, grant, negotiated session, and validated lifecycle.
+The consumer-local `gotth.extensions.v1.ExtensionControl` binding preserves the
+reviewed upstream wire contract and changes only its Go package location.
+Plugin processes expose authenticated challenge-bound handshake and
+session-bound health beside the existing Mail control RPCs; production
+notification health uses the foundation exchange. No generic payload,
+callback, process-control, event-bus, or product-mutation method is added.
+
 The administrator implementation is governed by the v3 operations
 specification. No extension-provided HTML, JavaScript, templ component,
 Tailwind class list, CSS, redirect, or arbitrary action is admitted. Every

@@ -28,6 +28,9 @@ This repository is in staged implementation governed by `workflow.toml`. Do not 
 - `gotth-oidc` for OIDC protocol mechanics and `gotth-scim` for the SCIM
   protocol/storage contract; GOTTH Mail retains product storage, sessions,
   authorization, mailbox projection, audit, and operations policy
+- pinned `gotth-extensions` validation, grant, negotiation, lifecycle,
+  handshake, and health contracts; Mail retains seam protocols, credentials,
+  routing, supervision, policy, mutation, audit, and rollback authority
 - Containerized gRPC/protobuf plugins at narrow mechanism seams
 
 ## Development workflow
@@ -61,6 +64,14 @@ the complete stack is admitted.
   transport; uncertainty defers rather than permits delivery. Repository
   implementation and admission are complete; live activation remains a
   separate operator-controlled deployment action.
+- **Extensions:** the shared `gotth-extensions` compatibility kernel is pinned
+  to reviewed commit `3822dd7` and now binds each built-in mechanism to an
+  exact manifest, host grant, negotiated interface/capability/secret-slot
+  session, validated lifecycle, and authenticated challenge/health exchange.
+  Existing Mail seam RPCs remain unchanged. The host-owned Extensions setup,
+  update, rollback, encrypted-secret, and administrator UI feature is still a
+  separate open workstream; no generic invocation API or extension-supplied UI
+  was introduced.
 - **Identity provisioning (`v2` historical ID):** the duplicate OIDC and SCIM protocol implementations have been replaced on the 1.0-alpha development line by exact pinned `gotth-oidc` and `gotth-scim` consumer boundaries. Protected PKCE attempts, application sessions, SCIM resources, indexes, tombstones, mailboxes, verifier projections, and audit records use PostgreSQL. A verified OIDC issuer/subject/email now binds transactionally to exactly one active SCIM User/mailbox; deprovisioning revokes dependent sessions and re-enable cannot revive them. Same-mailbox app-password API and browser self-service derive authority from that durable binding, use a separate CSRF proof, show generated secrets once, retain opaque IDs and labels across restart, cap active PBKDF2 verifiers at eight, and fail closed when mutation or audit cannot commit. The renamed live Authentik issuer at `/application/o/gotth-mail/` still returns 404 while the historical `/gophermailforge/` issuer remains present, so the live provider/profile has not been migrated and no end-to-end login is claimed. SCIM Groups remain deliberately disabled until durable member/role binding is admitted. Legacy email-keyed identities still need an operator-reviewed adoption map, and live Authentik provisioning/deprovisioning plus restart, backup, and restore evidence remain required before this workstream can close.
 - **Ops/import/admin (`v3` historical ID):** configured-path implementation repairs are complete for SQL audit/retention, isolated SQL backup restore verification, verified-backup snapshot linkage, canonical SQL bulk mutations, and live Mailu config-export import into canonical SQL. Mailu import compatibility now has a repo-owned containerized Compose smoke fixture under the `mailu-import` profile; it does not depend on an ad hoc host Mailu install and does not expose production mail ports. Root admission remains constrained by the identity workstream's live Authentik dependency; do not claim native Dovecot verification for wrapped Mailu hashes because they require the matching Authentik custom password hasher described in the password-hashing reference.
 - **Webmail (`v4` historical ID):** durable mailbox-owned draft storage, production IMAP/SMTP adapters, protected per-mailbox runtime credentials, quota, stable UID reads/actions, reply/forward linkage, safe attachment download, mandatory OpenPGP/MIME signing, exact-sender verification, and ambiguous-delivery state are implemented. `/webmail` is now an interactive session-bound three-pane client with responsive drill-down, compose/send, saved-draft list/reopen/edit, search, sorting, pane placement/resizing, keyboard commands, visible action parity, light/dark themes, and a strict CSP; a real headless Chromium smoke exercises those behaviors. Hostile HTML remains conservative text by design and Roundcube remains usable as the external reference. Live deployment still requires operator-supplied protected credentials/key custody and the separate live Authentik boundary; neither is faked by repository tests.

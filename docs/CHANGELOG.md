@@ -43,6 +43,59 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-19 17:46 CDT — Adopt the GOTTH Extensions compatibility foundation
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- immutable module pin in `go.mod` and `go.sum`;
+- upstream-compatible `gotth.extensions.v1` protobuf and generated Go/gRPC
+  bindings;
+- built-in plugin foundation bindings, lifecycle, server/client handshake, and
+  production notification health integration;
+- unit, integration, public-consumer, descriptor, live-plugin, failure, and
+  redaction-safe contract tests;
+- release implementation, adoption reference, coverage map, feature handoff,
+  and workflow evidence.
+
+Explanation:
+
+Pinned reviewed `gotth-extensions` foundation commit `3822dd7` and replaced
+the remaining shared compatibility guesswork with the library's strict
+manifest, grant, canonical digest, exact subset negotiation, session
+fingerprint, and lifecycle contracts. Each existing built-in mechanism now
+has a deterministic instance binding with exact interface, capability, and
+named secret-slot grants. Plugin processes expose the upstream two-method
+handshake/health control service beside the existing GOTTH Mail plugin control
+and seam RPCs. Configured production notification health now performs an
+authenticated random-challenge handshake and exact session-bound health check.
+
+This is deliberately not a framework rewrite. Existing Mail-owned DNS,
+certificate, backup, webmail, notification, and import protocols remain
+unchanged. The foundation service carries no secret value, generic payload,
+callback authority, process control, event bus, or product mutation. Persisted
+registry/supervision, encrypted installation secrets, administrator UI,
+updates, rollback, uninstall, and secret deletion remain in the separately
+declared Extensions administrator feature.
+
+Verification:
+
+- focused normal tests passed for `internal/plugin`, `internal/notifyruntime`,
+  both configured commands, and the public contract package;
+- the same focused package set passed under `-race`;
+- `go vet ./...` passed;
+- full `go test -count=1 -p=2 ./...` passed;
+- the containerized live plugin/notification smoke passed, including signed
+  email, authenticated foundation health, real Postfix approval, and
+  ambiguous-delivery recovery;
+- the foundation source reached 100% statement coverage on every reachable
+  function except `NewFoundationBinding` (90.9%): its two uncovered returns
+  defend against the pinned library rejecting a session/lifecycle sequence it
+  has just validated and constructed, which cannot be induced without replacing
+  the dependency or corrupting its contract;
+- upstream control-protocol parity and `git diff --check` passed.
+
 ### 2026-09-19 14:52 CDT — Complete the production notification runtime
 
 Commits: `de21330`, `bd52079`, plus current repair/admission commit

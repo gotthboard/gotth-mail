@@ -38,6 +38,18 @@ func TestLivePluginControlOverGRPC(t *testing.T) {
 	defer conn.Close()
 	client := NewControlClient(conn)
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs(MetadataCorrelationID, "live-plugin-smoke", MetadataServiceToken, token))
+	registration, err := FirstMechanismPlugin(name, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundation, err := NewFoundationClient(conn, registration, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundationHealth, err := foundation.Health(ctx)
+	if err != nil || !foundationHealth.Healthy {
+		t.Fatalf("foundation health=%#v err=%v", foundationHealth, err)
+	}
 	health, err := client.Health(ctx, &pluginv1.HealthRequest{CorrelationId: "live-plugin-smoke"})
 	if err != nil {
 		t.Fatal(err)

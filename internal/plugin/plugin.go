@@ -33,6 +33,8 @@ type Registration struct {
 	Enabled      bool
 	ServiceToken string
 	Capabilities []string
+	SecretSlots  []string
+	Foundation   *FoundationBinding
 }
 type Registry struct{ Plugins map[string]Registration }
 type Request struct {

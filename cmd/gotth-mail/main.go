@@ -205,7 +205,7 @@ func configureNotificationsFromEnv(server *api.Server) (*notifyruntime.GRPCNotif
 		return nil, fmt.Errorf("unsupported notification plugin %q", name)
 	}
 	registration.Endpoint = endpoint
-	backend, err := notifyruntime.NewGRPCNotificationBackend(endpoint, token)
+	backend, err := notifyruntime.NewGRPCNotificationBackend(endpoint, token, registration)
 	if err != nil {
 		return nil, err
 	}

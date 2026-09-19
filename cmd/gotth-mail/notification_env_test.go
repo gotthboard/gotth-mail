@@ -40,6 +40,7 @@ func TestConfigureNotificationsWiresGRPCSQLAndAuthenticatedReceiver(t *testing.T
 		t.Fatal(err)
 	}
 	registry := plugin.Registry{Plugins: map[string]plugin.Registration{registration.Name: registration}}
+	plugin.RegisterFoundationServer(grpcServer, plugin.FoundationServer{Name: registration.Name, Registry: registry})
 	plugin.RegisterNotificationServer(grpcServer, plugin.NotificationServer{Name: registration.Name, Registry: registry, Sink: plugin.LocalNotificationSink{}})
 	go func() { _ = grpcServer.Serve(listener) }()
 	defer grpcServer.Stop()
@@ -62,6 +63,9 @@ func TestConfigureNotificationsWiresGRPCSQLAndAuthenticatedReceiver(t *testing.T
 	defer backend.Close()
 	if server.NotificationService == nil || server.NotificationPrompter == nil || server.NotificationReceiver == nil || server.NotificationRecorder == nil || server.ApprovalService == nil {
 		t.Fatalf("incomplete notification wiring: %#v", server)
+	}
+	if health, err := server.PluginHealth(context.Background(), plugin.FirstNotifyName); err != nil || !health.Healthy || health.Message != "extension.ready" {
+		t.Fatalf("foundation health=%#v err=%v", health, err)
 	}
 	record, err := server.NotificationService.SendAlert(context.Background(), notification.Alert{ID: "runtime-alert-1", Class: "doctor.failure", Severity: notification.SeverityCritical, Title: "Doctor failed", Summary: "database failed", CorrelationID: "corr-1"})
 	if err != nil || record.Status != notification.StatusDelivered {

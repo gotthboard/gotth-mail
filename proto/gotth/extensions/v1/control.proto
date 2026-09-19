@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+// Wire contract copied from github.com/gotthboard/gotth-extensions at
+// 3822dd722bc8606b8843d0a68c7c3e9f598d9ccc. Only go_package is consumer-local.
+
+package gotth.extensions.v1;
+
+option go_package = "forgejo/gotthboard/gotth-mail/proto/gotth/extensions/v1;extensionsv1";
+
+// ExtensionControl is deliberately limited to compatibility handshake and
+// health. Business mechanisms use separate seam-specific services.
+service ExtensionControl {
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message ProtocolVersion {
+  string name = 1;
+  uint32 major = 2;
+  uint32 minor = 3;
+}
+
+message InterfaceVersion {
+  string name = 1;
+  uint32 major = 2;
+  uint32 minor = 3;
+}
+
+message HandshakeRequest {
+  string correlation_id = 1;
+  bytes challenge = 2;
+  string expected_extension_id = 3;
+  string expected_manifest_sha256 = 4;
+  string expected_grant_sha256 = 5;
+  string expected_session_sha256 = 6;
+}
+
+message HandshakeResponse {
+  bytes challenge = 1;
+  string extension_id = 2;
+  string extension_version = 3;
+  string manifest_sha256 = 4;
+  string grant_sha256 = 5;
+  string session_sha256 = 6;
+  ProtocolVersion control = 7;
+  repeated InterfaceVersion interfaces = 8;
+  repeated string capabilities = 9;
+}
+
+message HealthRequest {
+  string correlation_id = 1;
+  string session_sha256 = 2;
+}
+
+enum HealthState {
+  HEALTH_STATE_UNSPECIFIED = 0;
+  HEALTH_STATE_STARTING = 1;
+  HEALTH_STATE_READY = 2;
+  HEALTH_STATE_DEGRADED = 3;
+  HEALTH_STATE_STOPPING = 4;
+  HEALTH_STATE_FAILED = 5;
+}
+
+message HealthResponse {
+  HealthState state = 1;
+  string code = 2;
+}

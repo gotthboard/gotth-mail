@@ -60,6 +60,7 @@ func run() error {
 	srv := grpc.NewServer()
 	registry := plugin.Registry{Plugins: map[string]plugin.Registration{reg.Name: reg}}
 	plugin.RegisterControlServer(srv, plugin.ControlServer{Name: reg.Name, Registry: registry})
+	plugin.RegisterFoundationServer(srv, plugin.FoundationServer{Name: reg.Name, Registry: registry})
 	if reg.Seam == plugin.Notification {
 		plugin.RegisterNotificationServer(srv, plugin.NotificationServer{Name: reg.Name, Registry: registry, Sink: sink})
 	}

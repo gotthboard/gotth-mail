@@ -19,14 +19,14 @@ import (
 )
 
 type GRPCNotificationBackend struct {
-	conn    *grpc.ClientConn
-	client  pluginv1.NotificationBackendClient
-	control pluginv1.PluginControlClient
-	token   string
-	timeout time.Duration
+	conn       *grpc.ClientConn
+	client     pluginv1.NotificationBackendClient
+	foundation *plugin.FoundationClient
+	token      string
+	timeout    time.Duration
 }
 
-func NewGRPCNotificationBackend(endpoint, token string) (*GRPCNotificationBackend, error) {
+func NewGRPCNotificationBackend(endpoint, token string, registration plugin.Registration) (*GRPCNotificationBackend, error) {
 	endpoint = strings.TrimSpace(endpoint)
 	token = strings.TrimSpace(token)
 	if !localGRPCEndpoint(endpoint) {
@@ -39,20 +39,25 @@ func NewGRPCNotificationBackend(endpoint, token string) (*GRPCNotificationBacken
 	if err != nil {
 		return nil, errors.New("open notification plugin connection")
 	}
-	return &GRPCNotificationBackend{conn: conn, client: pluginv1.NewNotificationBackendClient(conn), control: pluginv1.NewPluginControlClient(conn), token: token, timeout: 5 * time.Second}, nil
+	foundation, err := plugin.NewFoundationClient(conn, registration, token)
+	if err != nil {
+		_ = conn.Close()
+		return nil, errors.New("configure notification extension foundation")
+	}
+	return &GRPCNotificationBackend{conn: conn, client: pluginv1.NewNotificationBackendClient(conn), foundation: foundation, token: token, timeout: 5 * time.Second}, nil
 }
 
-func (b *GRPCNotificationBackend) Health(ctx context.Context, correlationID string) (plugin.HealthResponse, error) {
-	if b == nil || b.control == nil {
+func (b *GRPCNotificationBackend) Health(ctx context.Context, _ string) (plugin.HealthResponse, error) {
+	if b == nil || b.foundation == nil {
 		return plugin.HealthResponse{}, errors.New("notification backend unconfigured")
 	}
-	ctx, cancel := b.outgoingContext(ctx, correlationID)
+	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	response, err := b.control.Health(ctx, &pluginv1.HealthRequest{CorrelationId: correlationID})
+	response, err := b.foundation.Health(ctx)
 	if err != nil {
 		return plugin.HealthResponse{}, errors.New("notification plugin unavailable")
 	}
-	return plugin.HealthResponse{Healthy: response.GetHealthy(), Message: notification.SanitizeDeliveryReason(response.GetMessage())}, nil
+	return response, nil
 }
 
 func localGRPCEndpoint(endpoint string) bool {
