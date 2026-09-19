@@ -40,6 +40,9 @@ func (s QueueAdmissionService) Admit(ctx context.Context, req QueueAdmissionRequ
 	if s.DB == nil || req.Metadata.Held || len(req.Deliveries) == 0 || len(req.Deliveries) > maxQueueRecipients {
 		return QueueRecord{}, false, errors.New("invalid outbound queue admission request")
 	}
+	if err := validateQueueDeliveries(req.Metadata.Recipients, req.Deliveries); err != nil {
+		return QueueRecord{}, false, err
+	}
 	sources := make([]QueueSource, 0, 2+len(req.Deliveries))
 	if req.AuthenticatedMailbox != "" || req.SystemSenderID != "" {
 		service := EnforcementService{DB: s.DB}
@@ -79,6 +82,32 @@ func (s QueueAdmissionService) Admit(ctx context.Context, req QueueAdmissionRequ
 		Recipients:         req.Metadata.Recipients,
 		Sources:            sources,
 	})
+}
+
+// validateQueueDeliveries requires the pipe(8) delivery request to cover the
+// exact inspected final-recipient set. Multiple originals may legitimately
+// collapse onto one final recipient, so only the final set is compared.
+// Complexity: time O((r+d) log(r+d)+b), Omega(r+d); auxiliary space O(r+d+b),
+// where r is queue recipients, d delivery pairs, and b their bounded bytes.
+func validateQueueDeliveries(recipients []string, deliveries []QueueDelivery) error {
+	want, err := canonicalQueueRecipients(recipients)
+	if err != nil {
+		return errors.New("invalid inspected queue recipients")
+	}
+	finals := make([]string, len(deliveries))
+	for i, delivery := range deliveries {
+		finals[i] = delivery.Recipient
+	}
+	got, err := canonicalQueueRecipients(finals)
+	if err != nil || len(got) != len(want) {
+		return errors.New("Postfix delivery recipients do not match inspected queue")
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return errors.New("Postfix delivery recipients do not match inspected queue")
+		}
+	}
+	return nil
 }
 
 type expansionAlias struct {

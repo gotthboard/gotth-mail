@@ -21,9 +21,43 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 09:43 CDT — Repair catch-all termination and backup consistency
+### 2026-09-19 10:00 CDT — Preserve whole-message multi-recipient delivery
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- Postfix reference and rendered transport configuration
+- outbound queue admission validation and gate tests
+- reference SMTP sink, container smoke, evidence, and changelog
+
+Explanation:
+
+Removed the single-recipient limit from the final policy transport. Postfix
+`pipe(8)` expands recipient-bearing command arguments once per recipient, so
+the old limit invoked the gate once per recipient while each invocation
+inspected and relayed the entire queue recipient set. An allowed
+multi-recipient message could therefore be duplicated. One pipe request now
+carries every paired original/final recipient for the message. Core admission
+also rejects any delivery argument set whose canonical final recipients do not
+exactly match the independently inspected queue set.
+
+Verification:
+
+- focused development-host normal and race suites passed for outbound policy,
+  the Postfix gate, rendered configuration, and gate command
+- the rebuilt reference stack accepted exactly one SMTP transaction containing
+  both recipients after the complete hold/release path passed
+- shell syntax and `git diff --check` passed
+
+Risks / non-goals:
+
+- no live queue, deployment, production credential, tag, release, or external
+  service changed
+
+### 2026-09-19 09:43 CDT — Repair catch-all termination and backup consistency
+
+Commit: `56276ef`
 
 Affected files:
 

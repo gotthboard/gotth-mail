@@ -134,6 +134,36 @@ func TestQueueAdmissionRejectsUnprovenExpansionAndMissingAuthority(t *testing.T)
 	}
 }
 
+func TestQueueAdmissionRejectsIncompleteOrForeignDeliverySet(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	seedAdmissionState(t, db)
+	service := QueueAdmissionService{DB: db}
+	base := QueueAdmissionRequest{Metadata: QueueMetadata{
+		QueueID:            "GHJKLMNPQRSTz2345",
+		ArrivalFingerprint: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+		EnvelopeSender:     "user@example.test",
+		Recipients:         []string{"one@example.net", "two@example.net"},
+	}, AuthenticatedMailbox: "user@example.test"}
+	base.Deliveries = []QueueDelivery{{OriginalRecipient: "one@example.net", Recipient: "one@example.net"}}
+	if _, _, err := service.Admit(context.Background(), base); err == nil {
+		t.Fatal("admitted an incomplete pipe delivery set")
+	}
+	base.Deliveries = []QueueDelivery{
+		{OriginalRecipient: "one@example.net", Recipient: "one@example.net"},
+		{OriginalRecipient: "other@example.net", Recipient: "other@example.net"},
+	}
+	if _, _, err := service.Admit(context.Background(), base); err == nil {
+		t.Fatal("admitted a foreign pipe delivery recipient")
+	}
+	base.Deliveries = []QueueDelivery{
+		{OriginalRecipient: "one@example.net", Recipient: "one@example.net"},
+		{OriginalRecipient: "two@example.net", Recipient: "two@example.net"},
+	}
+	if _, created, err := service.Admit(context.Background(), base); err != nil || !created {
+		t.Fatalf("complete delivery set rejected: created=%v err=%v", created, err)
+	}
+}
+
 func TestQueueAdmissionRejectsExpansionCycle(t *testing.T) {
 	db := testpg.DB(t, store.MigrateSQL)
 	seedAdmissionState(t, db)

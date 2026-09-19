@@ -123,7 +123,7 @@ compose exec -T database psql -U gotth_mail -d gotth_mail -Atc "SELECT count(*) 
 compose exec -T database psql -U gotth_mail -d gotth_mail -Atc "SELECT count(*) FROM audit_events WHERE resource_type='postfix_queue' AND resource_id='$queue_id' AND action='queue.policy_hold.released' AND result='success'" | grep -qx 1
 
 compose exec -T postfix sh -c "rm -f /tmp/gotth-mail-outbound-sink.accepted; socat TCP-LISTEN:9,bind=127.0.0.1,reuseaddr,fork EXEC:'sh /reference/postfix/smtp-sink.sh' >/tmp/gotth-mail-outbound-sink.log 2>&1 &"
-compose exec -T postfix sh -c "printf 'From: smoke@example.test\nTo: admitted@example.net\nSubject: outbound policy admitted relay smoke\n\npolicy smoke\n' | /usr/sbin/sendmail -f smoke@example.test admitted@example.net"
+compose exec -T postfix sh -c "printf 'From: smoke@example.test\nTo: admitted@example.net, second@example.net\nSubject: outbound policy admitted multi-recipient relay smoke\n\npolicy smoke\n' | /usr/sbin/sendmail -f smoke@example.test admitted@example.net second@example.net"
 attempt=0
 until compose exec -T postfix test -f /tmp/gotth-mail-outbound-sink.accepted; do
   attempt=$((attempt + 1))
@@ -135,4 +135,10 @@ until compose exec -T postfix test -f /tmp/gotth-mail-outbound-sink.accepted; do
   sleep 1
 done
 
-printf 'containerized outbound policy smoke passed; inbound forward queue %s held, rechecked, explicitly released, and unrestricted final relay accepted\n' "$queue_id"
+# One whole-message pipe invocation must yield one relay transaction carrying
+# both recipients. A per-recipient pipe split would append two one-recipient
+# acceptances and expose duplicate whole-message relay behavior.
+sleep 2
+compose exec -T postfix sh -c "test \"\$(wc -l < /tmp/gotth-mail-outbound-sink.accepted)\" -eq 1 && grep -qx 2 /tmp/gotth-mail-outbound-sink.accepted"
+
+printf 'containerized outbound policy smoke passed; inbound forward queue %s held, rechecked, explicitly released, and one unrestricted two-recipient relay accepted\n' "$queue_id"

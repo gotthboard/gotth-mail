@@ -61,9 +61,10 @@ func TestGateRegistersChecksEveryRecipientThenRelays(t *testing.T) {
 	relay := &fakeRelay{}
 	err := (Gate{Inspector: fakeInspector{metadata: metadata}, Control: control, Relay: relay}).Deliver(context.Background(), DeliveryRequest{
 		QueueID: metadata.QueueID,
-		Deliveries: []outboundpolicy.QueueDelivery{{
-			OriginalRecipient: "one@example.net", Recipient: "one@example.net",
-		}},
+		Deliveries: []outboundpolicy.QueueDelivery{
+			{OriginalRecipient: "one@example.net", Recipient: "one@example.net"},
+			{OriginalRecipient: "two@example.net", Recipient: "two@example.net"},
+		},
 	}, bytes.NewBufferString("Subject: test\r\n\r\nbody\r\n"))
 	if err != nil || control.registered != 1 || control.reconciled != 0 || relay.calls != 1 || !bytes.Contains(relay.body, []byte("body")) {
 		t.Fatalf("registered=%d reconciled=%d relay=%d err=%v", control.registered, control.reconciled, relay.calls, err)
@@ -79,9 +80,10 @@ func TestGateHoldsWholeMixedRecipientMessageBeforeRelay(t *testing.T) {
 	relay := &fakeRelay{}
 	err := (Gate{Inspector: fakeInspector{metadata: metadata}, Control: control, Relay: relay}).Deliver(context.Background(), DeliveryRequest{
 		QueueID: metadata.QueueID,
-		Deliveries: []outboundpolicy.QueueDelivery{{
-			OriginalRecipient: "one@example.net", Recipient: "one@example.net",
-		}},
+		Deliveries: []outboundpolicy.QueueDelivery{
+			{OriginalRecipient: "one@example.net", Recipient: "one@example.net"},
+			{OriginalRecipient: "two@example.net", Recipient: "two@example.net"},
+		},
 	}, bytes.NewBufferString("message"))
 	if err == nil || control.reconciled != 1 || relay.calls != 0 {
 		t.Fatalf("reconciled=%d relay=%d err=%v", control.reconciled, relay.calls, err)
@@ -111,7 +113,10 @@ func TestGateRetryAndReplayRecheckCurrentPolicy(t *testing.T) {
 	}}
 	relay := &fakeRelay{}
 	gate := Gate{Inspector: fakeInspector{metadata: metadata}, Control: control, Relay: relay}
-	request := DeliveryRequest{QueueID: metadata.QueueID, Deliveries: []outboundpolicy.QueueDelivery{{OriginalRecipient: "one@example.net", Recipient: "one@example.net"}}}
+	request := DeliveryRequest{QueueID: metadata.QueueID, Deliveries: []outboundpolicy.QueueDelivery{
+		{OriginalRecipient: "one@example.net", Recipient: "one@example.net"},
+		{OriginalRecipient: "two@example.net", Recipient: "two@example.net"},
+	}}
 	if err := gate.Deliver(context.Background(), request, bytes.NewBufferString("first")); err != nil {
 		t.Fatal(err)
 	}

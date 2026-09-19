@@ -64,10 +64,11 @@ reviews remain before workflow completion.
 6. changed the disposable fixture policy to `unrestricted`, previewed with the
    independent release credential, and explicitly released the exact message;
 7. observed exactly one release-start and one released audit event; and
-8. submitted a new unrestricted external message through the final transport
-   gate into a real SMTP capture socket.
+8. submitted one new unrestricted message with two external recipients through
+   a single whole-message `pipe(8)` request and observed exactly one SMTP DATA
+   transaction containing both envelope recipients.
 
-The final disposable held queue ID was `4hnBbb64dmzdnl3`. The cleanup trap
+The final disposable held queue ID was `4hnCPv0X6pzfB5b`. The cleanup trap
 removed the entire Compose project and its volumes.
 
 ## Verification completed in this checkpoint
@@ -96,6 +97,15 @@ catch-all query now excludes enabled local mailbox targets, with a PostgreSQL
 regression test, and backup capture now uses one repeatable-read read-only
 transaction. Focused normal and race suites for outbound policy and operations
 passed after both repairs.
+
+A later fresh pass found a cardinality mismatch between Postfix and the gate:
+the transport forced one recipient per pipe invocation, but every invocation
+inspected and relayed the complete queue recipient set. The transport now uses
+Postfix's documented multi-recipient macro expansion, and admission rejects an
+incomplete or foreign final-recipient argument set. The container smoke's SMTP
+sink records accepted transaction recipient counts and proved exactly one
+two-recipient handoff. Focused normal and race suites passed on the corrected
+canonical worktree.
 
 ## Remaining admission work
 

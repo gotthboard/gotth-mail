@@ -3,11 +3,12 @@ set -eu
 
 printf '220 outbound-sink.example.test ESMTP\r\n'
 in_data=0
+recipient_count=0
 while IFS= read -r raw; do
   line=${raw%"$(printf '\r')"}
   if [ "$in_data" -eq 1 ]; then
     if [ "$line" = "." ]; then
-      : > /tmp/gotth-mail-outbound-sink.accepted
+	  printf '%s\n' "$recipient_count" >> /tmp/gotth-mail-outbound-sink.accepted
       in_data=0
       printf '250 2.0.0 accepted\r\n'
     fi
@@ -18,7 +19,14 @@ while IFS= read -r raw; do
     EHLO|HELO)
       printf '250-outbound-sink.example.test\r\n250 8BITMIME\r\n'
       ;;
-    MAIL|RCPT|RSET|NOOP)
+    RCPT)
+	  recipient_count=$((recipient_count + 1))
+	  printf '250 2.0.0 ok\r\n'
+	  ;;
+    MAIL|RSET|NOOP)
+	  if [ "$command" = "RSET" ]; then
+	    recipient_count=0
+	  fi
       printf '250 2.0.0 ok\r\n'
       ;;
     DATA)
