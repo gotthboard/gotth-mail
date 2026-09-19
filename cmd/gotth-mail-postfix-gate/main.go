@@ -103,6 +103,10 @@ func runDelivery(args []string, message io.Reader) error {
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || len(originals) == 0 || len(originals) != len(recipients) {
 		return errors.New("invalid Postfix pipe arguments")
 	}
+	authenticatedMailbox, systemSenderID, err := deliveryAuthority(*authenticated, *systemSender)
+	if err != nil {
+		return err
+	}
 	token, err := helperToken()
 	if err != nil {
 		return err
@@ -133,10 +137,28 @@ func runDelivery(args []string, message io.Reader) error {
 	}
 	return gate.Deliver(ctx, postfixgate.DeliveryRequest{
 		QueueID:              *queueID,
-		AuthenticatedMailbox: *authenticated,
-		SystemSenderID:       *systemSender,
+		AuthenticatedMailbox: authenticatedMailbox,
+		SystemSenderID:       systemSenderID,
 		Deliveries:           deliveries,
 	}, message)
+}
+
+// deliveryAuthority maps Postfix's authenticated SASL identity onto exactly
+// one durable authority class. System senders authenticate with their stable
+// `system:` object ID; ordinary identities remain mailbox addresses.
+// Complexity: time O(n), Omega(1); auxiliary space O(1), where n is bounded
+// identity text.
+func deliveryAuthority(authenticated, explicitSystem string) (string, string, error) {
+	if authenticated != "" && explicitSystem != "" {
+		return "", "", errors.New("ambiguous Postfix delivery authority")
+	}
+	if explicitSystem != "" {
+		return "", explicitSystem, nil
+	}
+	if strings.HasPrefix(authenticated, "system:") {
+		return "", authenticated, nil
+	}
+	return authenticated, "", nil
 }
 
 type stringList []string

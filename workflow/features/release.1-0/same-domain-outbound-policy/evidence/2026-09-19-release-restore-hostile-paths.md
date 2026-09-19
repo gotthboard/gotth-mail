@@ -57,18 +57,18 @@ reviews remain before workflow completion.
 1. rejected an authenticated external RCPT and admitted a same-domain RCPT;
 2. accepted inbound mail to `forward@example.test` independently of the
    domain's outbound restriction;
-3. expanded that local forward to an external recipient, registered immutable
+3. expanded that local forward to two external recipients, registered immutable
    alias provenance, and held the complete long-ID queue message;
 4. repeated reconciliation without duplicating the hold audit;
 5. rejected the helper credential at the release-preview route;
 6. changed the disposable fixture policy to `unrestricted`, previewed with the
    independent release credential, and explicitly released the exact message;
 7. observed exactly one release-start and one released audit event; and
-8. submitted one new unrestricted message with two external recipients through
-   a single whole-message `pipe(8)` request and observed exactly one SMTP DATA
-   transaction containing both envelope recipients.
+8. flushed that same released queue message through a single whole-message
+   `pipe(8)` request and observed exactly one SMTP DATA transaction containing
+   both envelope recipients.
 
-The final disposable held queue ID was `4hnCPv0X6pzfB5b`. The cleanup trap
+The final disposable held queue ID was `4hnDJ22jm6zffR7`. The cleanup trap
 removed the entire Compose project and its volumes.
 
 ## Verification completed in this checkpoint
@@ -124,6 +124,15 @@ authority only from an authenticated mailbox or durable system-sender binding;
 unauthenticated inbound mail is governed solely by the local expansion objects
 that created the outbound delivery. Focused normal and race suites passed with
 a spoofed-local-sender regression test.
+
+The following pass found that the old final-relay proof still depended on a
+new unauthenticated local injection and that the reference server's in-memory
+forward fixture had drifted from its SQL admission fixture. The gate now maps
+only an authenticated `system:` SASL identity to durable system-sender
+authority, ordinary SASL identities remain mailbox authority, and ambiguous
+dual authority is rejected. The smoke reuses the held inbound forward after
+explicit release. Both fixtures now expand it to two external recipients, and
+the rebuilt stack proved one final SMTP transaction with both recipients.
 
 ## Remaining admission work
 

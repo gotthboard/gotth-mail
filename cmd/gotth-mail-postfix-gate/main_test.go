@@ -41,3 +41,17 @@ func TestRunDeliveryRejectsMalformedArgumentsBeforeIO(t *testing.T) {
 		t.Fatal("accepted missing original recipient")
 	}
 }
+
+func TestDeliveryAuthoritySeparatesMailboxAndSystemSASLIdentities(t *testing.T) {
+	mailbox, system, err := deliveryAuthority("user@example.test", "")
+	if err != nil || mailbox != "user@example.test" || system != "" {
+		t.Fatalf("mailbox=%q system=%q err=%v", mailbox, system, err)
+	}
+	mailbox, system, err = deliveryAuthority("system:alerts@example.test", "")
+	if err != nil || mailbox != "" || system != "system:alerts@example.test" {
+		t.Fatalf("mailbox=%q system=%q err=%v", mailbox, system, err)
+	}
+	if _, _, err := deliveryAuthority("user@example.test", "system:alerts@example.test"); err == nil {
+		t.Fatal("accepted ambiguous mailbox and system authority")
+	}
+}

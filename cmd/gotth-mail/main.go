@@ -209,7 +209,7 @@ func seedReferenceDatabase(ctx context.Context, db *sql.DB) error {
 		`INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d02','00000000-0000-4000-8000-000000000d01','smoke',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (domain_id,local_part) DO NOTHING`,
 		`INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d03','00000000-0000-4000-8000-000000000d01','postmaster',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (domain_id,local_part) DO NOTHING`,
 		`INSERT INTO aliases(id,domain_id,local_part,targets_json,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d04','00000000-0000-4000-8000-000000000d01','alias','["smoke@example.test"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (domain_id,local_part) DO NOTHING`,
-		`INSERT INTO aliases(id,domain_id,local_part,targets_json,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d05','00000000-0000-4000-8000-000000000d01','forward','["outside@example.net"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (domain_id,local_part) DO NOTHING`,
+		`INSERT INTO aliases(id,domain_id,local_part,targets_json,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d05','00000000-0000-4000-8000-000000000d01','forward','["outside@example.net","second@example.net"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (domain_id,local_part) DO NOTHING`,
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -418,7 +418,7 @@ func referenceServer() api.Server {
 			},
 			Aliases: map[string]daemon.Alias{
 				"alias@example.test":   {Address: "alias@example.test", Enabled: true, Targets: []string{"smoke@example.test"}},
-				"forward@example.test": {Address: "forward@example.test", Enabled: true, Targets: []string{"outside@example.net"}},
+				"forward@example.test": {Address: "forward@example.test", Enabled: true, Targets: []string{"outside@example.net", "second@example.net"}},
 			},
 		},
 		Plugins:   plugin.FirstMechanismPlugins("dev-plugin-token"),

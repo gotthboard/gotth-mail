@@ -21,9 +21,43 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 10:29 CDT — Reject spoofed inbound envelope authority
+### 2026-09-19 10:40 CDT — Preserve admitted authority through final relay
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- Postfix gate authority classification and tests
+- reference forward fixtures, map generation, and container smoke
+- same-domain hostile-path evidence and changelog
+
+Explanation:
+
+Closed the post-spoofing-repair transport seam without trusting envelope text.
+The final gate now maps an authenticated `system:` SASL identity to the durable
+system-sender authority class while ordinary SASL identities remain mailbox
+authorities, and rejects ambiguous dual authority. The container proof now
+releases and relays the same inbound forwarded message instead of injecting a
+new unauthenticated local message. Its reference alias expands to two external
+recipients, and the in-memory map fixture and SQL admission fixture now agree.
+
+Verification:
+
+- focused development-host normal and race suites passed for the affected
+  commands and policy packages
+- the rebuilt reference stack held the two-recipient inbound forward, rechecked
+  and explicitly released it, then accepted exactly one two-recipient SMTP
+  transaction
+- the smoke emits queue, transport, and sink diagnostics on cardinality failure
+
+Risks / non-goals:
+
+- no live queue, domain policy, deployment, production credential, tag,
+  release, or external service changed
+
+### 2026-09-19 10:29 CDT — Reject spoofed inbound envelope authority
+
+Commit: `0b0e9e4`
 
 Affected files:
 
