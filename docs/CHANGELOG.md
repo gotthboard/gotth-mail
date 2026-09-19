@@ -23,7 +23,7 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ### 2026-09-19 13:21 CDT — Replace the webmail shell with the interactive client
 
-Commit: current commit; hash assigned by Git after commit
+Commits: `a4c2609`, with hostile-review repairs `11e5c92` and `e4120fa`
 
 Affected files:
 
@@ -58,6 +58,9 @@ Verification:
 - JavaScript syntax check with Node
 - real headless Chromium interaction smoke at desktop and mobile widths
 - rebuilt production-runtime Postfix/Dovecot/Rspamd smoke
+- focused race detector and `go vet`
+- containerized custom-webmail UI smoke and full image build test
+- fresh hostile review after repair, followed by two independent clean reviews
 - shell syntax and `git diff --check`
 
 Risks / non-goals:

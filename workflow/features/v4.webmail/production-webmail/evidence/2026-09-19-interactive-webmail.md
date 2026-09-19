@@ -2,7 +2,7 @@
 
 Date: 2026-09-19 13:21 CDT
 
-State: implementation complete; final committed-tree admission pending.
+State: admitted after committed-tree verification and two independent clean reviews.
 
 ## Closed gaps
 
