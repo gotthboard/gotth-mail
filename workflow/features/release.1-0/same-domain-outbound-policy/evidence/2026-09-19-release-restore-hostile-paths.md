@@ -150,6 +150,8 @@ domain-scoped token. Fully reconciled activation returns `200`; committed
 policy with remaining hold failures returns `202 Accepted` and exact selected,
 held, already-held, no-longer-blocked, and failed counts. API tests cover both
 the DNS-equivalent authorization form and the pending-reconciliation status.
+The `202` path sets the JSON media type before committing the status; its API
+regression requires both the status and header.
 
 The repaired-tree pass found that unauthenticated inbound queue admission
 treated a reverse path matching a hosted mailbox as authoritative local sender

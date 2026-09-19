@@ -21,9 +21,36 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 12:14 CDT — Clarify policy activation completion state
+### 2026-09-19 12:17 CDT — Preserve JSON metadata on pending activation
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- outbound-policy API response handling and regression test
+- same-domain hostile-path evidence and changelog
+
+Explanation:
+
+Set the JSON content type before committing the `202 Accepted` status for a
+policy activation with pending queue holds. Previously the body was valid JSON
+but the header was set after `WriteHeader`, when Go's HTTP server had already
+committed the response metadata.
+
+Verification:
+
+- the pending-reconciliation API test now requires both `202` and
+  `Content-Type: application/json`
+- focused API tests and `git diff --check` passed on the development host
+
+Risks / non-goals:
+
+- no live queue, domain policy, deployment, production credential, tag,
+  release, or external service changed
+
+### 2026-09-19 12:14 CDT — Clarify policy activation completion state
+
+Commit: `676f2d9`
 
 Affected files:
 

@@ -117,8 +117,8 @@ func TestOutboundPolicyAdminAPIReportsCommittedPendingReconciliation(t *testing.
 	}
 	applied := request("/api/v1/domains/outbound-policy/apply", `{"domain":"example.test","scope":"same_domain_only","confirmation":"`+plan.Digest+`"}`)
 	var result outboundpolicy.ChangeResult
-	if err := json.Unmarshal(applied.Body.Bytes(), &result); applied.Code != http.StatusAccepted || err != nil || !result.Changed || result.Reconciliation == nil || result.Reconciliation.Failed != 1 {
-		t.Fatalf("status=%d result=%#v err=%v", applied.Code, result, err)
+	if err := json.Unmarshal(applied.Body.Bytes(), &result); applied.Code != http.StatusAccepted || applied.Header().Get("Content-Type") != "application/json" || err != nil || !result.Changed || result.Reconciliation == nil || result.Reconciliation.Failed != 1 {
+		t.Fatalf("status=%d content-type=%q result=%#v err=%v", applied.Code, applied.Header().Get("Content-Type"), result, err)
 	}
 }
 

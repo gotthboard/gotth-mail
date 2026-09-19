@@ -86,6 +86,7 @@ func (s Server) registerOutboundPolicyAdmin(mux *http.ServeMux, ids *identity.Se
 			return
 		}
 		if result.Reconciliation != nil && result.Reconciliation.Failed > 0 {
+			w.Header().Set("content-type", "application/json")
 			w.WriteHeader(http.StatusAccepted)
 		}
 		writeJSON(w, result)
