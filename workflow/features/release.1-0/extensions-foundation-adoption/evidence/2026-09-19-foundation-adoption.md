@@ -1,6 +1,7 @@
 # GOTTH Extensions foundation adoption — 2026-09-19
 
 Candidate base: `cf4d639`
+Implementation commit: `3102db391a95cd4b54630f2f78ec160382a29f43`
 
 ## Scope
 
@@ -58,6 +59,15 @@ defensive checks for the pinned library rejecting an exact grant/profile or
 the fixed `discovered -> starting -> ready` sequence immediately after the
 same library validated those inputs. Reaching them requires replacing or
 corrupting the dependency contract, so no dishonest test hook was added.
+
+Two fresh admission passes were clean on the immutable implementation commit.
+The second pass also repeated the foundation and external-consumer contract
+packages ten times. Its attempted repetition of PostgreSQL-backed command
+packages hit the development host's pre-existing SysV shared-memory-ID ceiling;
+the ten detached segments created by that command were removed after exact
+creator-PID and zero-attachment checks. This environmental repeat-run failure
+does not replace or weaken the successful focused, race, full-suite, vet, and
+container gates above.
 
 ## Deliberate boundary
 

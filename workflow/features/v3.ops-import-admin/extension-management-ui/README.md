@@ -1,6 +1,8 @@
 # Extensions administrator
 
-Planned host-owned GOTTH Mail administrator for extension inventory,
+State: `in_progress`
+
+Host-owned GOTTH Mail administrator for extension inventory,
 configuration, write-only secrets, permissions, health, enable/disable,
 updates, audit, versions, and rollback.
 

@@ -45,7 +45,7 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ### 2026-09-19 17:46 CDT — Adopt the GOTTH Extensions compatibility foundation
 
-Commit: current commit; hash assigned by Git after commit
+Implementation commit: `3102db391a95cd4b54630f2f78ec160382a29f43`
 
 Affected files:
 
