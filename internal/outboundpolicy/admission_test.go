@@ -80,6 +80,22 @@ func TestExactAliasTakesPrecedenceOverCatchAll(t *testing.T) {
 	}
 }
 
+func TestCatchAllDoesNotReexpandItsLocalMailboxTarget(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	seedAdmissionState(t, db)
+	if _, err := db.Exec(`INSERT INTO aliases(id,domain_id,local_part,targets_json,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000b06','00000000-0000-4000-8000-000000000b01','*','["user@example.test"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	recipients, sources, err := expandOriginal(context.Background(), db, "missing@example.test")
+	if err != nil || len(recipients) != 1 || recipients[0] != "user@example.test" {
+		t.Fatalf("recipients=%#v sources=%#v err=%v", recipients, sources, err)
+	}
+	want := QueueSource{Kind: SourceCatchAll, ObjectID: "00000000-0000-4000-8000-000000000b06"}
+	if len(sources) != 1 || sources[0] != want {
+		t.Fatalf("sources=%#v want=%#v", sources, want)
+	}
+}
+
 func TestQueueAdmissionResolvesInboundForwardWithoutTrustingEnvelopeSender(t *testing.T) {
 	db := testpg.DB(t, store.MigrateSQL)
 	seedAdmissionState(t, db)

@@ -89,6 +89,14 @@ the helper boundary, proves a domain policy update times out instead of
 crossing the release, resumes the helper, and observes successful completion.
 Both the focused normal and race suites passed after the repair.
 
+The next cold pass found that a wildcard catch-all targeting an enabled local
+mailbox could be re-applied to that mailbox instead of terminating expansion,
+and that multi-query backup capture did not use one database snapshot. The
+catch-all query now excludes enabled local mailbox targets, with a PostgreSQL
+regression test, and backup capture now uses one repeatable-read read-only
+transaction. Focused normal and race suites for outbound policy and operations
+passed after both repairs.
+
 ## Remaining admission work
 
 - repository-wide serial, race, vet, command-build, Compose-render, and workflow

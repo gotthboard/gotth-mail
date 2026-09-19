@@ -21,9 +21,42 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 09:35 CDT — Serialize policy authority across queue release
+### 2026-09-19 09:43 CDT — Repair catch-all termination and backup consistency
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/outboundpolicy/admission.go` and hostile expansion tests
+- `internal/outboundpolicy/backup.go`
+- release/restore hostile-path evidence and changelog
+
+Explanation:
+
+Closed two cold-review findings. Wildcard catch-all expansion now stops when
+its target is an enabled local mailbox; without that check the catch-all could
+incorrectly reapply to its own mailbox target until the depth limit. Exact
+aliases still take precedence and missing local recipients still use the
+catch-all. Backup capture now reads domains, mailboxes, aliases, system
+senders, queue parents, recipients, and sources under one repeatable-read,
+read-only transaction so the artifact cannot combine unrelated points in time.
+
+Verification:
+
+- new PostgreSQL coverage proves a catch-all to a local mailbox terminates with
+  exactly one catch-all provenance source
+- focused development-host normal and race suites passed for outbound policy
+  and operations/restore
+- `git diff --check`
+
+Risks / non-goals:
+
+- no live queue, deployment, production credential, tag, release, or external
+  service changed
+
+### 2026-09-19 09:35 CDT — Serialize policy authority across queue release
+
+Commit: `6228db6`
 
 Affected files:
 

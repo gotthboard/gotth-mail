@@ -53,8 +53,13 @@ func CaptureBackupState(ctx context.Context, db *sql.DB) (BackupState, error) {
 	if db == nil {
 		return BackupState{}, errors.New("outbound backup database is unavailable")
 	}
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return BackupState{}, err
+	}
+	defer tx.Rollback()
 	var state BackupState
-	domainRows, err := db.QueryContext(ctx, `SELECT id::text,name,enabled,outbound_scope,outbound_policy_revision FROM domains ORDER BY name,id`)
+	domainRows, err := tx.QueryContext(ctx, `SELECT id::text,name,enabled,outbound_scope,outbound_policy_revision FROM domains ORDER BY name,id`)
 	if err != nil {
 		return state, err
 	}
@@ -79,7 +84,7 @@ func CaptureBackupState(ctx context.Context, db *sql.DB) (BackupState, error) {
 	if err := closeBackupRows(domainRows); err != nil {
 		return BackupState{}, err
 	}
-	mailboxRows, err := db.QueryContext(ctx, `SELECT id::text,domain_id::text,local_part,enabled,COALESCE(verifier,''),COALESCE(quota_bytes,0) FROM mailboxes ORDER BY domain_id,local_part,id`)
+	mailboxRows, err := tx.QueryContext(ctx, `SELECT id::text,domain_id::text,local_part,enabled,COALESCE(verifier,''),COALESCE(quota_bytes,0) FROM mailboxes ORDER BY domain_id,local_part,id`)
 	if err != nil {
 		return BackupState{}, err
 	}
@@ -98,7 +103,7 @@ func CaptureBackupState(ctx context.Context, db *sql.DB) (BackupState, error) {
 	if err := closeBackupRows(mailboxRows); err != nil {
 		return BackupState{}, err
 	}
-	aliasRows, err := db.QueryContext(ctx, `SELECT id::text,domain_id::text,local_part,enabled,targets_json FROM aliases ORDER BY domain_id,local_part,id`)
+	aliasRows, err := tx.QueryContext(ctx, `SELECT id::text,domain_id::text,local_part,enabled,targets_json FROM aliases ORDER BY domain_id,local_part,id`)
 	if err != nil {
 		return BackupState{}, err
 	}
@@ -122,7 +127,7 @@ func CaptureBackupState(ctx context.Context, db *sql.DB) (BackupState, error) {
 	if err := closeBackupRows(aliasRows); err != nil {
 		return BackupState{}, err
 	}
-	senderRows, err := db.QueryContext(ctx, `SELECT id,domain_id::text,address,enabled,revision FROM outbound_system_senders ORDER BY id`)
+	senderRows, err := tx.QueryContext(ctx, `SELECT id,domain_id::text,address,enabled,revision FROM outbound_system_senders ORDER BY id`)
 	if err != nil {
 		return BackupState{}, err
 	}
@@ -147,7 +152,7 @@ func CaptureBackupState(ctx context.Context, db *sql.DB) (BackupState, error) {
 	if err := closeBackupRows(senderRows); err != nil {
 		return BackupState{}, err
 	}
-	queueRows, err := db.QueryContext(ctx, `SELECT queue_id FROM outbound_queue_messages ORDER BY queue_id`)
+	queueRows, err := tx.QueryContext(ctx, `SELECT queue_id FROM outbound_queue_messages ORDER BY queue_id`)
 	if err != nil {
 		return BackupState{}, err
 	}
@@ -167,13 +172,15 @@ func CaptureBackupState(ctx context.Context, db *sql.DB) (BackupState, error) {
 	if err := closeBackupRows(queueRows); err != nil {
 		return BackupState{}, err
 	}
-	store := QueueStore{DB: db}
 	for _, queueID := range queueIDs {
-		record, err := store.Load(ctx, queueID)
+		record, err := loadQueueRecord(ctx, tx, queueID)
 		if err != nil {
 			return BackupState{}, err
 		}
 		state.Queues = append(state.Queues, record)
+	}
+	if err := tx.Commit(); err != nil {
+		return BackupState{}, err
 	}
 	return state, nil
 }

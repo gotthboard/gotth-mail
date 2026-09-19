@@ -216,6 +216,12 @@ JOIN aliases a ON a.domain_id=d.id
          AND exact.enabled=true
          AND lower(exact.local_part)=lower(split_part(i.address,'@',1))
      )
+     AND NOT EXISTS (
+       SELECT 1 FROM mailboxes mailbox
+       WHERE mailbox.domain_id=d.id
+         AND mailbox.enabled=true
+         AND lower(mailbox.local_part)=lower(split_part(i.address,'@',1))
+     )
    )
  )
 WHERE a.enabled=true AND d.enabled=true
