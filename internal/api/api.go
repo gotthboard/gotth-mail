@@ -197,6 +197,7 @@ func (s Server) Handler() http.Handler {
 	s.registerIdentityAPI(mux, auditLog, identitySvc)
 	s.registerV3(mux, auditLog, identitySvc)
 	s.registerWebmail(mux, identitySvc)
+	s.registerOutboundPolicyAdmin(mux, identitySvc)
 	mux.HandleFunc("/api/v1/authz/explain", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "POST") {
 			return

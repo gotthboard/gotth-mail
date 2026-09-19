@@ -275,8 +275,9 @@ func VerifyBackupState(ctx context.Context, db *sql.DB, state BackupState) error
 		}
 	}
 	for _, expected := range state.Mailboxes {
-		var count int
-		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM mailboxes WHERE id=$1 AND domain_id=$2 AND local_part=$3 AND enabled=$4`, expected.ID, expected.DomainID, expected.LocalPart, expected.Enabled).Scan(&count); err != nil || count != 1 {
+		var verifier string
+		var quotaBytes int64
+		if err := db.QueryRowContext(ctx, `SELECT COALESCE(verifier,''),COALESCE(quota_bytes,0) FROM mailboxes WHERE id=$1 AND domain_id=$2 AND local_part=$3 AND enabled=$4`, expected.ID, expected.DomainID, expected.LocalPart, expected.Enabled).Scan(&verifier, &quotaBytes); err != nil || verifier != expected.Verifier || quotaBytes != expected.QuotaBytes {
 			return errors.New("restored outbound mailbox authority mismatch")
 		}
 	}

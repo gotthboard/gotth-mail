@@ -107,6 +107,15 @@ sink records accepted transaction recipient counts and proved exactly one
 two-recipient handoff. Focused normal and race suites passed on the corrected
 canonical worktree.
 
+The first final cold pass then found that `AdminService` had no authenticated
+product route, so an administrator could not actually preview or apply the
+domain policy, and that restored mailbox verifier/quota drift was omitted from
+verification. Bounded `/api/v1/domains/outbound-policy/{preview,apply}` routes
+now require a domain-scoped administrator token; apply also requires the exact
+preview digest and a valid correlation ID. Restore verification compares the
+captured verifier and quota. Focused API/outbound-policy/operations normal and
+race suites passed, including new authorization and corruption tests.
+
 ## Remaining admission work
 
 - repository-wide serial, race, vet, command-build, Compose-render, and workflow

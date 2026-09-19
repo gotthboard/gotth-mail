@@ -74,7 +74,7 @@ func (s AdminService) Apply(ctx context.Context, actor audit.ActorRef, correlati
 	if s.DB == nil {
 		return ChangeResult{}, errors.New("outbound policy database is unavailable")
 	}
-	if actor.Type == "" || actor.ID == "" || correlationID == "" {
+	if actor.Type == "" || actor.ID == "" || !validPolicyCorrelationID(correlationID) {
 		return ChangeResult{}, errors.New("actor and correlation ID are required")
 	}
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})

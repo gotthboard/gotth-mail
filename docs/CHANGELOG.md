@@ -21,9 +21,43 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 10:00 CDT — Preserve whole-message multi-recipient delivery
+### 2026-09-19 10:17 CDT — Expose policy administration and verify restored mailbox state
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/api/outbound_policy.go` and API coverage
+- `internal/outboundpolicy/admin.go`, backup verification, and corruption tests
+- same-domain hostile-path evidence and changelog
+
+Explanation:
+
+Closed two first-pass cold-review defects. The SQL-authoritative policy
+preview/apply service is now reachable through bounded authenticated API
+routes. Both routes require a scoped `domain:admin` token for the selected
+domain; apply additionally requires the preview digest and a valid correlation
+ID. Restore verification now compares captured mailbox verifier and quota
+state as well as identity and enablement, preventing a damaged credential or
+quota restore from being reported as verified.
+
+Verification:
+
+- new API coverage proves unauthenticated preview is rejected and a scoped
+  token can preview and confirm an exact revision-bound policy change
+- new PostgreSQL corruption coverage proves verifier and quota drift both fail
+  restore verification
+- focused development-host normal and race suites passed for API, outbound
+  policy, and operations
+
+Risks / non-goals:
+
+- no live domain policy, queue, deployment, production credential, tag,
+  release, or external service changed
+
+### 2026-09-19 10:00 CDT — Preserve whole-message multi-recipient delivery
+
+Commit: `5bfea95`
 
 Affected files:
 
