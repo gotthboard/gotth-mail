@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -52,17 +51,10 @@ type Server struct {
 	NotificationRecorder notification.Recorder
 	NotificationService  *notification.Service
 	NotificationPrompter plugin.NotificationSink
+	PluginHealth         func(context.Context, string) (plugin.HealthResponse, error)
 	ApprovalService      *notifyruntime.ApprovalService
 	NotificationReceiver http.Handler
 	SCIM                 http.Handler
-}
-
-func (s Server) emitOperationalAlert(ctx context.Context, class string, severity notification.Severity, title, summary string, resource notification.ResourceRef) {
-	if s.NotificationService == nil {
-		return
-	}
-	id := fmt.Sprintf("runtime-%d", time.Now().UTC().UnixNano())
-	_, _ = s.NotificationService.SendAlert(ctx, notification.Alert{ID: id, Class: class, Severity: severity, Title: title, Summary: summary, CorrelationID: id, Resource: resource})
 }
 
 func (s Server) Handler() http.Handler {
@@ -214,6 +206,7 @@ func (s Server) Handler() http.Handler {
 	s.registerV3(mux, auditLog, identitySvc)
 	s.registerWebmail(mux, identitySvc)
 	s.registerOutboundPolicyAdmin(mux, identitySvc)
+	s.registerNotificationApprovals(mux, identitySvc)
 	mux.HandleFunc("/api/v1/authz/explain", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "POST") {
 			return
@@ -398,19 +391,7 @@ func (s Server) Handler() http.Handler {
 			cert = diag.CertCheck{Status: diag.CertUnknown, Reason: "not_configured"}
 		}
 		webmailOK := s.WebmailOK
-		report := ops.Doctor(r.Context(), ops.DoctorInput{ConfigOK: true, DatabaseOK: true, AuthentikOK: true, WebmailOK: webmailOK, Daemon: s.Daemon, DNSChecks: s.DNSChecks, CertCheck: cert, PluginRegistry: s.Plugins, PluginToken: r.Header.Get("X-GOTTH-Mail-Plugin-Token"), CorrelationID: r.Header.Get("X-Correlation-ID")})
-		for _, check := range report.Checks {
-			if check.Status != ops.Fail {
-				continue
-			}
-			class := "doctor.failure"
-			if check.Category == "TLS" {
-				class = "certificate.renewal.failure"
-			} else if check.Category == "plugin" {
-				class = "plugin.health.failure"
-			}
-			s.emitOperationalAlert(r.Context(), class, notification.SeverityCritical, "Operational check failed", check.Category+" "+check.Name+" failed", notification.ResourceRef{Type: "doctor_check", ID: check.Name})
-		}
+		report := ops.Doctor(r.Context(), ops.DoctorInput{ConfigOK: true, DatabaseOK: true, AuthentikOK: true, WebmailOK: webmailOK, Daemon: s.Daemon, DNSChecks: s.DNSChecks, CertCheck: cert, PluginRegistry: s.Plugins, CorrelationID: r.Header.Get("X-Correlation-ID")})
 		writeJSON(w, report)
 	})
 	mux.HandleFunc("/api/v1/debug/lookup", func(w http.ResponseWriter, r *http.Request) {
@@ -424,9 +405,13 @@ func (s Server) Handler() http.Handler {
 			return
 		}
 		if s.NotificationQueue != nil {
-			if live, err := s.NotificationQueue.Snapshot(r.Context(), ""); err == nil && live.Deferred > 0 {
-				s.emitOperationalAlert(r.Context(), "queue.deferred", notification.SeverityWarning, "Deferred mail detected", fmt.Sprintf("deferred=%d total=%d", live.Deferred, live.Total), notification.ResourceRef{Type: "postfix_queue", ID: "default"})
+			live, err := s.NotificationQueue.Snapshot(r.Context(), "")
+			if err != nil {
+				http.Error(w, "queue status unavailable", http.StatusServiceUnavailable)
+				return
 			}
+			writeJSON(w, live)
+			return
 		}
 		writeJSON(w, queue.Summary)
 	})
@@ -434,27 +419,16 @@ func (s Server) Handler() http.Handler {
 		if !method(w, r, "GET") {
 			return
 		}
-		writeJSON(w, queue.Summary.Deferred)
-	})
-	mux.HandleFunc("/api/v1/queue/flush", func(w http.ResponseWriter, r *http.Request) {
-		if !method(w, r, "POST") {
+		if s.NotificationQueue != nil {
+			live, err := s.NotificationQueue.Snapshot(r.Context(), "")
+			if err != nil {
+				http.Error(w, "queue status unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			writeJSON(w, live.Deferred)
 			return
 		}
-		if err := queue.Flush(r.Context(), auditLog, actor(r), r.URL.Query().Get("confirm")); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		writeJSON(w, map[string]any{"flushed": true})
-	})
-	mux.HandleFunc("/api/v1/queue/retry", func(w http.ResponseWriter, r *http.Request) {
-		if !method(w, r, "POST") {
-			return
-		}
-		if err := queue.Retry(r.Context(), auditLog, actor(r), r.URL.Query().Get("confirm")); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		writeJSON(w, map[string]any{"retried": true})
+		writeJSON(w, len(queue.Summary.Deferred))
 	})
 	mux.HandleFunc("/api/v1/plugins/", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {
@@ -466,7 +440,24 @@ func (s Server) Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, map[string]any{"name": name, "enabled": p.Enabled, "healthy": p.Enabled})
+		if !p.Enabled {
+			writeJSON(w, map[string]any{"name": name, "enabled": false, "healthy": false})
+			return
+		}
+		if s.PluginHealth == nil {
+			w.Header().Set("content-type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": name, "enabled": true, "healthy": false})
+			return
+		}
+		health, err := s.PluginHealth(r.Context(), name)
+		if err != nil || !health.Healthy {
+			w.Header().Set("content-type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": name, "enabled": true, "healthy": false})
+			return
+		}
+		writeJSON(w, map[string]any{"name": name, "enabled": true, "healthy": true})
 	})
 	return mux
 }

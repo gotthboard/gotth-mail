@@ -16,6 +16,7 @@ import (
 
 type ApprovalCreator interface {
 	Create(context.Context, notification.ApprovalRequest, time.Time) (notification.ApprovalRequest, error)
+	Activate(context.Context, string, time.Time) error
 	Invalidate(context.Context, string, time.Time, string) error
 }
 
@@ -77,12 +78,18 @@ func (s ApprovalService) RequestTelegramApproval(ctx context.Context, input Tele
 	}
 	result, err := s.Prompter.SendPrompt(ctx, plugin.NotificationPrompt{ID: created.ID, CorrelationID: created.CorrelationID, Transport: created.TransportActor.Transport, ExternalActorID: created.TransportActor.ExternalID, ActorType: created.Actor.Type, ActorID: created.Actor.ID, Action: string(created.Action), ResourceType: created.Resource.Type, ResourceID: created.Resource.ID, RequestHash: created.RequestHash, ExpiresAt: created.ExpiresAt.UTC().Format(time.RFC3339), Title: input.Title, Summary: input.Summary, ConfirmationToken: created.BindingToken})
 	if err != nil || !result.Accepted {
-		_ = s.Store.Invalidate(ctx, created.ID, s.now(), "prompt_delivery_failed")
+		if invalidateErr := s.Store.Invalidate(ctx, created.ID, s.now(), "prompt_delivery_failed"); invalidateErr != nil {
+			return notification.ApprovalRequest{}, errors.New("notification prompt invalidation failed")
+		}
 		if err != nil {
 			return notification.ApprovalRequest{}, err
 		}
 		return notification.ApprovalRequest{}, errors.New("notification prompt rejected")
 	}
+	if err := s.Store.Activate(ctx, created.ID, s.now()); err != nil {
+		return notification.ApprovalRequest{}, errors.New("notification approval activation failed")
+	}
+	created.Result = "pending"
 	created.BindingToken = ""
 	return created, nil
 }

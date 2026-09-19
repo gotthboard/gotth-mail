@@ -23,6 +23,18 @@ type RuntimeCommandProvider struct {
 	DoctorLookup   func(context.Context) (ops.DoctorReport, error)
 	BackupLookup   func(context.Context) (ops.Backup, bool, error)
 	SnapshotLookup func(context.Context) (ops.SnapshotView, bool, error)
+	DomainLookup   func(context.Context) (DomainCounts, error)
+	PluginLookup   func(context.Context) ([]PluginHealth, error)
+}
+
+type DomainCounts struct {
+	EnabledDomains, DisabledDomains, EnabledMailboxes, EnabledAliases int
+}
+
+type PluginHealth struct {
+	Name             string
+	Seam             plugin.Seam
+	Enabled, Healthy bool
 }
 
 func (p RuntimeCommandProvider) Summary(ctx context.Context, cmd notification.ReadOnlyCommand) (string, error) {
@@ -35,13 +47,13 @@ func (p RuntimeCommandProvider) Summary(ctx context.Context, cmd notification.Re
 	case notification.CommandQueueSummary:
 		return p.queueSummary(ctx)
 	case notification.CommandDomainHealth:
-		return p.domainSummary(), nil
+		return p.domainSummary(ctx)
 	case notification.CommandBackupStatus:
 		return p.backupSummary(ctx)
 	case notification.CommandDeploymentStatus:
 		return p.deploymentSummary(ctx)
 	case notification.CommandPluginHealth:
-		return p.pluginSummary(), nil
+		return p.pluginSummary(ctx)
 	default:
 		return "", errors.New("unsupported notification command")
 	}
@@ -82,9 +94,16 @@ func (p RuntimeCommandProvider) queueSummary(ctx context.Context) (string, error
 	return fmt.Sprintf("queue active=%d deferred=%d held=%d total=%d", summary.Active, summary.Deferred, summary.Held, summary.Total), nil
 }
 
-func (p RuntimeCommandProvider) domainSummary() string {
+func (p RuntimeCommandProvider) domainSummary(ctx context.Context) (string, error) {
+	if p.DomainLookup != nil {
+		counts, err := p.DomainLookup(ctx)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("domains enabled=%d disabled=%d mailboxes=%d aliases=%d", counts.EnabledDomains, counts.DisabledDomains, counts.EnabledMailboxes, counts.EnabledAliases), nil
+	}
 	if p.Daemon == nil {
-		return "domain health unavailable"
+		return "domain health unavailable", nil
 	}
 	enabledDomains, disabledDomains := countEnabledDomains(p.Daemon.Domains)
 	enabledMailboxes := 0
@@ -99,7 +118,7 @@ func (p RuntimeCommandProvider) domainSummary() string {
 			enabledAliases++
 		}
 	}
-	return fmt.Sprintf("domains enabled=%d disabled=%d mailboxes=%d aliases=%d", enabledDomains, disabledDomains, enabledMailboxes, enabledAliases)
+	return fmt.Sprintf("domains enabled=%d disabled=%d mailboxes=%d aliases=%d", enabledDomains, disabledDomains, enabledMailboxes, enabledAliases), nil
 }
 
 func (p RuntimeCommandProvider) backupSummary(ctx context.Context) (string, error) {
@@ -149,9 +168,26 @@ func (p RuntimeCommandProvider) deploymentSummary(ctx context.Context) (string, 
 	return fmt.Sprintf("deployment snapshot=%s config_set=%s migration=%s restore=%s images=%d plugins=%d", snapshot.ID, snapshot.GeneratedConfigSetID, snapshot.MigrationVersion, snapshot.VerifiedRestoreStatus, len(snapshot.ImageVersions), len(snapshot.PluginVersions)), nil
 }
 
-func (p RuntimeCommandProvider) pluginSummary() string {
+func (p RuntimeCommandProvider) pluginSummary(ctx context.Context) (string, error) {
+	if p.PluginLookup != nil {
+		statuses, err := p.PluginLookup(ctx)
+		if err != nil {
+			return "", err
+		}
+		healthy, unhealthy, disabled := 0, 0, 0
+		for _, status := range statuses {
+			if !status.Enabled {
+				disabled++
+			} else if status.Healthy {
+				healthy++
+			} else {
+				unhealthy++
+			}
+		}
+		return fmt.Sprintf("plugins registered=%d healthy=%d unhealthy=%d disabled=%d", len(statuses), healthy, unhealthy, disabled), nil
+	}
 	if len(p.Plugins.Plugins) == 0 {
-		return "plugins registered=0 enabled=0 disabled=0"
+		return "plugins registered=0 enabled=0 disabled=0", nil
 	}
 	enabled, disabled := 0, 0
 	seams := map[plugin.Seam]int{}
@@ -172,7 +208,7 @@ func (p RuntimeCommandProvider) pluginSummary() string {
 	for _, seam := range keys {
 		parts = append(parts, fmt.Sprintf("%s=%d", seam, seams[plugin.Seam(seam)]))
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, " "), nil
 }
 
 func countEnabledDomains(domains map[string]daemon.Domain) (int, int) {

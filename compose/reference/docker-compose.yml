@@ -2,6 +2,13 @@ services:
   gotth-mail:
     build:
       context: ../..
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /run/gotth-mail-config
+        cp /run/reference/telegram-actors.json /run/gotth-mail-config/telegram-actors.json
+        chmod 0600 /run/gotth-mail-config/telegram-actors.json
+        exec /usr/local/bin/gotth-mail
     restart: "on-failure:5"
     environment:
       GOTTH_MAIL_LISTEN: ":8080"
@@ -16,12 +23,15 @@ services:
       GOTTH_MAIL_NOTIFICATION_PLUGIN_ENDPOINT: ${GOTTH_MAIL_NOTIFICATION_PLUGIN_ENDPOINT:-unix:///run/gotth-mail-plugins/telegram.sock}
       GOTTH_MAIL_NOTIFICATION_PLUGIN_SERVICE_TOKEN: ${GOTTH_MAIL_NOTIFICATION_PLUGIN_SERVICE_TOKEN:-dev-plugin-token}
       GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET: ${GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET-reference-telegram-webhook-secret}
+      GOTTH_MAIL_TELEGRAM_ACTOR_MAPPINGS_FILE: /run/gotth-mail-config/telegram-actors.json
+      GOTTH_MAIL_REFERENCE_APPROVAL_AMBIGUOUS_ONCE_FILE: ${GOTTH_MAIL_REFERENCE_APPROVAL_AMBIGUOUS_ONCE_FILE:-}
       GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ID: system:mailer-daemon@example.test
       GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ADDRESS: mailer-daemon@example.test
     ports:
       - "8080:8080"
     volumes:
       - notification-sockets:/run/gotth-mail-plugins
+      - ./config/telegram-actors.json:/run/reference/telegram-actors.json:ro
     depends_on:
       database:
         condition: service_healthy
@@ -34,7 +44,7 @@ services:
       backup-plugin:
         condition: service_started
       notification-plugin:
-        condition: service_started
+        condition: service_healthy
   test-runner:
     build:
       context: ../..
@@ -270,9 +280,15 @@ services:
       GOTTH_MAIL_PLUGIN_NAME: telegram-notification-sink
       GOTTH_MAIL_PLUGIN_SERVICE_TOKEN: dev-plugin-token
       GOTTH_MAIL_REFERENCE_FIXTURE: "1"
+      GOTTH_MAIL_REFERENCE_NOTIFICATION_CAPTURE_FILE: /run/gotth-mail-plugins/prompts.jsonl
       GOTTH_MAIL_PLUGIN_LISTEN: ${GOTTH_MAIL_NOTIFICATION_PLUGIN_LISTEN:-unix:///run/gotth-mail-plugins/telegram.sock}
     volumes:
       - notification-sockets:/run/gotth-mail-plugins
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/gotth-mail-plugins/telegram.sock"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
   signed-email-notification-plugin:
     profiles: ["signed-email-notification"]
     build:
@@ -296,6 +312,11 @@ services:
         source: ${GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_SOURCE:-./secrets/notification-signing-key.asc}
         target: /run/secrets/notification-signing-key.asc
         read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/gotth-mail-plugins/signed-email.sock"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
     depends_on:
       - gotth-mail
       - postfix

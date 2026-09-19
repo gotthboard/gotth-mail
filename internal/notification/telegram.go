@@ -98,7 +98,7 @@ func (r TelegramReceiver) processMessage(ctx context.Context, msg telegramMessag
 	}
 	resp, err := r.Commands.Run(ctx, CommandRequest{TransportActor: msg.Actor(), Command: cmd, CorrelationID: msg.CorrelationID()})
 	if err != nil {
-		return TelegramReply{ChatID: msg.ChatID(), Text: "denied: " + boundLine(err.Error(), 120)}, err
+		return TelegramReply{ChatID: msg.ChatID(), Text: "command denied"}, err
 	}
 	return TelegramReply{ChatID: msg.ChatID(), Text: resp.Summary}, nil
 }
@@ -113,7 +113,7 @@ func (r TelegramReceiver) processCallback(ctx context.Context, cb telegramCallba
 	}
 	transportActor := cb.Actor()
 	if err := r.ExecuteApproval(ctx, id, bindingToken, transportActor); err != nil {
-		return TelegramReply{ChatID: cb.ChatID(), Text: "approval rejected: " + boundLine(err.Error(), 120)}, err
+		return TelegramReply{ChatID: cb.ChatID(), Text: "approval rejected"}, err
 	}
 	return TelegramReply{ChatID: cb.ChatID(), Text: "approval accepted"}, nil
 }

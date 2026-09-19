@@ -113,9 +113,11 @@ The target architecture is [Exact Sender Identity Binding for OpenPGP/MIME Signe
 
 Any email notification backend introduced in v5 must OpenPGP-sign every outbound email notification with the responsible user or system notification identity before delivery. Telegram/webhook transports may use their own authenticated transport semantics, but email output is never exempt from the global OpenPGP signing invariant.
 
-Signed email is a distinct, explicitly configured notification plugin (`signed-email-notification-sink`), not hidden behavior inside the Telegram sink. Its opt-in Compose profile runs a separate real plugin process. The process composes one configured system sender identity from a bounded private-key file, the real OpenPGP/MIME signer and exact-sender verifier, and the real SMTP submitter. An absent or incomplete email configuration prevents that plugin from starting; it never falls back to the local/Telegram sink or unsigned SMTP.
+Signed email is a distinct, explicitly configured notification plugin (`signed-email-notification-sink`), not hidden behavior inside the Telegram sink. The tested `docker-compose.signed-email.yml` overlay selects that process, clears Telegram webhook state, removes the unused Telegram sink, and makes core wait for the selected Unix socket service. The process composes one configured system sender identity from a bounded private-key file, the real OpenPGP/MIME signer and exact-sender verifier, and the real SMTP submitter. An absent or incomplete email configuration prevents that plugin from starting; it never falls back to the local/Telegram sink or unsigned SMTP.
 
 Core explicitly selects exactly one configured Telegram or signed-email adapter and composes it with the SQL delivery recorder. Signed email remains alert-only; selecting it while enabling a Telegram webhook fails startup.
+
+Operational alerts are emitted by a periodic state-transition monitor. Its SQL state records the current condition, monotonic transition number, and any retryable pending delivery. Repeated `GET` requests are read-only and cannot generate notifications. A persistent failure sends once, a retryable transport failure is retried under the same event identity, recovery clears the condition, and a later recurrence receives a new event identity.
 
 The release boundary is:
 

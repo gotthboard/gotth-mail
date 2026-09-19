@@ -5,6 +5,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -46,6 +48,11 @@ func TestConfigureNotificationsWiresGRPCSQLAndAuthenticatedReceiver(t *testing.T
 	t.Setenv("GOTTH_MAIL_NOTIFICATION_PLUGIN_ENDPOINT", listener.Addr().String())
 	t.Setenv("GOTTH_MAIL_NOTIFICATION_PLUGIN_SERVICE_TOKEN", token)
 	t.Setenv("GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET", "0123456789abcdef-webhook")
+	mappingPath := filepath.Join(t.TempDir(), "telegram-actors.json")
+	if err := os.WriteFile(mappingPath, []byte(`[{"external_id":"chat:42:user:99","actor_type":"api_token","actor_id":"ops","scopes":["queue:read"]}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOTTH_MAIL_TELEGRAM_ACTOR_MAPPINGS_FILE", mappingPath)
 	db := testpg.DB(t, store.MigrateSQL)
 	server := api.Server{AuditDB: db, Authz: authz.StaticAuthorizer{}, NotificationQueue: envTestQueue{}}
 	backend, err := configureNotificationsFromEnv(&server)
@@ -73,6 +80,64 @@ func TestConfigureNotificationsWiresGRPCSQLAndAuthenticatedReceiver(t *testing.T
 	}
 }
 
+func TestConfigureTelegramActorMappingsReplacesAndClearsAuthoritativeSet(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	mapper := notification.SQLActorMapper{DB: db}
+	path := filepath.Join(t.TempDir(), "telegram-actors.json")
+	if err := os.WriteFile(path, []byte(`[{"external_id":"chat:42:user:99","actor_type":"api_token","actor_id":"ops","scopes":["queue:retry"]}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOTTH_MAIL_TELEGRAM_ACTOR_MAPPINGS_FILE", path)
+	if err := configureTelegramActorMappings(mapper, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := mapper.Map(context.Background(), notification.TransportActor{Transport: "telegram", ExternalID: "chat:42:user:99"}); err != nil || !ok {
+		t.Fatalf("mapping absent ok=%v err=%v", ok, err)
+	}
+	if err := os.WriteFile(path, []byte(`[]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureTelegramActorMappings(mapper, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := mapper.Map(context.Background(), notification.TransportActor{Transport: "telegram", ExternalID: "chat:42:user:99"}); err != nil || ok {
+		t.Fatalf("stale mapping survived clear ok=%v err=%v", ok, err)
+	}
+	t.Setenv("GOTTH_MAIL_TELEGRAM_ACTOR_MAPPINGS_FILE", "")
+	if err := configureTelegramActorMappings(mapper, true); err == nil {
+		t.Fatal("required authoritative mapping source was omitted")
+	}
+}
+
+func TestConfigureTelegramActorMappingsRejectsUnsafeFilesAndDuplicateActors(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	mapper := notification.SQLActorMapper{DB: db}
+	path := filepath.Join(t.TempDir(), "telegram-actors.json")
+	t.Setenv("GOTTH_MAIL_TELEGRAM_ACTOR_MAPPINGS_FILE", path)
+	if err := os.WriteFile(path, []byte(`[]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureTelegramActorMappings(mapper, true); err == nil || !strings.Contains(err.Error(), "private regular") {
+		t.Fatalf("unsafe permissions accepted: %v", err)
+	}
+	duplicate := `[{"external_id":"chat:42:user:99","actor_type":"api_token","actor_id":"a","scopes":["queue:read"]},{"external_id":"chat:42:user:99","actor_type":"api_token","actor_id":"b","scopes":["queue:read"]}]`
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(duplicate), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureTelegramActorMappings(mapper, true); err == nil || !strings.Contains(err.Error(), "invalid Telegram actor mapping set") {
+		t.Fatalf("duplicate actors accepted: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"not":"an-array"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureTelegramActorMappings(mapper, true); err == nil || !strings.Contains(err.Error(), "decode") {
+		t.Fatalf("malformed mapping accepted: %v", err)
+	}
+}
+
 func TestConfigureNotificationsRejectsPartialOrRemotePlaintextConfig(t *testing.T) {
 	t.Setenv("GOTTH_MAIL_NOTIFICATION_PLUGIN_NAME", plugin.FirstNotifyName)
 	if backend, err := configureNotificationsFromEnv(&api.Server{}); err == nil || backend != nil {
@@ -83,5 +148,16 @@ func TestConfigureNotificationsRejectsPartialOrRemotePlaintextConfig(t *testing.
 	server := api.Server{AuditDB: testpg.DB(t, store.MigrateSQL), Authz: authz.StaticAuthorizer{}}
 	if backend, err := configureNotificationsFromEnv(&server); err == nil || backend != nil {
 		t.Fatalf("remote plaintext endpoint accepted backend=%#v err=%v", backend, err)
+	}
+}
+
+func TestNotificationDomainCountsReadCurrentSQLState(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	if _, err := db.Exec(`INSERT INTO domains(id,name,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-00000000e001','enabled.test',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),('00000000-0000-4000-8000-00000000e002','disabled.test',false,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP); INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-00000000e003','00000000-0000-4000-8000-00000000e001','user',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP); INSERT INTO aliases(id,domain_id,local_part,targets_json,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-00000000e004','00000000-0000-4000-8000-00000000e001','alias','["user@enabled.test"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	counts, err := notificationDomainCounts(context.Background(), db)
+	if err != nil || counts.EnabledDomains != 1 || counts.DisabledDomains != 1 || counts.EnabledMailboxes != 1 || counts.EnabledAliases != 1 {
+		t.Fatalf("counts=%#v err=%v", counts, err)
 	}
 }

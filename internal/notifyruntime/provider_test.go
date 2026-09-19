@@ -52,3 +52,24 @@ func TestRuntimeCommandProviderUnavailableAndUnsupported(t *testing.T) {
 		t.Fatalf("unsupported command accepted: %v", err)
 	}
 }
+
+func TestRuntimeCommandProviderUsesAuthoritativeLookups(t *testing.T) {
+	provider := RuntimeCommandProvider{
+		Daemon:  &daemon.Service{Domains: map[string]daemon.Domain{}},
+		Plugins: plugin.Registry{Plugins: map[string]plugin.Registration{"lying-enabled-bit": {Enabled: true}}},
+		DomainLookup: func(context.Context) (DomainCounts, error) {
+			return DomainCounts{EnabledDomains: 2, DisabledDomains: 1, EnabledMailboxes: 7, EnabledAliases: 3}, nil
+		},
+		PluginLookup: func(context.Context) ([]PluginHealth, error) {
+			return []PluginHealth{{Name: "telegram", Seam: plugin.Notification, Enabled: true, Healthy: false}}, nil
+		},
+	}
+	domains, err := provider.Summary(context.Background(), notification.CommandDomainHealth)
+	if err != nil || domains != "domains enabled=2 disabled=1 mailboxes=7 aliases=3" {
+		t.Fatalf("domain summary=%q err=%v", domains, err)
+	}
+	plugins, err := provider.Summary(context.Background(), notification.CommandPluginHealth)
+	if err != nil || plugins != "plugins registered=1 healthy=0 unhealthy=1 disabled=0" {
+		t.Fatalf("plugin summary=%q err=%v", plugins, err)
+	}
+}

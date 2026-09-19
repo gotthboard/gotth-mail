@@ -1,0 +1,17 @@
+[
+  {
+    "external_id": "chat:42:user:99",
+    "actor_type": "api_token",
+    "actor_id": "reference-telegram-operator",
+    "scopes": [
+      "doctor:read",
+      "queue:read",
+      "queue:flush",
+      "queue:retry",
+      "domain:read",
+      "backup:read",
+      "deployment:read",
+      "plugin:read"
+    ]
+  }
+]

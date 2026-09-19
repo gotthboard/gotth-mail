@@ -45,6 +45,7 @@ type DoctorInput struct {
 	CertCheck      diag.CertCheck
 	PluginRegistry plugin.Registry
 	PluginToken    string
+	PluginHealth   func(context.Context, string) (plugin.HealthResponse, error)
 	CorrelationID  string
 }
 
@@ -64,8 +65,17 @@ func Doctor(ctx context.Context, in DoctorInput) DoctorReport {
 	} else {
 		checks = append(checks, Check{Category: "daemon", Name: "postfix-recipient", Status: OK, Reason: "lookup_path_responded"})
 	}
-	for name := range in.PluginRegistry.Plugins {
-		_, err := in.PluginRegistry.Health(ctx, name, plugin.Request{CorrelationID: in.CorrelationID, ServiceToken: in.PluginToken, Deadline: time.Now().Add(time.Second)})
+	for name, registration := range in.PluginRegistry.Plugins {
+		var err error
+		if in.PluginHealth != nil {
+			_, err = in.PluginHealth(ctx, name)
+		} else {
+			token := in.PluginToken
+			if token == "" {
+				token = registration.ServiceToken
+			}
+			_, err = in.PluginRegistry.Health(ctx, name, plugin.Request{CorrelationID: in.CorrelationID, ServiceToken: token, Deadline: time.Now().Add(time.Second)})
+		}
 		if err != nil {
 			checks = append(checks, Check{Category: "plugin", Name: name, Status: Fail, Reason: err.Error()})
 		} else {

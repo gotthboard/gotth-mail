@@ -65,7 +65,9 @@ plugins:
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := Server{Authz: authz.StaticAuthorizer{}, Config: cfg, Plugins: plugin.Registry{Plugins: map[string]plugin.Registration{"stub-dns": {Name: "stub-dns", Enabled: true, ServiceToken: "tok", Capabilities: []string{"dns.lookup"}}}}, Daemon: daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}}, Queue: &ops.Queue{Summary: ops.QueueSummary{Active: 1, Deferred: []string{"abc"}}}}.Handler()
+	h := Server{Authz: authz.StaticAuthorizer{}, Config: cfg, Plugins: plugin.Registry{Plugins: map[string]plugin.Registration{"stub-dns": {Name: "stub-dns", Enabled: true, ServiceToken: "tok", Capabilities: []string{"dns.lookup"}}}}, PluginHealth: func(context.Context, string) (plugin.HealthResponse, error) {
+		return plugin.HealthResponse{Healthy: true}, nil
+	}, Daemon: daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true}}}, Queue: &ops.Queue{Summary: ops.QueueSummary{Active: 1, Deferred: []string{"abc"}}}}.Handler()
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodGet, "/healthz"},
 		{http.MethodGet, "/readyz"},
@@ -112,6 +114,36 @@ func TestPluginStatusNeverSerializesServiceCredential(t *testing.T) {
 	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/plugins", nil))
 	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "credential-must-not-leak") || strings.Contains(rr.Body.String(), "service_token") {
 		t.Fatalf("unsafe plugin status response status=%d body=%q", rr.Code, rr.Body.String())
+	}
+}
+
+func TestPluginHealthFailsClosedWithoutLeakingProbeErrors(t *testing.T) {
+	registration := plugin.Registration{Name: "notify", Seam: plugin.Notification, Enabled: true, ServiceToken: "credential-must-not-leak"}
+	for _, tc := range []struct {
+		name   string
+		lookup func(context.Context, string) (plugin.HealthResponse, error)
+	}{
+		{name: "missing probe"},
+		{name: "failed probe", lookup: func(context.Context, string) (plugin.HealthResponse, error) {
+			return plugin.HealthResponse{}, errors.New("upstream secret diagnostic")
+		}},
+		{name: "unhealthy probe", lookup: func(context.Context, string) (plugin.HealthResponse, error) {
+			return plugin.HealthResponse{Healthy: false, Message: "private backend detail"}, nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := Server{Plugins: plugin.Registry{Plugins: map[string]plugin.Registration{"notify": registration}}, PluginHealth: tc.lookup}.Handler()
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/plugins/notify/health", nil))
+			if rr.Code != http.StatusServiceUnavailable || !strings.Contains(rr.Body.String(), `"healthy":false`) {
+				t.Fatalf("plugin health response = %d %s", rr.Code, rr.Body.String())
+			}
+			for _, forbidden := range []string{"credential-must-not-leak", "upstream secret diagnostic", "private backend detail"} {
+				if strings.Contains(rr.Body.String(), forbidden) {
+					t.Fatalf("plugin health leaked %q in %q", forbidden, rr.Body.String())
+				}
+			}
+		})
 	}
 }
 

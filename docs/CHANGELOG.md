@@ -23,7 +23,7 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ### 2026-09-19 14:52 CDT — Complete the production notification runtime
 
-Commits: `de21330`, plus current workflow admission commit
+Commits: `de21330`, `bd52079`, plus current repair/admission commit
 
 Affected files:
 
@@ -56,6 +56,22 @@ operational event dispatchers, authoritative command lookups, signed-email
 Compose selection, and a shared Unix socket for notification gRPC. Legacy
 pending prompts are rejected during migration because reconstructing a safe
 binding would be dishonest.
+
+A second cold pass rejected that repair because approval creation still had no
+production caller, status reads manufactured duplicate alerts, domain/plugin
+commands were not authoritative, empty actor configuration could not revoke
+stale authority, dependency errors crossed the Telegram reply boundary, the
+signed-email profile did not actually select signed email, and no container
+proof reached real Postfix. The current repair rewires the authenticated queue
+routes to create approvals, keeps newly created approvals inert until prompt
+delivery and audit commit, makes every approval state transition audit-atomic,
+adds safe fixed replies, permits explicit clear-all actor replacement, queries
+SQL and the authenticated plugin Health RPC, and moves alerts into a durable
+transition/retry monitor. A mutually exclusive Compose overlay now selects
+signed email. The notification smoke now queues a real Postfix message, drives
+the API/prompt/webhook/lease/helper path, injects a post-flush ambiguous crash,
+recovers it through an idempotent second flush, proves delivery, durable audit,
+and replay rejection.
 
 Verification:
 

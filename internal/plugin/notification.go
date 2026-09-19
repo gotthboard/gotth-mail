@@ -3,7 +3,12 @@ package plugin
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/notification"
@@ -125,6 +130,41 @@ func (s NotificationServer) SendPrompt(ctx context.Context, in *pluginv1.SendPro
 }
 
 type LocalNotificationSink struct{}
+
+type FixtureNotificationSink struct {
+	Path string
+	mu   sync.Mutex
+}
+
+func (s *FixtureNotificationSink) SendAlert(ctx context.Context, alert notification.Alert) (notification.DeliveryResult, error) {
+	return (LocalNotificationSink{}).SendAlert(ctx, alert)
+}
+
+func (s *FixtureNotificationSink) SendPrompt(ctx context.Context, prompt NotificationPrompt) (PromptResult, error) {
+	result, err := (LocalNotificationSink{}).SendPrompt(ctx, prompt)
+	if err != nil {
+		return result, err
+	}
+	path := filepath.Clean(strings.TrimSpace(s.Path))
+	if !strings.HasPrefix(path, "/run/gotth-mail-plugins/") || filepath.Dir(path) != "/run/gotth-mail-plugins" {
+		return PromptResult{}, errors.New("invalid fixture notification capture path")
+	}
+	encoded, err := json.Marshal(prompt)
+	if err != nil {
+		return PromptResult{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return PromptResult{}, err
+	}
+	defer file.Close()
+	if _, err := file.Write(append(encoded, '\n')); err != nil {
+		return PromptResult{}, err
+	}
+	return result, file.Sync()
+}
 
 func (LocalNotificationSink) SendAlert(ctx context.Context, a notification.Alert) (notification.DeliveryResult, error) {
 	if err := ctx.Err(); err != nil {

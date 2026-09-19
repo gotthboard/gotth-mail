@@ -1,0 +1,27 @@
+services:
+  gotth-mail:
+    environment:
+      GOTTH_MAIL_NOTIFICATION_PLUGIN_NAME: signed-email-notification-sink
+      GOTTH_MAIL_NOTIFICATION_PLUGIN_ENDPOINT: unix:///run/gotth-mail-plugins/signed-email.sock
+      GOTTH_MAIL_NOTIFICATION_PLUGIN_SERVICE_TOKEN: ${GOTTH_MAIL_SIGNED_EMAIL_PLUGIN_SERVICE_TOKEN:-dev-plugin-token}
+      GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET: ""
+    depends_on: !override
+      database:
+        condition: service_healthy
+      external-webmail-plugin:
+        condition: service_started
+      manual-dns-plugin:
+        condition: service_started
+      cert-plugin:
+        condition: service_started
+      backup-plugin:
+        condition: service_started
+      signed-email-notification-plugin:
+        condition: service_healthy
+
+  notification-plugin:
+    profiles: ["telegram-notification"]
+
+  signed-email-notification-plugin:
+    profiles: !reset []
+    depends_on: !override []

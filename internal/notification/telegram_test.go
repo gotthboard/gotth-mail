@@ -15,6 +15,12 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
 
+type errorActorMapper struct{ err error }
+
+func (m errorActorMapper) Map(context.Context, TransportActor) (authz.Actor, bool, error) {
+	return authz.Actor{}, false, m.err
+}
+
 func TestTelegramReceiverRoutesReadOnlyCommandThroughCommandService(t *testing.T) {
 	db := testpg.DB(t, store.MigrateSQL)
 	mapper := SQLActorMapper{DB: db}
@@ -60,6 +66,9 @@ func TestTelegramReceiverConfirmsApprovalThroughSQLStoreOnce(t *testing.T) {
 	if err != nil || created.ID == "" {
 		t.Fatalf("create=%#v err=%v", created, err)
 	}
+	if err := approvals.Activate(context.Background(), created.ID, now); err != nil {
+		t.Fatal(err)
+	}
 	recv := TelegramReceiver{ExecuteApproval: func(ctx context.Context, id, token string, transportActor TransportActor) error {
 		mapped, ok, err := mapper.Map(ctx, transportActor)
 		if err != nil || !ok {
@@ -95,7 +104,11 @@ func TestTelegramReceiverRejectsWrongCallbackActor(t *testing.T) {
 		t.Fatal(err)
 	}
 	approvals := SQLApprovalStore{DB: db}
-	if _, err := approvals.Create(context.Background(), ApprovalRequest{ID: "approval-1", TransportActor: transportActor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: "sha256:abc", CorrelationID: "corr-1", ExpiresAt: now.Add(time.Minute)}, now); err != nil {
+	created, err := approvals.Create(context.Background(), ApprovalRequest{ID: "approval-1", TransportActor: transportActor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: "sha256:abc", CorrelationID: "corr-1", ExpiresAt: now.Add(time.Minute)}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := approvals.Activate(context.Background(), created.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	recv := TelegramReceiver{ExecuteApproval: func(ctx context.Context, id, token string, transportActor TransportActor) error {
@@ -108,6 +121,21 @@ func TestTelegramReceiverRejectsWrongCallbackActor(t *testing.T) {
 	reply, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-1", From: telegramUser{ID: 100}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gm:a:approval-1:" + strings.Repeat("a", 22)}})
 	if err == nil || !strings.Contains(err.Error(), "mapping") || !strings.Contains(reply.Text, "rejected") {
 		t.Fatalf("wrong callback actor accepted reply=%#v err=%v", reply, err)
+	}
+}
+
+func TestTelegramReceiverNeverReturnsDependencyErrors(t *testing.T) {
+	receiver := TelegramReceiver{Commands: CommandService{Mapper: errorActorMapper{err: errors.New("pq: password=super-secret host=db.internal")}, Authorizer: authz.StaticAuthorizer{}, Provider: &fakeSummaryProvider{}}}
+	reply, err := receiver.processMessage(context.Background(), telegramMessage{MessageID: 1, From: telegramUser{ID: 99}, Chat: telegramChat{ID: 42}, Text: "/doctor"})
+	if err == nil || reply.Text != "command denied" || strings.Contains(reply.Text, "secret") || strings.Contains(reply.Text, "pq") {
+		t.Fatalf("unsafe command reply=%#v err=%v", reply, err)
+	}
+	receiver.ExecuteApproval = func(context.Context, string, string, TransportActor) error {
+		return errors.New("redis token=top-secret")
+	}
+	reply, err = receiver.processCallback(context.Background(), telegramCallbackQuery{ID: "cb", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gm:a:approval-1:abcdefghijklmnopqrstuv"})
+	if err == nil || reply.Text != "approval rejected" || strings.Contains(reply.Text, "secret") {
+		t.Fatalf("unsafe approval reply=%#v err=%v", reply, err)
 	}
 }
 

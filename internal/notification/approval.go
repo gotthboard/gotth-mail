@@ -158,8 +158,7 @@ type ApprovalConfirmation struct {
 }
 
 type SQLApprovalStore struct {
-	DB    *sql.DB
-	Audit audit.Writer
+	DB *sql.DB
 }
 
 func (s SQLApprovalStore) Create(ctx context.Context, r ApprovalRequest, now time.Time) (ApprovalRequest, error) {
@@ -195,13 +194,46 @@ func (s SQLApprovalStore) Create(ctx context.Context, r ApprovalRequest, now tim
 		return ApprovalRequest{}, errors.New("complete unexpired approval request required")
 	}
 	r.CreatedAt = now.UTC()
-	r.Result = "pending"
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO notification_approvals(id, transport, external_actor_id, actor_type, actor_id, action, resource_type, resource_id, request_hash, confirmation_binding_hash, correlation_id, expires_at, result, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$13)`, r.ID, r.TransportActor.Transport, r.TransportActor.ExternalID, r.Actor.Type, r.Actor.ID, string(r.Action), r.Resource.Type, r.Resource.ID, r.RequestHash, r.BindingHash, r.CorrelationID, r.ExpiresAt.UTC(), r.CreatedAt)
+	r.Result = "creating"
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return ApprovalRequest{}, err
 	}
-	_ = s.audit(ctx, r, "notification.approval.create", "success", nil)
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO notification_approvals(id, transport, external_actor_id, actor_type, actor_id, action, resource_type, resource_id, request_hash, confirmation_binding_hash, correlation_id, expires_at, result, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'creating',$13,$13)`, r.ID, r.TransportActor.Transport, r.TransportActor.ExternalID, r.Actor.Type, r.Actor.ID, string(r.Action), r.Resource.Type, r.Resource.ID, r.RequestHash, r.BindingHash, r.CorrelationID, r.ExpiresAt.UTC(), r.CreatedAt); err != nil {
+		return ApprovalRequest{}, err
+	}
+	if err := audit.WriteSQL(ctx, tx, approvalAuditEvent(r, "notification.approval.create", "success", nil)); err != nil {
+		return ApprovalRequest{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ApprovalRequest{}, err
+	}
 	return r, nil
+}
+
+func (s SQLApprovalStore) Activate(ctx context.Context, id string, now time.Time) error {
+	if s.DB == nil {
+		return errors.New("notification approval db required")
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var r ApprovalRequest
+	err = tx.QueryRowContext(ctx, `UPDATE notification_approvals SET result='pending',updated_at=$2 WHERE id=$1 AND result='creating' AND used_at IS NULL RETURNING actor_type,actor_id,action,resource_type,resource_id,correlation_id,transport,external_actor_id,request_hash`, id, now.UTC()).Scan(&r.Actor.Type, &r.Actor.ID, &r.Action, &r.Resource.Type, &r.Resource.ID, &r.CorrelationID, &r.TransportActor.Transport, &r.TransportActor.ExternalID, &r.RequestHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("approval activation rejected")
+	}
+	if err != nil {
+		return err
+	}
+	r.ID = id
+	if err := audit.WriteSQL(ctx, tx, approvalAuditEvent(r, "notification.approval.prompt", "success", nil)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Claim atomically reserves a verified approval for execution. A stale claim
@@ -219,13 +251,12 @@ func (s SQLApprovalStore) Claim(ctx context.Context, c ApprovalConfirmation, lea
 		return ApprovalRequest{}, errors.New("approval request not found")
 	}
 	fail := func(msg string, terminal bool) (ApprovalRequest, error) {
-		if terminal {
-			_ = s.mark(ctx, r.ID, "expired", c.Now)
-		}
 		attempt := r
 		attempt.Actor = c.Actor
 		attempt.TransportActor = c.TransportActor
-		_ = s.audit(ctx, attempt, "notification.approval.confirm", "denied", errors.New(msg))
+		if err := s.recordDenied(ctx, attempt, c.Now, msg, terminal); err != nil {
+			return ApprovalRequest{}, errors.New("approval audit unavailable")
+		}
 		return ApprovalRequest{}, errors.New(msg)
 	}
 	if r.UsedAt != nil || (r.Result != "pending" && r.Result != "executing") {
@@ -244,7 +275,12 @@ func (s SQLApprovalStore) Claim(ctx context.Context, c ApprovalConfirmation, lea
 		return fail("approval binding mismatch", false)
 	}
 	staleBefore := c.Now.Add(-lease).UTC()
-	res, err := s.DB.ExecContext(ctx, `UPDATE notification_approvals SET result='executing', execution_started_at=$2, execution_attempts=execution_attempts+1, execution_error_code=NULL, updated_at=$2 WHERE id=$1 AND used_at IS NULL AND (result='pending' OR (result='executing' AND execution_started_at < $3))`, r.ID, c.Now.UTC(), staleBefore)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return ApprovalRequest{}, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE notification_approvals SET result='executing', execution_started_at=$2, execution_attempts=execution_attempts+1, execution_error_code=NULL, updated_at=$2 WHERE id=$1 AND used_at IS NULL AND (result='pending' OR (result='executing' AND execution_started_at < $3))`, r.ID, c.Now.UTC(), staleBefore)
 	if err != nil {
 		return ApprovalRequest{}, err
 	}
@@ -258,7 +294,12 @@ func (s SQLApprovalStore) Claim(ctx context.Context, c ApprovalConfirmation, lea
 	r.ExecutionStartedAt = &[]time.Time{c.Now.UTC()}[0]
 	r.ExecutionAttempts++
 	r.Result = "executing"
-	_ = s.audit(ctx, r, "notification.approval.confirm", "success", nil)
+	if err := audit.WriteSQL(ctx, tx, approvalAuditEvent(r, "notification.approval.confirm", "success", nil)); err != nil {
+		return ApprovalRequest{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ApprovalRequest{}, err
+	}
 	return r, nil
 }
 
@@ -287,18 +328,24 @@ func (s SQLApprovalStore) Retry(ctx context.Context, id string, now time.Time, c
 	if code == "" {
 		code = "execution_failed"
 	}
-	res, err := s.DB.ExecContext(ctx, `UPDATE notification_approvals SET result='pending', execution_started_at=NULL, execution_error_code=$3, updated_at=$2 WHERE id=$1 AND used_at IS NULL AND result='executing'`, id, now.UTC(), code)
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
+	defer tx.Rollback()
+	var r ApprovalRequest
+	err = tx.QueryRowContext(ctx, `UPDATE notification_approvals SET result='pending', execution_started_at=NULL, execution_error_code=$3, updated_at=$2 WHERE id=$1 AND used_at IS NULL AND result='executing' RETURNING actor_type,actor_id,action,resource_type,resource_id,correlation_id,transport,external_actor_id,request_hash`, id, now.UTC(), code).Scan(&r.Actor.Type, &r.Actor.ID, &r.Action, &r.Resource.Type, &r.Resource.ID, &r.CorrelationID, &r.TransportActor.Transport, &r.TransportActor.ExternalID, &r.RequestHash)
+	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("approval execution retry rejected")
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	r.ID = id
+	if err := audit.WriteSQL(ctx, tx, approvalAuditEvent(r, "notification.approval.execute", "failure", errors.New(code))); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s SQLApprovalStore) Get(ctx context.Context, id string) (ApprovalRequest, bool, error) {
@@ -324,21 +371,6 @@ func (s SQLApprovalStore) Get(ctx context.Context, id string) (ApprovalRequest, 
 	return r, true, nil
 }
 
-func (s SQLApprovalStore) mark(ctx context.Context, id, result string, now time.Time) error {
-	res, err := s.DB.ExecContext(ctx, `UPDATE notification_approvals SET result=$2, updated_at=$3 WHERE id=$1 AND result='pending'`, id, result, now.UTC())
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return errors.New("approval request not pending")
-	}
-	return nil
-}
-
 func (s SQLApprovalStore) Invalidate(ctx context.Context, id string, now time.Time, reason string) error {
 	r, ok, err := s.Get(ctx, id)
 	if err != nil {
@@ -347,21 +379,52 @@ func (s SQLApprovalStore) Invalidate(ctx context.Context, id string, now time.Ti
 	if !ok {
 		return errors.New("approval request not found")
 	}
-	if err := s.mark(ctx, id, "rejected", now); err != nil {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	return s.audit(ctx, r, "notification.approval.invalidate", "failure", errors.New(cleanToken(reason, 80)))
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE notification_approvals SET result='rejected', updated_at=$2 WHERE id=$1 AND result IN ('creating','pending')`, id, now.UTC())
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n != 1 {
+		return errors.New("approval request not pending")
+	}
+	if err := audit.WriteSQL(ctx, tx, approvalAuditEvent(r, "notification.approval.invalidate", "failure", errors.New(cleanToken(reason, 80)))); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-func (s SQLApprovalStore) audit(ctx context.Context, r ApprovalRequest, action, result string, err error) error {
-	if s.Audit == nil {
-		return nil
-	}
+func approvalAuditEvent(r ApprovalRequest, action, result string, err error) audit.Event {
 	e := audit.Event{Actor: audit.ActorRef{Type: r.Actor.Type, ID: r.Actor.ID}, Action: action, Resource: audit.ResourceRef{Type: r.Resource.Type, ID: r.Resource.ID}, CorrelationID: r.CorrelationID, Result: result, AfterRedacted: map[string]any{"approval_id": r.ID, "transport": r.TransportActor.Transport, "external_actor_id": r.TransportActor.ExternalID, "request_hash": r.RequestHash}}
 	if err != nil {
-		e.ErrorCode = err.Error()
+		e.ErrorCode = cleanToken(err.Error(), 80)
 	}
-	return s.Audit.Write(ctx, e)
+	return e
+}
+
+func (s SQLApprovalStore) recordDenied(ctx context.Context, r ApprovalRequest, now time.Time, message string, terminal bool) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if terminal {
+		res, err := tx.ExecContext(ctx, `UPDATE notification_approvals SET result='expired', updated_at=$2 WHERE id=$1 AND result='pending'`, r.ID, now.UTC())
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n != 1 {
+			return errors.New("approval request not pending")
+		}
+	}
+	if err := audit.WriteSQL(ctx, tx, approvalAuditEvent(r, "notification.approval.confirm", "denied", errors.New(message))); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func cleanToken(v string, n int) string { return boundToken(v, n) }

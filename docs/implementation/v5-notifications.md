@@ -191,6 +191,15 @@ Startup validates complete configuration. Startup and every delivery load a boun
 
 `cmd/gotth-mail` explicitly selects either the Telegram or signed-email notification plugin from complete runtime configuration, uses a shared Unix socket or loopback endpoint, applies a bounded gRPC deadline and service identity, and composes delivery results with `notification.SQLRecorder`. Signed email remains alert-only and fails closed for prompts.
 
+The reference signed-email topology is rendered with both Compose files:
+
+```sh
+docker compose -f compose/reference/docker-compose.yml \
+  -f compose/reference/docker-compose.signed-email.yml config
+```
+
+`scripts/verify-notification-compose.sh` asserts that the default topology contains only Telegram and that the overlay contains only signed email, selects its Unix socket and token, clears the webhook secret, and binds core startup to the selected process.
+
 Required behavior:
 
 - unsigned email notifications are rejected before delivery;

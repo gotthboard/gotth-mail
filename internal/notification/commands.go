@@ -71,7 +71,9 @@ func (s CommandService) Run(ctx context.Context, req CommandRequest) (CommandRes
 	}
 	if !ok {
 		err := errors.New("notification actor mapping required")
-		_ = s.audit(ctx, authz.Actor{Type: "unmapped", ID: req.TransportActor.Transport}, req, cmd, "denied", err)
+		if auditErr := s.audit(ctx, authz.Actor{Type: "unmapped", ID: req.TransportActor.Transport}, req, cmd, "denied", err); auditErr != nil {
+			return CommandResponse{}, errors.New("notification command audit unavailable")
+		}
 		return CommandResponse{}, err
 	}
 	decision, err := s.Authorizer.Decide(ctx, actor, cmd.Action, cmd.Resource)
@@ -79,12 +81,16 @@ func (s CommandService) Run(ctx context.Context, req CommandRequest) (CommandRes
 		if err == nil {
 			err = errors.New(decision.Reason)
 		}
-		_ = s.audit(ctx, actor, req, cmd, "denied", err)
+		if auditErr := s.audit(ctx, actor, req, cmd, "denied", err); auditErr != nil {
+			return CommandResponse{}, errors.New("notification command audit unavailable")
+		}
 		return CommandResponse{}, err
 	}
 	summary, err := s.Provider.Summary(ctx, req.Command)
 	if err != nil {
-		_ = s.audit(ctx, actor, req, cmd, "failure", err)
+		if auditErr := s.audit(ctx, actor, req, cmd, "failure", err); auditErr != nil {
+			return CommandResponse{}, errors.New("notification command audit unavailable")
+		}
 		return CommandResponse{}, err
 	}
 	resp := CommandResponse{Actor: actor, Command: req.Command, Summary: boundCommandSummary(summary), CorrelationID: cleanToken(req.CorrelationID, 128)}

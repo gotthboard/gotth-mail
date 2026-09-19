@@ -19,6 +19,12 @@ type fakeSummaryProvider struct {
 	err error
 }
 
+type failingAuditWriter struct{}
+
+func (failingAuditWriter) Write(context.Context, audit.Event) error {
+	return errors.New("audit offline password=secret")
+}
+
 func (f *fakeSummaryProvider) Summary(ctx context.Context, c ReadOnlyCommand) (string, error) {
 	f.got = c
 	return f.out, f.err
@@ -91,5 +97,15 @@ func TestCommandServiceRejectsUnsupportedCommand(t *testing.T) {
 	svc := CommandService{Mapper: SQLActorMapper{DB: testpg.DB(t, store.MigrateSQL)}, Authorizer: authz.StaticAuthorizer{}, Provider: &fakeSummaryProvider{}}
 	if _, err := svc.Run(context.Background(), CommandRequest{Command: ReadOnlyCommand("shell")}); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("unsupported command accepted: %v", err)
+	}
+}
+
+func TestCommandServiceFailsClosedWhenDeniedAuditCannotPersist(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	mapper := SQLActorMapper{DB: db}
+	svc := CommandService{Mapper: mapper, Authorizer: authz.StaticAuthorizer{}, Provider: &fakeSummaryProvider{}, Audit: failingAuditWriter{}}
+	_, err := svc.Run(context.Background(), CommandRequest{TransportActor: TransportActor{Transport: "telegram", ExternalID: "chat:42:user:99"}, Command: CommandDoctorSummary})
+	if err == nil || err.Error() != "notification command audit unavailable" {
+		t.Fatalf("audit failure not closed safely: %v", err)
 	}
 }

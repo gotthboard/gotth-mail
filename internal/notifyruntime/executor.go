@@ -18,12 +18,14 @@ type ApprovalStore interface {
 }
 
 type ApprovalExecutor struct {
-	Mapper     notification.ActorMapper
-	Approvals  ApprovalStore
-	Authorizer authz.Authorizer
-	Queue      QueueController
-	Audit      audit.Writer
-	Now        func() time.Time
+	Mapper        notification.ActorMapper
+	Approvals     ApprovalStore
+	Authorizer    authz.Authorizer
+	Queue         QueueController
+	Audit         audit.Writer
+	Now           func() time.Time
+	Lease         time.Duration
+	AfterMutation func(notification.ApprovalRequest) error
 }
 
 type ExecutionResult struct {
@@ -39,61 +41,88 @@ func (e ApprovalExecutor) ExecuteTelegramApproval(ctx context.Context, approvalI
 	}
 	mapped, ok, err := e.Mapper.Map(ctx, actor)
 	if err != nil {
+		if auditErr := e.writeTransportAudit(ctx, approvalID, actor, "failure", "mapping_unavailable"); auditErr != nil {
+			return ExecutionResult{}, errors.New("approval audit unavailable")
+		}
 		return ExecutionResult{}, err
 	}
 	if !ok {
+		if auditErr := e.writeTransportAudit(ctx, approvalID, actor, "denied", "mapping_required"); auditErr != nil {
+			return ExecutionResult{}, errors.New("approval audit unavailable")
+		}
 		return ExecutionResult{}, errors.New("notification actor mapping required")
 	}
 	req, found, err := e.Approvals.Get(ctx, approvalID)
 	if err != nil {
+		if auditErr := e.writeTransportAudit(ctx, approvalID, actor, "failure", "approval_lookup_failed"); auditErr != nil {
+			return ExecutionResult{}, errors.New("approval audit unavailable")
+		}
 		return ExecutionResult{}, err
 	}
 	if !found {
+		if auditErr := e.writeTransportAudit(ctx, approvalID, actor, "denied", "approval_not_found"); auditErr != nil {
+			return ExecutionResult{}, errors.New("approval audit unavailable")
+		}
 		return ExecutionResult{}, errors.New("approval request not found")
 	}
 	if req.UsedAt != nil || (req.Result != "pending" && req.Result != "executing") {
+		if auditErr := e.writeAudit(ctx, req, "denied", "approval_replay_rejected"); auditErr != nil {
+			return ExecutionResult{}, errors.New("approval audit unavailable")
+		}
 		return ExecutionResult{}, errors.New("approval replay rejected")
 	}
 	decision, err := e.Authorizer.Decide(ctx, mapped, req.Action, req.Resource)
 	if err != nil {
-		_ = e.writeAudit(ctx, req, "failure", "authorization_failed")
+		if auditErr := e.writeAudit(ctx, req, "failure", "authorization_failed"); auditErr != nil {
+			return ExecutionResult{}, errors.New("approval audit unavailable")
+		}
 		return ExecutionResult{}, err
 	}
 	if !decision.Allow {
-		_ = e.writeAudit(ctx, req, "denied", "authorization_denied")
+		if auditErr := e.writeAudit(ctx, req, "denied", "authorization_denied"); auditErr != nil {
+			return ExecutionResult{}, errors.New("approval audit unavailable")
+		}
 		return ExecutionResult{}, errors.New("approval action unauthorized")
 	}
-	if err := e.preflight(ctx, req); err != nil {
-		_ = e.writeAudit(ctx, req, "denied", err.Error())
+	if req.Result == "pending" {
+		if err := e.preflight(ctx, req); err != nil {
+			if auditErr := e.writeAudit(ctx, req, "denied", "approval_request_changed"); auditErr != nil {
+				return ExecutionResult{}, errors.New("approval audit unavailable")
+			}
+			return ExecutionResult{}, err
+		}
+	} else if err := e.validateMutation(req); err != nil {
+		if auditErr := e.writeAudit(ctx, req, "denied", "approval_request_changed"); auditErr != nil {
+			return ExecutionResult{}, errors.New("approval audit unavailable")
+		}
 		return ExecutionResult{}, err
 	}
-	confirmed, err := e.Approvals.Claim(ctx, notification.ApprovalConfirmation{ID: approvalID, TransportActor: actor, Actor: mapped, Action: req.Action, Resource: req.Resource, RequestHash: req.RequestHash, BindingToken: bindingToken, Now: e.now()}, 2*time.Minute)
+	confirmed, err := e.Approvals.Claim(ctx, notification.ApprovalConfirmation{ID: approvalID, TransportActor: actor, Actor: mapped, Action: req.Action, Resource: req.Resource, RequestHash: req.RequestHash, BindingToken: bindingToken, Now: e.now()}, e.lease())
 	if err != nil {
 		return ExecutionResult{}, err
 	}
 	result := ExecutionResult{ApprovalID: confirmed.ID, Action: string(confirmed.Action), Resource: confirmed.Resource.Type + ":" + confirmed.Resource.ID}
 	if err := e.execute(ctx, confirmed); err != nil {
-		_ = e.Approvals.Retry(ctx, confirmed.ID, e.now(), "queue_mutation_failed")
-		_ = e.writeAudit(ctx, confirmed, "failure", err.Error())
+		if retryErr := e.Approvals.Retry(ctx, confirmed.ID, e.now(), "queue_mutation_failed"); retryErr != nil {
+			return result, errors.New("approval recovery audit unavailable")
+		}
 		return result, err
+	}
+	if e.AfterMutation != nil {
+		if err := e.AfterMutation(confirmed); err != nil {
+			return result, err
+		}
 	}
 	result.Executed = true
 	if err := e.Approvals.Complete(ctx, confirmed.ID, e.now()); err != nil {
 		return result, err
 	}
-	_ = e.writeAudit(ctx, confirmed, "success", "")
 	return result, nil
 }
 
 func (e ApprovalExecutor) preflight(ctx context.Context, r notification.ApprovalRequest) error {
-	if r.Action != "queue:flush" && r.Action != "queue:retry" {
-		return errors.New("unsupported approved mutation")
-	}
-	if r.Resource.Type != "queue" && r.Resource.Type != "postfix_queue" {
-		return errors.New("queue approval resource required")
-	}
-	if e.Queue == nil {
-		return errors.New("queue runtime required")
+	if err := e.validateMutation(r); err != nil {
+		return err
 	}
 	requestHash, err := queueApprovalRequestHash(ctx, r.Action, r.Resource, e.Queue)
 	if err != nil {
@@ -105,8 +134,21 @@ func (e ApprovalExecutor) preflight(ctx context.Context, r notification.Approval
 	return nil
 }
 
+func (e ApprovalExecutor) validateMutation(r notification.ApprovalRequest) error {
+	if r.Action != "queue:flush" && r.Action != "queue:retry" {
+		return errors.New("unsupported approved mutation")
+	}
+	if r.Resource.Type != "queue" && r.Resource.Type != "postfix_queue" {
+		return errors.New("queue approval resource required")
+	}
+	if e.Queue == nil {
+		return errors.New("queue runtime required")
+	}
+	return nil
+}
+
 func (e ApprovalExecutor) execute(ctx context.Context, r notification.ApprovalRequest) error {
-	if err := e.preflight(ctx, r); err != nil {
+	if err := e.validateMutation(r); err != nil {
 		return err
 	}
 	switch r.Action {
@@ -119,11 +161,25 @@ func (e ApprovalExecutor) execute(ctx context.Context, r notification.ApprovalRe
 	}
 }
 
+func (e ApprovalExecutor) lease() time.Duration {
+	if e.Lease > 0 {
+		return e.Lease
+	}
+	return 2 * time.Minute
+}
+
 func (e ApprovalExecutor) writeAudit(ctx context.Context, r notification.ApprovalRequest, result, code string) error {
 	if e.Audit == nil {
 		return nil
 	}
 	return e.Audit.Write(ctx, audit.Event{Actor: audit.ActorRef{Type: r.Actor.Type, ID: r.Actor.ID}, Action: "notification.approval.execute", Resource: audit.ResourceRef{Type: r.Resource.Type, ID: r.Resource.ID}, CorrelationID: r.CorrelationID, Result: result, ErrorCode: code, AfterRedacted: map[string]any{"approval_id": r.ID, "approved_action": string(r.Action)}})
+}
+
+func (e ApprovalExecutor) writeTransportAudit(ctx context.Context, approvalID string, actor notification.TransportActor, result, code string) error {
+	if e.Audit == nil {
+		return errors.New("approval audit required")
+	}
+	return e.Audit.Write(ctx, audit.Event{Actor: audit.ActorRef{Type: actor.Transport, ID: actor.ExternalID}, Action: "notification.approval.execute", Resource: audit.ResourceRef{Type: "notification_approval", ID: approvalID}, Result: result, ErrorCode: code, AfterRedacted: map[string]any{"transport": actor.Transport}})
 }
 
 func (e ApprovalExecutor) now() time.Time {

@@ -78,7 +78,14 @@ func pluginListener(address string) (net.Listener, func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, func() {}, err
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil, func() {}, fmt.Errorf("plugin Unix socket path exists and is not a socket")
+		}
+		if err := os.Remove(path); err != nil {
+			return nil, func() {}, err
+		}
+	} else if !os.IsNotExist(err) {
 		return nil, func() {}, err
 	}
 	listener, err := net.Listen("unix", path)
@@ -96,6 +103,9 @@ func notificationSinkFor(name string, getenv func(string) string) (plugin.Notifi
 	switch name {
 	case plugin.FirstNotifyName:
 		if getenv("GOTTH_MAIL_REFERENCE_FIXTURE") == "1" {
+			if capture := strings.TrimSpace(getenv("GOTTH_MAIL_REFERENCE_NOTIFICATION_CAPTURE_FILE")); capture != "" {
+				return &plugin.FixtureNotificationSink{Path: capture}, nil
+			}
 			return plugin.LocalNotificationSink{}, nil
 		}
 		botToken, err := privateSecret(getenv("GOTTH_MAIL_TELEGRAM_BOT_TOKEN"), getenv("GOTTH_MAIL_TELEGRAM_BOT_TOKEN_FILE"), "Telegram bot token")

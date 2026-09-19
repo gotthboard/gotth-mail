@@ -21,6 +21,7 @@ import (
 type GRPCNotificationBackend struct {
 	conn    *grpc.ClientConn
 	client  pluginv1.NotificationBackendClient
+	control pluginv1.PluginControlClient
 	token   string
 	timeout time.Duration
 }
@@ -38,7 +39,20 @@ func NewGRPCNotificationBackend(endpoint, token string) (*GRPCNotificationBacken
 	if err != nil {
 		return nil, errors.New("open notification plugin connection")
 	}
-	return &GRPCNotificationBackend{conn: conn, client: pluginv1.NewNotificationBackendClient(conn), token: token, timeout: 5 * time.Second}, nil
+	return &GRPCNotificationBackend{conn: conn, client: pluginv1.NewNotificationBackendClient(conn), control: pluginv1.NewPluginControlClient(conn), token: token, timeout: 5 * time.Second}, nil
+}
+
+func (b *GRPCNotificationBackend) Health(ctx context.Context, correlationID string) (plugin.HealthResponse, error) {
+	if b == nil || b.control == nil {
+		return plugin.HealthResponse{}, errors.New("notification backend unconfigured")
+	}
+	ctx, cancel := b.outgoingContext(ctx, correlationID)
+	defer cancel()
+	response, err := b.control.Health(ctx, &pluginv1.HealthRequest{CorrelationId: correlationID})
+	if err != nil {
+		return plugin.HealthResponse{}, errors.New("notification plugin unavailable")
+	}
+	return plugin.HealthResponse{Healthy: response.GetHealthy(), Message: notification.SanitizeDeliveryReason(response.GetMessage())}, nil
 }
 
 func localGRPCEndpoint(endpoint string) bool {
