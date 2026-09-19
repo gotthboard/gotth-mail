@@ -46,6 +46,11 @@ reviews remain before workflow completion.
   disposition: forbidden becomes terminal `policy_blocked`, uncertainty
   retries, and neither outcome asks for another bounce. The notification
   runtime uses this contract before signing or SMTP.
+- Postfix null-sender DSN/bounce traffic selects a dedicated final gate
+  transport carrying a fixed durable mailer-daemon system identity. Queue
+  inspection canonicalizes Postfix's `MAILER-DAEMON` JSON display to `<>`;
+  admission then persists that exact null reverse path with system-sender
+  provenance before the final policy decision and relay.
 - Rejection audit stores only the recipient domain, decision reason, and policy
   revisions; no local part, message body, credential, or signing material is
   persisted.
@@ -66,7 +71,12 @@ reviews remain before workflow completion.
 7. observed exactly one release-start and one released audit event; and
 8. flushed that same released queue message through a single whole-message
    `pipe(8)` request and observed exactly one SMTP DATA transaction containing
-   both envelope recipients.
+   both envelope recipients;
+9. authenticated a signed notification as its durable `system:` identity and
+   proved that identity survived submission and final transport; and
+10. injected a Postfix null-sender automatic message, observed exactly one
+    relay transaction, and verified exactly one immutable
+    `system:mailer-daemon@example.test` provenance row.
 
 The final disposable held queue ID was `4hnF160N5dzg8VL`. The cleanup trap
 removed the entire Compose project and its volumes.
@@ -146,6 +156,17 @@ then proved the restricted identity is rejected at RCPT, and—after an explicit
 policy change—the same authenticated identity is admitted at submission,
 recorded as system-sender queue provenance, rechecked at final transport, and
 accepted in exactly one SMTP transaction.
+
+The subsequent pass found that the automatic-mail classifier still did not
+connect Postfix-generated DSNs and bounces to final transport. The reference
+Postfix configuration now uses an exact null-sender map and a dedicated pipe
+service carrying a fixed durable mailer-daemon identity. Real `postqueue -j`
+output exposed that Postfix renders a null sender as `MAILER-DAEMON`; queue
+inspection now canonicalizes that documented display to `<>`. Queue admission
+accepts `<>` only with an explicit durable system identity, while ordinary
+address-bearing identities retain exact envelope binding. Focused normal and
+race suites passed, and the rebuilt container stack relayed one null-sender
+message only after registering the expected system-sender provenance.
 
 ## Remaining admission work
 

@@ -21,9 +21,46 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 11:14 CDT — Authenticate automatic-mail authority through final transport
+### 2026-09-19 11:42 CDT — Enforce null-sender automatic mail at final transport
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- GOTTH Mail runtime system-sender binding
+- reference Postfix sender-dependent transport configuration
+- Postfix queue inspection and outbound admission
+- outbound-policy regression and reference-stack smoke tests
+- same-domain hostile-path evidence and changelog
+
+Explanation:
+
+Closed the remaining DSN/bounce transport hole. Postfix-generated null-sender
+mail now selects a dedicated final gate transport carrying one explicit durable
+mailer-daemon system identity. GOTTH Mail binds that identity to a hosted
+domain at startup, canonicalizes Postfix's documented `MAILER-DAEMON` JSON
+display to the SMTP null reverse path `<>`, and records the immutable queue
+with system-sender provenance before policy evaluation and relay. Ordinary
+address-bearing system senders still require exact envelope-address binding;
+only an explicit trusted system identity can authorize a null reverse path.
+
+Verification:
+
+- focused outbound-policy, gate, and helper normal and race suites passed on
+  the development host
+- the rebuilt reference stack proved the sender-dependent map and dedicated
+  transport, accepted one null-sender SMTP transaction, and persisted exactly
+  one `system:mailer-daemon@example.test` queue-provenance row
+- repository-wide tests passed inside the rebuilt container image
+
+Risks / non-goals:
+
+- no live queue, domain policy, deployment, production credential, tag,
+  release, or external service changed
+
+### 2026-09-19 11:14 CDT — Authenticate automatic-mail authority through final transport
+
+Commit: `3543a20`
 
 Affected files:
 

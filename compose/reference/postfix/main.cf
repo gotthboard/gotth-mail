@@ -21,6 +21,9 @@ smtpd_sasl_path = smtpd
 smtpd_sasl_security_options = noanonymous
 default_transport = gotth_policy:
 relay_transport = gotth_policy:
+sender_dependent_default_transport_maps = lmdb:/etc/postfix/sender_default_transports
+empty_address_default_transport_maps_lookup_key = <>
+empty_address_recipient = MAILER-DAEMON
 import_environment = MAIL_CONFIG MAIL_DEBUG MAIL_LOGTAG TZ XAUTHORITY DISPLAY LANG=C GOTTH_MAIL_CORE_URL GOTTH_MAIL_POSTFIX_HELPER_TOKEN GOTTH_MAIL_POSTFIX_INSTANCE GOTTH_MAIL_OUTBOUND_RELAY_ADDR
 export_environment = TZ LANG GOTTH_MAIL_CORE_URL GOTTH_MAIL_POSTFIX_HELPER_TOKEN GOTTH_MAIL_POSTFIX_INSTANCE GOTTH_MAIL_OUTBOUND_RELAY_ADDR
 mynetworks = 127.0.0.0/8 172.16.0.0/12 10.0.0.0/8

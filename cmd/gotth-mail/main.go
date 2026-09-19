@@ -189,6 +189,20 @@ func configureDatabaseFromEnv(ctx context.Context, server *api.Server) (*sql.DB,
 			return closeOnError(fmt.Errorf("bind notification system sender: %w", err))
 		}
 	}
+	automaticID := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ID"))
+	automaticAddress := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ADDRESS"))
+	if (automaticID == "") != (automaticAddress == "") {
+		return closeOnError(fmt.Errorf("GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ID and GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ADDRESS are required together"))
+	}
+	if automaticID != "" {
+		parsed, err := mail.ParseAddress(automaticAddress)
+		if err != nil || !strings.HasPrefix(automaticID, "system:") {
+			return closeOnError(fmt.Errorf("parse Postfix automatic system sender"))
+		}
+		if _, err := (outboundpolicy.SystemSenderStore{DB: db}).Bind(ctx, audit.ActorRef{Type: "service", ID: "runtime-config"}, "runtime-config:postfix-automatic-system-sender", automaticID, parsed.Address); err != nil {
+			return closeOnError(fmt.Errorf("bind Postfix automatic system sender: %w", err))
+		}
+	}
 	return db, nil
 }
 

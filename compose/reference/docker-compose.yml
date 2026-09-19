@@ -12,6 +12,8 @@ services:
       GOTTH_MAIL_POSTFIX_HELPER_TOKEN: ${GOTTH_MAIL_POSTFIX_HELPER_TOKEN:-reference-postfix-helper-token-32bytes}
       GOTTH_MAIL_POSTFIX_RELEASE_TOKEN: ${GOTTH_MAIL_POSTFIX_RELEASE_TOKEN:-reference-postfix-release-token-32byte}
       GOTTH_MAIL_NOTIFICATION_EMAIL_FROM: ${GOTTH_MAIL_NOTIFICATION_EMAIL_FROM:-}
+      GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ID: system:mailer-daemon@example.test
+      GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ADDRESS: mailer-daemon@example.test
     ports:
       - "8080:8080"
     depends_on:
@@ -134,8 +136,10 @@ services:
         test "$$forward_targets" = "outside@example.net, second@example.net"
         printf 'smoke@example.test example.test/smoke/\npostmaster@example.test example.test/postmaster/\n' > /etc/postfix/virtual_mailboxes
         printf 'alias@example.test %s\nforward@example.test %s\n' "$$alias_targets" "$$forward_targets" > /etc/postfix/virtual_aliases
+        printf '<> gotth_automatic:\n' > /etc/postfix/sender_default_transports
         postmap lmdb:/etc/postfix/virtual_mailboxes
         postmap lmdb:/etc/postfix/virtual_aliases
+        postmap lmdb:/etc/postfix/sender_default_transports
         postfix check
         /usr/local/bin/gotth-mail-postfix-gate helper &
         exec postfix start-fg

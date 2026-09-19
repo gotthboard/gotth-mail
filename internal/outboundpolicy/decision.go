@@ -202,9 +202,13 @@ func (s EnforcementService) submissionSources(ctx context.Context, req Enforceme
 	if req.QueueID != "" || (req.AuthenticatedMailbox == "") == (req.SystemSenderID == "") || len(req.ExpansionSources) > maxQueueSources-2 {
 		return nil, errors.New("invalid submission authority")
 	}
-	envelope, _, err := normalizeQueueRecipient(req.EnvelopeSender)
-	if err != nil {
-		return nil, errors.New("invalid admitted envelope sender")
+	envelope := req.EnvelopeSender
+	if envelope != "<>" {
+		var err error
+		envelope, _, err = normalizeQueueRecipient(envelope)
+		if err != nil {
+			return nil, errors.New("invalid admitted envelope sender")
+		}
 	}
 	sources := make([]QueueSource, 0, 2+len(req.ExpansionSources))
 	if req.AuthenticatedMailbox != "" {
@@ -224,7 +228,10 @@ func (s EnforcementService) submissionSources(ctx context.Context, req Enforceme
 		if err != nil {
 			return nil, err
 		}
-		if !strings.EqualFold(boundAddress, envelope) {
+		// A null reverse path has no address to compare. In that case the
+		// trusted Postfix transport's explicit durable system ID is the
+		// authority, and its stored binding supplies the governing domain.
+		if envelope != "<>" && !strings.EqualFold(boundAddress, envelope) {
 			return nil, errors.New("envelope sender is not bound to system sender")
 		}
 		sources = append(sources, QueueSource{Kind: SourceSystemSender, ObjectID: req.SystemSenderID})

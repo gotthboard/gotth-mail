@@ -44,6 +44,8 @@ done
 
 compose exec -T postfix postconf -h enable_long_queue_ids | grep -qx yes
 compose exec -T postfix postconf -h default_transport | grep -qx 'gotth_policy:'
+compose exec -T postfix postmap -q '<>' lmdb:/etc/postfix/sender_default_transports | grep -qx 'gotth_automatic:'
+compose exec -T postfix postconf -M gotth_automatic/unix | grep -q -- '--system-sender-id=system:mailer-daemon@example.test'
 if compose exec -T postfix postconf -h import_environment | grep -q 'GOTTH_MAIL_POSTFIX_RELEASE_TOKEN'; then
   echo 'release credential leaked into Postfix import_environment' >&2
   exit 1
@@ -137,6 +139,7 @@ until compose exec -T postfix test -f /tmp/gotth-mail-outbound-sink.accepted; do
   if [ "$attempt" -ge 60 ]; then
     compose logs gotth-mail postfix
     compose exec -T postfix cat /tmp/gotth-mail-outbound-sink.log || true
+    compose exec -T postfix postqueue -j || true
     exit 1
   fi
   sleep 1
@@ -174,4 +177,20 @@ done
 compose exec -T postfix sh -c "test \"\$(wc -l < /tmp/gotth-mail-outbound-sink.accepted)\" -eq 1 && grep -qx 1 /tmp/gotth-mail-outbound-sink.accepted"
 compose exec -T database psql -U gotth_mail -d gotth_mail -Atc "SELECT count(*) FROM outbound_queue_sources WHERE source_kind='system_sender' AND object_id='system:alerts@example.test'" | grep -qx 1
 
-printf 'containerized outbound policy smoke passed; inbound forward queue %s held, rechecked, explicitly released, one unrestricted two-recipient relay accepted, and one authenticated system-sender relay admitted at submission and final transport\n' "$queue_id"
+compose exec -T postfix rm -f /tmp/gotth-mail-outbound-sink.accepted
+compose exec -T postfix sh -c "printf 'From: Mailer Daemon <mailer-daemon@example.test>\nTo: outside@example.net\nSubject: automatic DSN transport smoke\n\nautomatic policy smoke\n' | /usr/sbin/sendmail -f '<>' outside@example.net"
+attempt=0
+until compose exec -T postfix test -f /tmp/gotth-mail-outbound-sink.accepted; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 20 ]; then
+    compose logs gotth-mail postfix
+    compose exec -T postfix cat /tmp/gotth-mail-outbound-sink.log || true
+    compose exec -T postfix postqueue -j || true
+    exit 1
+  fi
+  sleep 1
+done
+compose exec -T postfix sh -c "test \"\$(wc -l < /tmp/gotth-mail-outbound-sink.accepted)\" -eq 1 && grep -qx 1 /tmp/gotth-mail-outbound-sink.accepted"
+compose exec -T database psql -U gotth_mail -d gotth_mail -Atc "SELECT count(*) FROM outbound_queue_sources WHERE source_kind='system_sender' AND object_id='system:mailer-daemon@example.test'" | grep -qx 1
+
+printf 'containerized outbound policy smoke passed; inbound forward queue %s held, rechecked, explicitly released, one unrestricted two-recipient relay accepted, one authenticated system-sender relay admitted at submission and final transport, and one null-sender automatic relay bound to durable mailer-daemon authority\n' "$queue_id"

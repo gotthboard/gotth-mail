@@ -18,6 +18,7 @@ const (
 	defaultPostfixOutputBytes = 64 << 20
 	maxPostfixOutputBytes     = 64 << 20
 	maxPostqueueJSONLineBytes = 4 << 20
+	postfixNullSenderDisplay  = "MAILER-DAEMON"
 )
 
 var errCommandOutputLimit = errors.New("command output limit exceeded")
@@ -281,7 +282,7 @@ func canonicalQueueRecipients(recipients []string) ([]string, error) {
 // Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(n),
 // Omega(1), where n is the bounded sender length.
 func normalizePostqueueSender(sender string) (string, error) {
-	if sender == "" {
+	if sender == "" || sender == postfixNullSenderDisplay {
 		return "<>", nil
 	}
 	return normalizeQueueSender(sender)

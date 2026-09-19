@@ -56,6 +56,22 @@ func TestPostfixBoundaryInspectsStructuredQueueAndHoldsExactID(t *testing.T) {
 	}
 }
 
+func TestPostfixBoundaryCanonicalizesDocumentedNullSenderDisplay(t *testing.T) {
+	runner := &fakeCommandRunner{output: []byte(`{"queue_name":"deferred","queue_id":"3Pt2mN2VXxznjll","arrival_time":1700000000,"message_size":512,"sender":"MAILER-DAEMON","recipients":[{"address":"outside@example.test"}]}` + "\n")}
+	boundary := PostfixBoundary{Runner: runner, PostqueuePath: "/usr/sbin/postqueue", InstanceID: "mail.example.test", MaxOutputBytes: 1 << 20}
+	metadata, err := boundary.Inspect(context.Background(), "3Pt2mN2VXxznjll")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.EnvelopeSender != "<>" || len(metadata.ArrivalFingerprint) != 64 {
+		t.Fatalf("null-sender metadata=%+v", metadata)
+	}
+	runner.output = []byte(`{"queue_name":"deferred","queue_id":"3Pt2mN2VXxznjll","arrival_time":1700000000,"message_size":512,"sender":"NOT-A-SENDER","recipients":[{"address":"outside@example.test"}]}` + "\n")
+	if _, err := boundary.Inspect(context.Background(), "3Pt2mN2VXxznjll"); err == nil {
+		t.Fatal("accepted arbitrary bare queue sender")
+	}
+}
+
 func TestPostfixBoundaryFailsClosedOnChangingDuplicateOrUnsafeInput(t *testing.T) {
 	line := `{"queue_name":"deferred","queue_id":"3Pt2mN2VXxznjll","arrival_time":1700000000,"message_size":512,"sender":"sender@example.test","recipients":[{"address":"local@example.test"}]}`
 	changed := strings.Replace(line, `"queue_name":"deferred"`, `"queue_name":"hold"`, 1)

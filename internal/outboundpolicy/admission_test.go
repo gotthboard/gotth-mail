@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
@@ -111,6 +112,31 @@ func TestQueueAdmissionResolvesInboundForwardWithoutTrustingEnvelopeSender(t *te
 	})
 	if err != nil || len(record.Sources) != 2 {
 		t.Fatalf("record=%#v err=%v", record, err)
+	}
+}
+
+func TestQueueAdmissionBindsNullSenderToExplicitSystemAuthority(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	seedAdmissionState(t, db)
+	const systemID = "system:mailer-daemon@example.test"
+	if _, err := (SystemSenderStore{DB: db}).Bind(context.Background(), audit.ActorRef{Type: "service", ID: "automatic-test"}, "bind-null-sender", systemID, "mailer-daemon@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	record, created, err := (QueueAdmissionService{DB: db}).Admit(context.Background(), QueueAdmissionRequest{
+		Metadata: QueueMetadata{
+			QueueID:            "CDFGHJKLMNPQz6789",
+			ArrivalFingerprint: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+			EnvelopeSender:     "<>",
+			Recipients:         []string{"outside@example.net"},
+		},
+		SystemSenderID: systemID,
+		Deliveries:     []QueueDelivery{{OriginalRecipient: "outside@example.net", Recipient: "outside@example.net"}},
+	})
+	if err != nil || !created {
+		t.Fatalf("record=%#v created=%v err=%v", record, created, err)
+	}
+	if record.EnvelopeSender != "<>" || len(record.Sources) != 1 || record.Sources[0] != (QueueSource{Kind: SourceSystemSender, ObjectID: systemID}) {
+		t.Fatalf("record=%#v", record)
 	}
 }
 
