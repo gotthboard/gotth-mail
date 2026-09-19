@@ -6,16 +6,25 @@ services:
       GOTTH_MAIL_LISTEN: ":8080"
       GOTTH_MAIL_REFERENCE_FIXTURE: "1"
       GOTTH_MAIL_POSTFIX_POLICY_LISTEN: ":10025"
+      GOTTH_MAIL_DATABASE_URL: postgres://gotth_mail:gotth-mail-dev-only@database:5432/gotth_mail?sslmode=disable
+      GOTTH_MAIL_POSTFIX_HELPER_URL: http://postfix:10026
+      GOTTH_MAIL_POSTFIX_HELPER_TOKEN: ${GOTTH_MAIL_POSTFIX_HELPER_TOKEN:-reference-postfix-helper-token-32bytes}
       GOTTH_MAIL_NOTIFICATION_EMAIL_FROM: ${GOTTH_MAIL_NOTIFICATION_EMAIL_FROM:-}
     ports:
       - "8080:8080"
     depends_on:
-      - database
-      - external-webmail-plugin
-      - manual-dns-plugin
-      - cert-plugin
-      - backup-plugin
-      - notification-plugin
+      database:
+        condition: service_healthy
+      external-webmail-plugin:
+        condition: service_started
+      manual-dns-plugin:
+        condition: service_started
+      cert-plugin:
+        condition: service_started
+      backup-plugin:
+        condition: service_started
+      notification-plugin:
+        condition: service_started
   test-runner:
     build:
       context: ../..
@@ -29,6 +38,11 @@ services:
       POSTGRES_DB: gotth_mail
       POSTGRES_USER: gotth_mail
       POSTGRES_PASSWORD: gotth-mail-dev-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gotth_mail -d gotth_mail"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
   mailu-redis:
     image: redis:alpine
     profiles: ["mailu-import"]
@@ -81,17 +95,24 @@ services:
       AUTHENTIK_POSTGRESQL__PASSWORD: gotth-mail-dev-only
       AUTHENTIK_POSTGRESQL__NAME: gotth_mail
   postfix:
-    image: alpine:3.22
+    build:
+      context: ../..
+      dockerfile: compose/reference/postfix/Dockerfile
+    environment:
+      GOTTH_MAIL_CORE_URL: http://gotth-mail:8080
+      GOTTH_MAIL_POSTFIX_HELPER_TOKEN: ${GOTTH_MAIL_POSTFIX_HELPER_TOKEN:-reference-postfix-helper-token-32bytes}
+      GOTTH_MAIL_POSTFIX_INSTANCE: mail.example.test
+      GOTTH_MAIL_OUTBOUND_RELAY_ADDR: ${GOTTH_MAIL_OUTBOUND_RELAY_ADDR:-127.0.0.1:9}
     command:
       - /bin/sh
       - -lc
       - |
-        apk add --no-cache postfix busybox-extras curl jq >/dev/null
         addgroup -g 5000 vmail || true
         adduser -D -H -u 5000 -G vmail vmail || true
         mkdir -p /mail/example.test/smoke/{cur,new,tmp} /mail/example.test/postmaster/{cur,new,tmp}
         chown -R 5000:5000 /mail
         cp /reference/postfix/main.cf /etc/postfix/main.cf
+        cat /reference/postfix/gotth-policy.master.cf >> /etc/postfix/master.cf
         until curl -fsS http://gotth-mail:8080/healthz >/dev/null; do sleep 1; done
         curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gotth-mail:8080/internal/v1/postfix/mailboxes/smoke@example.test | jq -e '.decision == "ok"' >/dev/null
         curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gotth-mail:8080/internal/v1/postfix/mailboxes/postmaster@example.test | jq -e '.decision == "ok"' >/dev/null
@@ -102,6 +123,7 @@ services:
         postmap lmdb:/etc/postfix/virtual_mailboxes
         postmap lmdb:/etc/postfix/virtual_aliases
         postfix check
+        /usr/local/bin/gotth-mail-postfix-gate helper &
         exec postfix start-fg
     volumes:
       - maildata:/mail

@@ -15,6 +15,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/authn"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
@@ -175,7 +176,7 @@ func TestConfigureDatabaseFromEnvMigratesAndWiresDurableServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if server.AuditDB == nil || server.OIDCStore == nil || server.Identity == nil {
+	if server.AuditDB == nil || server.OIDCStore == nil || server.Identity == nil || server.Daemon.OutboundPolicy == nil || server.Daemon.OutboundAdmission == nil {
 		t.Fatalf("database services not wired: %#v", server)
 	}
 	if _, ok := server.Identity.Audit.(audit.SQLWriter); !ok {
@@ -194,5 +195,46 @@ func TestConfigureDatabaseFromEnvMigratesAndWiresDurableServices(t *testing.T) {
 	}
 	if migrations == 0 {
 		t.Fatal("database migration ledger is empty")
+	}
+}
+
+func TestConfigurePostfixHelperRequiresCompleteDurableConfiguration(t *testing.T) {
+	t.Setenv("GOTTH_MAIL_POSTFIX_HELPER_URL", "http://postfix:10026")
+	t.Setenv("GOTTH_MAIL_POSTFIX_HELPER_TOKEN", "0123456789abcdef0123456789abcdef")
+	if err := configurePostfixHelperFromEnv(&api.Server{}); err == nil {
+		t.Fatal("Postfix helper accepted missing database wiring")
+	}
+	db := testpg.DB(t, store.MigrateSQL)
+	server := api.Server{AuditDB: db}
+	server.Daemon.OutboundAdmission = &outboundpolicy.QueueAdmissionService{DB: db}
+	if err := configurePostfixHelperFromEnv(&server); err != nil {
+		t.Fatal(err)
+	}
+	if server.Daemon.OutboundReconciler == nil {
+		t.Fatal("Postfix queue reconciler was not wired")
+	}
+}
+
+func TestConfigureDatabaseSeedsExplicitReferencePolicyFixture(t *testing.T) {
+	seed := testpg.DB(t, nil)
+	var port int
+	if err := seed.QueryRow(`SELECT inet_server_port()`).Scan(&port); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOTTH_MAIL_DATABASE_URL", fmt.Sprintf("postgres://gotth_mail@127.0.0.1:%d/gotth_mail?sslmode=disable", port))
+	t.Setenv("GOTTH_MAIL_REFERENCE_FIXTURE", "1")
+	server := api.Server{}
+	db, err := configureDatabaseFromEnv(context.Background(), &server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var scope string
+	var revision int
+	if err := db.QueryRow(`SELECT outbound_scope,outbound_policy_revision FROM domains WHERE name='example.test'`).Scan(&scope, &revision); err != nil {
+		t.Fatal(err)
+	}
+	if scope != "same_domain_only" || revision != 2 {
+		t.Fatalf("scope=%q revision=%d", scope, revision)
 	}
 }

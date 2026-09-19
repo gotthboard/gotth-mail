@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -60,6 +62,26 @@ func (s Service) Register(mux *http.ServeMux) {
 		var req outboundpolicy.EnforcementRequest
 		if decodeStrict(w, r, &req) {
 			write(w, s.PostfixOutboundPolicy(r.Context(), correlationHeader(r), req))
+		}
+	})
+	mux.HandleFunc("/internal/v1/postfix/queue/register", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, http.MethodPost) || !s.authorizePostfixHelper(w, r) {
+			return
+		}
+		var req outboundpolicy.QueueAdmissionRequest
+		if decodeStrict(w, r, &req) {
+			write(w, s.PostfixQueueAdmission(r.Context(), correlationHeader(r), req))
+		}
+	})
+	mux.HandleFunc("/internal/v1/postfix/queue/reconcile", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, http.MethodPost) || !s.authorizePostfixHelper(w, r) {
+			return
+		}
+		var req struct {
+			QueueID string `json:"queue_id"`
+		}
+		if decodeStrict(w, r, &req) {
+			write(w, s.PostfixQueueReconcile(r.Context(), correlationHeader(r), req.QueueID))
 		}
 	})
 	mux.HandleFunc("/internal/v1/postfix/rate-limit/", func(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +160,25 @@ func (s Service) Register(mux *http.ServeMux) {
 			write(w, s.RspamdRateSignal(correlationHeader(r), req.Sender))
 		}
 	})
+}
+
+// authorizePostfixHelper verifies the privileged helper bearer in constant
+// time against the configured digest.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(1), where
+// n is the bounded header length.
+func (s Service) authorizePostfixHelper(w http.ResponseWriter, r *http.Request) bool {
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if !s.postfixHelperEnabled || !strings.HasPrefix(header, prefix) || len(header) > len(prefix)+4096 {
+		w.WriteHeader(http.StatusUnauthorized)
+		return false
+	}
+	digest := sha256.Sum256([]byte(strings.TrimPrefix(header, prefix)))
+	if subtle.ConstantTimeCompare(digest[:], s.postfixHelperToken[:]) != 1 {
+		w.WriteHeader(http.StatusUnauthorized)
+		return false
+	}
+	return true
 }
 
 func method(w http.ResponseWriter, r *http.Request, want string) bool {

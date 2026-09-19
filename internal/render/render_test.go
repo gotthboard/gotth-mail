@@ -71,6 +71,13 @@ func TestRenderIncludesDaemonConfigWithSourceHeader(t *testing.T) {
 				t.Fatalf("missing source header in %s: %q", f.Path, f.Content)
 			}
 		}
+		if f.Path == "postfix/gotth-mail.conf" {
+			for _, contract := range []string{"enable_long_queue_ids = yes", "default_transport = gotth_policy:", "gotth_policy_destination_recipient_limit = 1", "/queue/register", "/queue/reconcile"} {
+				if !strings.Contains(f.Content, contract) {
+					t.Fatalf("missing outbound Postfix contract %q in %s", contract, f.Content)
+				}
+			}
+		}
 	}
 	for path, ok := range want {
 		if !ok {

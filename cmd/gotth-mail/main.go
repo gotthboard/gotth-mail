@@ -38,7 +38,6 @@ func main() {
 	server := api.Server{Authz: authz.StaticAuthorizer{}}
 	if os.Getenv("GOTTH_MAIL_REFERENCE_FIXTURE") == "1" {
 		server = referenceServer()
-		go servePostfixPolicy(os.Getenv("GOTTH_MAIL_POSTFIX_POLICY_LISTEN"), server.Daemon)
 	}
 	db, err := configureDatabaseFromEnv(context.Background(), &server)
 	if err != nil {
@@ -46,6 +45,12 @@ func main() {
 	}
 	if db != nil {
 		defer db.Close()
+	}
+	if err := configurePostfixHelperFromEnv(&server); err != nil {
+		log.Fatalf("configure Postfix helper: %v", err)
+	}
+	if policyAddr := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_POLICY_LISTEN")); policyAddr != "" {
+		go servePostfixPolicy(policyAddr, server.Daemon)
 	}
 	if err := configureOIDCFromEnv(context.Background(), &server, http.DefaultClient); err != nil {
 		log.Fatalf("configure oidc: %v", err)
@@ -158,6 +163,11 @@ func configureDatabaseFromEnv(ctx context.Context, server *api.Server) (*sql.DB,
 	if err := store.MigrateSQL(ctx, db); err != nil {
 		return closeOnError(fmt.Errorf("migrate database: %w", err))
 	}
+	if os.Getenv("GOTTH_MAIL_REFERENCE_FIXTURE") == "1" {
+		if err := seedReferenceDatabase(ctx, db); err != nil {
+			return closeOnError(fmt.Errorf("seed reference database: %w", err))
+		}
+	}
 	identityService, err := identity.NewSQLService(ctx, db)
 	if err != nil {
 		return closeOnError(fmt.Errorf("load identity state: %w", err))
@@ -168,6 +178,7 @@ func configureDatabaseFromEnv(ctx context.Context, server *api.Server) (*sql.DB,
 	server.Identity = identityService
 	policy := &outboundpolicy.EnforcementService{DB: db, Queue: outboundpolicy.QueueStore{DB: db}, HoldActor: audit.ActorRef{Type: "service", ID: "outbound-policy"}}
 	server.Daemon.OutboundPolicy = policy
+	server.Daemon.OutboundAdmission = &outboundpolicy.QueueAdmissionService{DB: db, Queue: outboundpolicy.QueueStore{DB: db}}
 	if configuredSender := strings.TrimSpace(os.Getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_FROM")); configuredSender != "" {
 		parsed, err := mail.ParseAddress(configuredSender)
 		if err != nil {
@@ -179,6 +190,60 @@ func configureDatabaseFromEnv(ctx context.Context, server *api.Server) (*sql.DB,
 		}
 	}
 	return db, nil
+}
+
+// seedReferenceDatabase installs the fixed idempotent container-smoke objects
+// in SQL so runtime policy and in-memory daemon fixtures describe the same
+// addresses. It is unreachable unless the explicit reference-fixture switch
+// is set.
+// Complexity: time O(s), Omega(s), tight Theta(s); auxiliary space O(1), where
+// s is the fixed seed statement count. Database round trips are O(s).
+func seedReferenceDatabase(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`INSERT INTO domains(id,name,enabled,outbound_scope,outbound_policy_revision,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d01','example.test',true,'same_domain_only',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (name) DO NOTHING`,
+		`INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d02','00000000-0000-4000-8000-000000000d01','smoke',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (domain_id,local_part) DO NOTHING`,
+		`INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d03','00000000-0000-4000-8000-000000000d01','postmaster',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (domain_id,local_part) DO NOTHING`,
+		`INSERT INTO aliases(id,domain_id,local_part,targets_json,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d04','00000000-0000-4000-8000-000000000d01','alias','["smoke@example.test"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (domain_id,local_part) DO NOTHING`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// configurePostfixHelperFromEnv binds the privileged queue helper only when
+// its URL and secret are both explicit.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(n), where
+// n is bounded environment configuration text.
+func configurePostfixHelperFromEnv(server *api.Server) error {
+	helperURL := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_HELPER_URL"))
+	token, err := secretFromEnvOrFile("GOTTH_MAIL_POSTFIX_HELPER_TOKEN", "GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE")
+	if err != nil {
+		return err
+	}
+	if helperURL == "" && token == "" {
+		return nil
+	}
+	if helperURL == "" || token == "" || server.AuditDB == nil || server.Daemon.OutboundAdmission == nil {
+		return fmt.Errorf("GOTTH_MAIL_DATABASE_URL, GOTTH_MAIL_POSTFIX_HELPER_URL, and one Postfix helper token source are required together")
+	}
+	boundary, err := outboundpolicy.NewRemotePostfixBoundary(helperURL, token)
+	if err != nil {
+		return err
+	}
+	server.Daemon.OutboundReconciler = &outboundpolicy.QueueReconciler{
+		Store:     outboundpolicy.QueueStore{DB: server.AuditDB},
+		Inspector: boundary,
+		Holder:    boundary,
+	}
+	return server.Daemon.ConfigurePostfixHelperToken(token)
 }
 
 func secretFromEnvOrFile(valueName, fileName string) (string, error) {
@@ -220,9 +285,6 @@ func insecureLoopback(raw string) bool {
 }
 
 func servePostfixPolicy(addr string, svc daemon.Service) {
-	if addr == "" {
-		addr = ":10025"
-	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Printf("postfix policy listen failed: %v", err)
@@ -242,29 +304,94 @@ func handlePostfixPolicy(conn net.Conn, svc daemon.Service) {
 	defer conn.Close()
 	fields := map[string]string{}
 	s := bufio.NewScanner(conn)
+	s.Buffer(make([]byte, 4096), 64<<10)
 	for s.Scan() {
 		line := s.Text()
 		if line == "" {
 			break
 		}
+		if len(fields) >= 64 || len(line) > 4096 {
+			_, _ = fmt.Fprint(conn, "action=451 4.3.0 outbound policy request too large\n\n")
+			return
+		}
 		k, v, ok := strings.Cut(line, "=")
-		if ok {
+		if ok && k != "" {
 			fields[k] = v
 		}
 	}
+	if err := s.Err(); err != nil {
+		_, _ = fmt.Fprint(conn, "action=451 4.3.0 outbound policy request unreadable\n\n")
+		return
+	}
+	if fields["request"] != "smtpd_access_policy" || fields["protocol_state"] != "RCPT" {
+		_, _ = fmt.Fprint(conn, "action=451 4.3.0 unsupported outbound policy request\n\n")
+		return
+	}
 	recipient := fields["recipient"]
-	decision := svc.PostfixRecipient("postfix-policy", recipient)
-	log.Printf("postfix policy recipient=%s decision=%s reason=%s", recipient, decision.Decision, decision.Reason)
+	correlationID := "postfix-policy"
+	if instance := cleanPostfixToken(fields["instance"], 96); instance != "" {
+		correlationID += ":" + instance
+	}
+	var decision daemon.Response
+	if strings.TrimSpace(fields["sasl_username"]) != "" {
+		decision = svc.PostfixSubmissionRecipient(context.Background(), correlationID, fields["sasl_username"], fields["sender"], recipient)
+	} else {
+		domain := postfixAddressDomain(recipient)
+		if domain == "" {
+			decision = daemon.Response{CorrelationID: correlationID, Decision: daemon.Error, Reason: "malformed_recipient"}
+		} else if hosted := svc.PostfixDomain(correlationID, domain); hosted.Decision == daemon.NotFound {
+			decision = daemon.Response{CorrelationID: correlationID, Decision: daemon.OK, Reason: "nonlocal_recipient_deferred_to_relay_policy"}
+		} else if hosted.Decision != daemon.OK {
+			decision = hosted
+		} else {
+			decision = svc.PostfixRecipient(correlationID, recipient)
+		}
+	}
+	log.Printf("postfix policy correlation_id=%s decision=%s reason=%s", correlationID, decision.Decision, decision.Reason)
 	switch decision.Decision {
 	case daemon.OK:
-		_, _ = fmt.Fprint(conn, "action=OK\n\n")
+		_, _ = fmt.Fprint(conn, "action=DUNNO\n\n")
 	case daemon.NotFound:
-		_, _ = fmt.Fprint(conn, "action=REJECT recipient unknown\n\n")
+		_, _ = fmt.Fprint(conn, "action=550 5.1.1 recipient unknown\n\n")
 	case daemon.Defer:
-		_, _ = fmt.Fprint(conn, "action=DEFER_IF_PERMIT temporary lookup failure\n\n")
+		_, _ = fmt.Fprint(conn, "action=451 4.3.0 outbound policy unavailable\n\n")
 	default:
-		_, _ = fmt.Fprint(conn, "action=REJECT recipient rejected\n\n")
+		_, _ = fmt.Fprint(conn, "action=550 5.7.1 outbound recipient forbidden\n\n")
 	}
+}
+
+// postfixAddressDomain returns the canonical policy domain without accepting
+// display-name syntax in the Postfix protocol field.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(n),
+// Omega(1), where n is the bounded address length.
+func postfixAddressDomain(address string) string {
+	trimmed := strings.TrimSpace(address)
+	at := strings.LastIndexByte(trimmed, '@')
+	if at <= 0 || at == len(trimmed)-1 {
+		return ""
+	}
+	domain, err := outboundpolicy.NormalizeDomain(trimmed[at+1:])
+	if err != nil {
+		return ""
+	}
+	return domain
+}
+
+// cleanPostfixToken bounds an opaque protocol token before it reaches logs or
+// correlation state.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(n),
+// Omega(1), where n is capped by limit.
+func cleanPostfixToken(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > limit {
+		return ""
+	}
+	for _, r := range value {
+		if r < 0x21 || r > 0x7e || r == ':' {
+			return ""
+		}
+	}
+	return value
 }
 
 func referenceServer() api.Server {

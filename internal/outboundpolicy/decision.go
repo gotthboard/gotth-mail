@@ -96,6 +96,58 @@ func (s EnforcementService) Decide(ctx context.Context, correlationID string, re
 	return decision, nil
 }
 
+// DecideSMTPRecipient expands one RCPT recipient through the authoritative
+// alias graph and applies one governing source set atomically to every leaf.
+// Any forbidden leaf rejects the original RCPT; graph or policy uncertainty
+// defers it.
+// Complexity: process time O(a*t+r*(s*m)), Omega(r); database time adds
+// O(h*a log N+s log N); auxiliary space O(a*t+r+s*m), with expansion and
+// source variables defined by expandOriginal and resolvePolicySources.
+func (s EnforcementService) DecideSMTPRecipient(ctx context.Context, correlationID, authenticatedMailbox, envelopeSender, recipient string) (Decision, error) {
+	if s.DB == nil || strings.TrimSpace(correlationID) == "" {
+		return unavailableDecision(errors.New("outbound enforcement service is unavailable"))
+	}
+	authority, err := s.submissionSources(ctx, EnforcementRequest{
+		Stage:                StageSubmission,
+		AuthenticatedMailbox: authenticatedMailbox,
+		EnvelopeSender:       envelopeSender,
+		Recipient:            recipient,
+	})
+	if err != nil {
+		return unavailableDecision(err)
+	}
+	recipients, expansion, err := expandOriginal(ctx, s.DB, recipient)
+	if err != nil {
+		return unavailableDecision(err)
+	}
+	sources := append(authority, expansion...)
+	governing, err := resolvePolicySources(ctx, s.DB, sources)
+	if err != nil {
+		return unavailableDecision(err)
+	}
+	result := Decision{Action: ActionOK, Reason: ReasonUnrestricted, Revisions: map[string]uint64{}}
+	for _, finalRecipient := range recipients {
+		decision := Evaluate(Request{Stage: StageSubmission, Recipient: finalRecipient, Governing: governing})
+		for domain, revision := range decision.Revisions {
+			result.Revisions[domain] = revision
+		}
+		if decision.Action == ActionReject {
+			decision.Revisions = result.Revisions
+			return decision, nil
+		}
+		if decision.Action != ActionOK {
+			return unavailableDecision(errors.New("invalid submission expansion policy result"))
+		}
+		if decision.Reason == ReasonSameDomain {
+			result.Reason = ReasonSameDomain
+		}
+	}
+	if len(result.Revisions) == 0 {
+		result.Revisions = nil
+	}
+	return result, nil
+}
+
 // submissionSources authenticates one mailbox or durable system sender,
 // verifies the envelope binding, and admits only expansion-object source kinds.
 // Complexity: process time O(s*b), Omega(s); database time O(log N);

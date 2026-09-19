@@ -78,3 +78,28 @@ func TestHTTPDaemonMethodAndMalformedJSON(t *testing.T) {
 		t.Fatalf("malformed got %#v", got)
 	}
 }
+
+func TestHTTPPrivilegedPostfixQueueRoutesRequireConfiguredToken(t *testing.T) {
+	service := fixture()
+	mux := http.NewServeMux()
+	service.Register(mux)
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/postfix/queue/register", bytes.NewBufferString(`{}`))
+	request.Header.Set("Authorization", "Bearer 0123456789abcdef0123456789abcdef")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unconfigured helper status=%d", response.Code)
+	}
+	if err := service.ConfigurePostfixHelperToken("0123456789abcdef0123456789abcdef"); err != nil {
+		t.Fatal(err)
+	}
+	mux = http.NewServeMux()
+	service.Register(mux)
+	request = httptest.NewRequest(http.MethodPost, "/internal/v1/postfix/queue/register", bytes.NewBufferString(`{}`))
+	request.Header.Set("Authorization", "Bearer wrong-wrong-wrong-wrong-wrong-wrong")
+	response = httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong helper token status=%d", response.Code)
+	}
+}

@@ -1,4 +1,5 @@
 compatibility_level = 3.10
+enable_long_queue_ids = yes
 myhostname = mail.example.test
 mydomain = example.test
 myorigin = $mydomain
@@ -14,6 +15,11 @@ virtual_uid_maps = static:5000
 virtual_gid_maps = static:5000
 smtpd_relay_restrictions = permit_mynetworks,reject_unauth_destination
 smtpd_recipient_restrictions = check_policy_service inet:gotth-mail:10025,reject_unauth_destination
+default_transport = gotth_policy:
+relay_transport = gotth_policy:
+gotth_policy_destination_recipient_limit = 1
+import_environment = MAIL_CONFIG MAIL_DEBUG MAIL_LOGTAG TZ XAUTHORITY DISPLAY LANG=C GOTTH_MAIL_CORE_URL GOTTH_MAIL_POSTFIX_HELPER_TOKEN GOTTH_MAIL_POSTFIX_INSTANCE GOTTH_MAIL_OUTBOUND_RELAY_ADDR
+export_environment = TZ LANG GOTTH_MAIL_CORE_URL GOTTH_MAIL_POSTFIX_HELPER_TOKEN GOTTH_MAIL_POSTFIX_INSTANCE GOTTH_MAIL_OUTBOUND_RELAY_ADDR
 mynetworks = 127.0.0.0/8 172.16.0.0/12 10.0.0.0/8
 home_mailbox = Maildir/
 alias_maps =

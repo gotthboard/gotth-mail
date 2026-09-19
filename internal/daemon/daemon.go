@@ -89,7 +89,24 @@ type Service struct {
 	AppPasswordVerifiers map[string][]string
 	Audit                audit.Writer
 	OutboundPolicy       *outboundpolicy.EnforcementService
+	OutboundAdmission    *outboundpolicy.QueueAdmissionService
+	OutboundReconciler   *outboundpolicy.QueueReconciler
+	postfixHelperToken   [32]byte
+	postfixHelperEnabled bool
 	stateMu              *sync.RWMutex
+}
+
+// ConfigurePostfixHelperToken stores only a fixed-length digest for the
+// privileged queue register/reconcile HTTP boundary.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(1), where
+// n is the bounded secret length.
+func (s *Service) ConfigurePostfixHelperToken(token string) error {
+	if len(token) < 32 || len(token) > 4096 || strings.TrimSpace(token) != token {
+		return errors.New("invalid Postfix helper token")
+	}
+	s.postfixHelperToken = sha256.Sum256([]byte(token))
+	s.postfixHelperEnabled = true
+	return nil
 }
 
 // EnableConcurrentState installs the lock used by a live identity projection.
@@ -182,6 +199,25 @@ func (s Service) PostfixOutboundPolicy(ctx context.Context, correlationID string
 		return resp(correlationID, Defer, string(outboundpolicy.ReasonUnavailable))
 	}
 	decision, _ := s.OutboundPolicy.Decide(ctx, correlationID, req)
+	return outboundDecisionResponse(correlationID, decision)
+}
+
+// PostfixSubmissionRecipient expands and evaluates one authenticated SMTP
+// RCPT request against authoritative SQL state.
+// Complexity: local time and space O(1); delegated costs are defined by
+// outboundpolicy.EnforcementService.DecideSMTPRecipient.
+func (s Service) PostfixSubmissionRecipient(ctx context.Context, correlationID, authenticatedMailbox, envelopeSender, recipient string) Response {
+	if s.OutboundPolicy == nil {
+		return resp(correlationID, Defer, string(outboundpolicy.ReasonUnavailable))
+	}
+	decision, _ := s.OutboundPolicy.DecideSMTPRecipient(ctx, correlationID, authenticatedMailbox, envelopeSender, recipient)
+	return outboundDecisionResponse(correlationID, decision)
+}
+
+// outboundDecisionResponse maps the closed policy contract to daemon JSON.
+// Complexity: time and auxiliary space O(r), Omega(1), where r is the bounded
+// policy-revision map.
+func outboundDecisionResponse(correlationID string, decision outboundpolicy.Decision) Response {
 	result := resp(correlationID, Defer, string(decision.Reason))
 	switch decision.Action {
 	case outboundpolicy.ActionOK:
@@ -201,6 +237,44 @@ func (s Service) PostfixOutboundPolicy(ctx context.Context, correlationID string
 		}
 	}
 	return result
+}
+
+// PostfixQueueAdmission records SQL-authoritative queue provenance supplied by
+// the authenticated Postfix-side helper.
+// Complexity: local time O(1); delegated costs are defined by
+// outboundpolicy.QueueAdmissionService.Admit.
+func (s Service) PostfixQueueAdmission(ctx context.Context, correlationID string, req outboundpolicy.QueueAdmissionRequest) Response {
+	if s.OutboundAdmission == nil {
+		return resp(correlationID, Defer, string(outboundpolicy.ReasonUnavailable))
+	}
+	_, created, err := s.OutboundAdmission.Admit(ctx, req)
+	if err != nil {
+		return resp(correlationID, Defer, string(outboundpolicy.ReasonUnavailable))
+	}
+	reason := "outbound_queue_already_registered"
+	if created {
+		reason = "outbound_queue_registered"
+	}
+	return resp(correlationID, OK, reason)
+}
+
+// PostfixQueueReconcile applies one previously persisted whole-message policy
+// hold through the narrow authenticated helper.
+// Complexity: local time O(1); delegated costs are defined by
+// outboundpolicy.QueueReconciler.Reconcile.
+func (s Service) PostfixQueueReconcile(ctx context.Context, correlationID, queueID string) Response {
+	if s.OutboundReconciler == nil {
+		return resp(correlationID, Defer, string(outboundpolicy.ReasonUnavailable))
+	}
+	result, err := s.OutboundReconciler.Reconcile(ctx, audit.ActorRef{Type: "service", ID: "postfix-helper"}, correlationID, queueID)
+	if err != nil {
+		return resp(correlationID, Defer, "outbound_queue_reconciliation_failed")
+	}
+	reason := "outbound_queue_hold_already_applied"
+	if result.Changed {
+		reason = "outbound_queue_hold_applied"
+	}
+	return resp(correlationID, OK, reason)
 }
 
 func (s Service) PostfixDomain(correlationID, domain string) Response {

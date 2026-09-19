@@ -21,9 +21,65 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 08:15 CDT — Add durable outbound queue enforcement boundaries
+### 2026-09-19 08:45 CDT — Wire Postfix submission and final transport enforcement
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `cmd/gotth-mail/`, `cmd/gotth-mail-postfix-gate/`, and daemon HTTP wiring
+- `internal/outboundpolicy/` and `internal/postfixgate/`
+- reference Postfix image, `main.cf`, `master.cf` fragment, and Compose wiring
+- generated render contract, container smoke, feature evidence, and changelog
+
+Explanation:
+
+Replaced the reference stack's decorative policy configuration with an actual
+submission and final-transport gate. Authenticated RCPT requests now resolve
+the complete reachable SQL alias graph and evaluate every leaf atomically;
+forbidden leaves reject before queue admission, while cycles, excessive
+fan-out, ambiguous rows, and unavailable authority defer closed. Unauthenticated
+mail remains under Postfix relay and local-recipient controls.
+
+Postfix now uses long queue IDs and a dedicated pipe(8) transport. The gate
+inspects the live queue, registers immutable SQL-authoritative provenance,
+re-evaluates every remaining recipient under current policy, reconciles a
+whole-message hold before returning a temporary failure when policy forbids a
+delivery, and only then hands an allowed message to the configured relay. A
+separate authenticated helper exposes only bounded queue inspection and hold;
+it does not expose a shell, arbitrary `postsuper` selector, delete, or release.
+
+The reference Compose stack now builds the gate into a Postfix-side image,
+waits for PostgreSQL health, seeds an explicit same-domain fixture, exports
+only the required environment into Postfix services, and renders the same
+long-ID and policy-transport contract used by the runtime.
+
+Verification:
+
+- development-host focused PostgreSQL tests passed for outbound policy,
+  Postfix gate, daemon, core command, and gate command
+- repository-wide serial tests, focused race tests, `go vet ./...`, and builds
+  of all four commands passed on the development host
+- reference `docker compose config` and the containerized outbound-policy
+  smoke passed; an injected forbidden message was assigned a long queue ID,
+  held as a whole message, persisted as `held`, rechecked idempotently, and
+  emitted exactly one hold-applied audit event
+- hostile unit coverage includes alias chains, unproven expansion, reachable
+  cycles, malformed policy requests, helper authentication, metadata failure,
+  all-recipient recheck, and relay suppression
+- `git diff --check`
+
+Risks / non-goals:
+
+- this remains an in-progress feature checkpoint; explicit release,
+  diagnostics, restore proof, allowed-relay container proof, BCC/list/catch-all
+  coverage, and remaining automatic-message paths are still open
+- no live queue was held or released and no deployment, DNS, credential, tag,
+  release, product-main merge, or external message occurred
+
+### 2026-09-19 08:15 CDT — Add durable outbound queue enforcement boundaries
+
+Commit: `860b97f`
 
 Affected files:
 
