@@ -416,4 +416,7 @@ func TestSearchCursorBeyondFirstWindow(t *testing.T) {
 	if _, err := c.Search(context.Background(), "u@example.test", "INBOX", "term", "missing", 1); err == nil {
 		t.Fatal("missing cursor accepted")
 	}
+	if _, err := c.Search(context.Background(), "u@example.test", "INBOX", strings.Repeat("x", 201), "", 1); err == nil {
+		t.Fatal("oversized query accepted")
+	}
 }

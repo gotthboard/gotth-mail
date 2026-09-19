@@ -171,6 +171,9 @@ func (c Client) Search(ctx context.Context, user, folder, query, cursor string, 
 	if c.IMAP == nil {
 		return ListResult{}, errors.New("imap client required")
 	}
+	if len(query) > 200 || strings.ContainsAny(query, "\r\n\x00") {
+		return ListResult{}, errors.New("invalid search query")
+	}
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}

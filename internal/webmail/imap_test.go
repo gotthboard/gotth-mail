@@ -69,6 +69,15 @@ func TestNetIMAPClientFoldersListSearchReadWithFakeServer(t *testing.T) {
 	if err := c.Delete(context.Background(), "u@example.test", "INBOX", "1 EXPUNGE"); err == nil {
 		t.Fatal("unsafe IMAP UID accepted")
 	}
+	if _, err := c.Search(context.Background(), "u@example.test", "INBOX", strings.Repeat("x", 201), "", 10); err == nil {
+		t.Fatal("oversized IMAP search accepted")
+	}
+	if _, err := c.ListMessages(context.Background(), "u@example.test", "INBOX\r\nEXPUNGE", "", 10); err == nil {
+		t.Fatal("unsafe IMAP mailbox accepted")
+	}
+	if err := c.Move(context.Background(), "u@example.test", "INBOX", "1", "Archive\r\nEXPUNGE"); err == nil {
+		t.Fatal("unsafe IMAP destination accepted")
+	}
 }
 
 func TestIMAPMailboxNameParsesQuotedAndAtomNames(t *testing.T) {

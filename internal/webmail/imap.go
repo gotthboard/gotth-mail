@@ -91,6 +91,9 @@ func (c NetIMAPClient) ListFoldersDetailed(ctx context.Context, user string) ([]
 }
 
 func (c NetIMAPClient) ListMessages(ctx context.Context, user, folder, cursor string, limit int) ([]Message, error) {
+	if err := validateIMAPMailbox(folder); err != nil {
+		return nil, err
+	}
 	ic, err := c.connect(ctx, user)
 	if err != nil {
 		return nil, err
@@ -116,6 +119,9 @@ func (c NetIMAPClient) ListMessages(ctx context.Context, user, folder, cursor st
 }
 
 func (c NetIMAPClient) ReadMessage(ctx context.Context, user, folder, id string) (Message, error) {
+	if err := validateIMAPMailbox(folder); err != nil {
+		return Message{}, err
+	}
 	ic, err := c.connect(ctx, user)
 	if err != nil {
 		return Message{}, err
@@ -125,6 +131,12 @@ func (c NetIMAPClient) ReadMessage(ctx context.Context, user, folder, id string)
 }
 
 func (c NetIMAPClient) Search(ctx context.Context, user, folder, query, cursor string, limit int) ([]Message, error) {
+	if err := validateIMAPMailbox(folder); err != nil {
+		return nil, err
+	}
+	if len(query) > 200 || strings.ContainsAny(query, "\r\n\x00") {
+		return nil, errors.New("invalid imap search query")
+	}
 	ic, err := c.connect(ctx, user)
 	if err != nil {
 		return nil, err
@@ -186,6 +198,9 @@ func (c NetIMAPClient) SetFlag(ctx context.Context, user, folder, id, flag strin
 	if !validIMAPUID(id) {
 		return errors.New("invalid imap message id")
 	}
+	if err := validateIMAPMailbox(folder); err != nil {
+		return err
+	}
 	canonical, ok := map[string]string{"seen": `\Seen`, "flagged": `\Flagged`}[strings.ToLower(strings.TrimSpace(flag))]
 	if !ok {
 		return errors.New("unsupported imap flag")
@@ -207,8 +222,14 @@ func (c NetIMAPClient) SetFlag(ctx context.Context, user, folder, id, flag strin
 }
 
 func (c NetIMAPClient) Move(ctx context.Context, user, folder, id, destination string) error {
-	if !validIMAPUID(id) || strings.TrimSpace(destination) == "" {
-		return errors.New("valid imap message and destination required")
+	if !validIMAPUID(id) {
+		return errors.New("valid imap message required")
+	}
+	if err := validateIMAPMailbox(folder); err != nil {
+		return err
+	}
+	if err := validateIMAPMailbox(destination); err != nil {
+		return err
 	}
 	ic, err := c.connect(ctx, user)
 	if err != nil {
@@ -225,6 +246,9 @@ func (c NetIMAPClient) Move(ctx context.Context, user, folder, id, destination s
 func (c NetIMAPClient) Delete(ctx context.Context, user, folder, id string) error {
 	if !validIMAPUID(id) {
 		return errors.New("invalid imap message id")
+	}
+	if err := validateIMAPMailbox(folder); err != nil {
+		return err
 	}
 	ic, err := c.connect(ctx, user)
 	if err != nil {
@@ -480,6 +504,13 @@ var imapFlags = regexp.MustCompile(`(?i)FLAGS[[:space:]]+\(([^)]*)\)`)
 func validIMAPUID(id string) bool {
 	n, err := strconv.ParseUint(id, 10, 63)
 	return err == nil && n > 0
+}
+
+func validateIMAPMailbox(mailbox string) error {
+	if strings.TrimSpace(mailbox) == "" || len(mailbox) > 1024 || strings.ContainsAny(mailbox, "\r\n\x00") {
+		return errors.New("invalid imap mailbox")
+	}
+	return nil
 }
 
 func hasFolder(folders []string, want string) bool {
