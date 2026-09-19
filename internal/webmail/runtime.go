@@ -126,6 +126,14 @@ func (r *RuntimeRegistry) ListFolders(ctx context.Context, user string) ([]strin
 	return c.ListFolders(ctx, user)
 }
 
+func (r *RuntimeRegistry) ListFoldersDetailed(ctx context.Context, user string) ([]FolderInfo, error) {
+	c, err := r.imapClient(user)
+	if err != nil {
+		return nil, err
+	}
+	return c.ListFoldersDetailed(ctx, user)
+}
+
 func (r *RuntimeRegistry) ListMessages(ctx context.Context, user, folder, cursor string, limit int) ([]Message, error) {
 	c, err := r.imapClient(user)
 	if err != nil {
@@ -158,6 +166,30 @@ func (r *RuntimeRegistry) Quota(ctx context.Context, user string) (int64, int64,
 	return c.Quota(ctx, user)
 }
 
+func (r *RuntimeRegistry) SetFlag(ctx context.Context, user, folder, id, flag string, enabled bool) error {
+	c, err := r.imapClient(user)
+	if err != nil {
+		return err
+	}
+	return c.SetFlag(ctx, user, folder, id, flag, enabled)
+}
+
+func (r *RuntimeRegistry) Move(ctx context.Context, user, folder, id, destination string) error {
+	c, err := r.imapClient(user)
+	if err != nil {
+		return err
+	}
+	return c.Move(ctx, user, folder, id, destination)
+}
+
+func (r *RuntimeRegistry) Delete(ctx context.Context, user, folder, id string) error {
+	c, err := r.imapClient(user)
+	if err != nil {
+		return err
+	}
+	return c.Delete(ctx, user, folder, id)
+}
+
 func (r *RuntimeRegistry) Submit(ctx context.Context, envelope Envelope, msg []byte) error {
 	entry, err := r.mailbox(envelope.From)
 	if err != nil {
@@ -187,6 +219,20 @@ func (r *RuntimeRegistry) ResolveSender(ctx context.Context, fingerprint, from, 
 	fingerprint, err = canonicalRuntimeFingerprint(fingerprint)
 	if err != nil || fingerprint != entry.SigningFingerprint {
 		return Identity{}, errors.New("webmail exact sender fingerprint mismatch")
+	}
+	if _, err := loadRuntimeSigningEntity(entry.PrivateKeyFile, entry.SigningFingerprint, entry.Address, r.now()); err != nil {
+		return Identity{}, err
+	}
+	return Identity{Address: entry.Address, Fingerprint: entry.SigningFingerprint}, nil
+}
+
+func (r *RuntimeRegistry) DefaultIdentity(ctx context.Context, mailbox string) (Identity, error) {
+	if err := ctx.Err(); err != nil {
+		return Identity{}, err
+	}
+	entry, err := r.mailbox(mailbox)
+	if err != nil {
+		return Identity{}, err
 	}
 	if _, err := loadRuntimeSigningEntity(entry.PrivateKeyFile, entry.SigningFingerprint, entry.Address, r.now()); err != nil {
 		return Identity{}, err

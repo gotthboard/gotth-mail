@@ -76,6 +76,7 @@ for i in $(seq 1 90); do
   sleep 1
 done
 compose build test-runner
+compose exec -T dovecot doveadm mailbox create -u smoke@example.test Archive
 subject="GOTTH Mail production webmail runtime $(date +%s)"
 compose run --rm -T --no-deps --user 0:0 \
   -e GOTTH_MAIL_LIVE_WEBMAIL_RUNTIME_FILE=/run/secrets/webmail-runtime.json \

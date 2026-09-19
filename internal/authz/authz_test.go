@@ -98,3 +98,16 @@ func TestBoundOIDCSubjectMayManageOnlyItsOwnAppPasswords(t *testing.T) {
 		t.Fatalf("unrelated own-mailbox authority decision=%#v err=%v", decision, err)
 	}
 }
+
+func TestBoundOIDCSubjectMayUseOnlyItsOwnWebmail(t *testing.T) {
+	az := StaticAuthorizer{}
+	actor := Actor{Type: "oidc_subject", ID: "identity-1", Mailbox: "member@example.test"}
+	decision, err := az.Decide(context.Background(), actor, "webmail:use", Resource{Type: "webmail", ID: "MEMBER@example.test"})
+	if err != nil || !decision.Allow {
+		t.Fatalf("own webmail decision=%#v err=%v", decision, err)
+	}
+	decision, err = az.Decide(context.Background(), actor, "webmail:use", Resource{Type: "webmail", ID: "other@example.test"})
+	if err != nil || decision.Allow {
+		t.Fatalf("cross-mailbox webmail decision=%#v err=%v", decision, err)
+	}
+}

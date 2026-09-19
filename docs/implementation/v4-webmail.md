@@ -11,7 +11,11 @@ Custom webmail must remain separate from the control-plane product and must not 
 
 ## Deployment
 
-Custom webmail runs as a containerized webmail provider implementation and now exposes a minimal GOTTH Mail-owned `/webmail` shell from the API container for reachability proof. Roundcube remains the external provider reference, not the custom UI. The custom shell may use a plugin seam for provider registration/status, but it must not receive authority over core policy.
+Custom webmail runs in the containerized GOTTH Mail API service and exposes the
+interactive GOTTH Mail-owned `/webmail` client. Roundcube remains the external
+provider reference, not the custom UI. The custom client may use a plugin seam
+for provider registration/status, but it receives no authority over core
+policy.
 
 Control-plane mutations initiated from webmail must call core service/auth/audit paths.
 
@@ -30,7 +34,10 @@ IMAP connection configuration is derived from a bounded protected runtime
 registry. The production registry selects one exact mailbox entry and reloads
 its owner-only password file for each connection. It delegates to
 `webmail.NetIMAPClient`, which talks TCP IMAP to Dovecot for
-folder/list/search/read/quota operations. Plaintext IMAP is accepted only on a
+folder/list/search/read/quota and message-action operations. Message IDs are
+stable IMAP UIDs. Read/unread and flagged state use bounded `UID STORE`; move
+uses `UID MOVE`; delete marks the exact UID deleted and uses `UID EXPUNGE`, so
+it does not expunge unrelated messages. Plaintext IMAP is accepted only on a
 loopback/private address or a single-label private service name. The webmail
 client does not read mailbox files directly and does not replace Dovecot.
 
@@ -74,7 +81,7 @@ Features:
 - send failure reporting
 - honest app-password/session boundary
 
-Configured SQL draft storage persists mailbox ownership, submit state, reply/forward linkage, and attachment metadata/content. Draft creation at the API boundary ignores caller-supplied draft IDs and binds ownership to the authenticated mailbox; SQL updates refuse cross-mailbox overwrites. Submission claims a draft with one conditional SQL update, so concurrent requests cannot produce duplicate SMTP attempts. `submitted`, `sent`, and `delivery_uncertain` drafts are not automatically retryable. Transport loss at the SMTP acceptance boundary becomes `delivery_uncertain` instead of an ordinary failure because an automatic retry could duplicate accepted mail.
+Configured SQL draft storage persists mailbox ownership, submit state, reply/forward linkage, and attachment metadata/content. Draft creation at the API boundary ignores caller-supplied draft IDs and binds ownership to the authenticated mailbox; SQL edits require the same mailbox and an editable `draft`/`failed` state. Submission and editing therefore cannot race to revive a claimed draft. Saved-draft lists return summary fields only; the authenticated detail route loads body and attachment bytes when a draft is opened. Submission claims a draft with one conditional SQL update, so concurrent requests cannot produce duplicate SMTP attempts. `submitted`, `sent`, and `delivery_uncertain` drafts are not automatically retryable. Transport loss at the SMTP acceptance boundary becomes `delivery_uncertain` instead of an ordinary failure because an automatic retry could duplicate accepted mail.
 
 `GOTTH_MAIL_WEBMAIL_RUNTIME_FILE` enables production wiring. The owner-only JSON
 registry contains private-service IMAP/SMTP addresses and, per mailbox, paths
@@ -86,7 +93,11 @@ authenticated identity; that same identity is rechecked by outbound policy at
 submission and final transport. Startup fails on partial, unsafe, duplicate,
 or mismatched configuration.
 
-Web session identity may authorize webmail access, but SMTP submission must use
+An active OIDC session bound to exactly one mailbox authorizes browser
+webmail reads. Browser mutations additionally require the separate same-origin
+CSRF cookie/header proof. Mailbox-scoped API bearer tokens remain supported for
+non-browser clients, and no credential is stored in browser local storage.
+SMTP submission must use
 the configured mailbox credential and must not pretend OIDC is an SMTP
 protocol. The sender cryptographically verifies the generated OpenPGP/MIME
 signature, outer From, signed binding assertion, and fingerprint before any
@@ -96,11 +107,25 @@ SMTP command is allowed.
 
 Minimum v4 search scope is current-folder IMAP SEARCH with pagination/windowing and documented result limits. Any broader mailbox-wide index/search requires an amended v4 cutline and storage/security review before implementation.
 
+The `/webmail` document and same-origin CSS/JavaScript assets implement the
+three-pane contract without a SPA framework. The browser reads only through
+the authenticated webmail API and keeps only non-secret theme/pane preferences
+in local storage. It provides folder navigation, dense locally sortable rows,
+current-folder search, reader, safe attachment downloads, compose/save/send,
+saved-draft list/reopen/edit, reply/reply-all/forward, read/unread with folder
+counts, attachment state, flag/unflag, move/delete, quota, pane placement and
+resizing, keyboard commands, a context-menu accelerator with visible command
+parity, responsive folder/list/reader drill-down, and light/dark themes. List
+views fetch bounded header/flag metadata rather than complete message bodies.
+Rules
+are visibly unavailable when no Sieve service is configured rather than being
+represented as working.
+
 The UI implements the
 [GOTTH Mail classic interface language](../reference/classic-interface-language.md)
-with server-rendered Go templates, project-owned Tailwind tokens, and HTMX or
-bounded progressive enhancement. Outlook Classic is a workflow reference, not
-an asset or branding source.
+with Go-rendered semantic markup, project-owned CSS tokens, and bounded
+progressive enhancement. Outlook Classic is a workflow reference, not an asset
+or branding source.
 
 Desktop layout contract:
 
@@ -125,7 +150,7 @@ Interaction contract:
   state meaning
 - original GOTTH or appropriately licensed icons with accessible names
 
-At narrow widths, CSS and server/HTMX navigation collapse the three-pane view
+At narrow widths, CSS and bounded browser navigation collapse the three-pane view
 into accounts/folders, message list, then reader or composer. Back navigation
 retains the previous folder and safe list window. No mobile workflow depends
 on hover, a secondary mouse button, or a squeezed desktop table.
@@ -172,7 +197,8 @@ If webmail exposes actions such as aliases, identities, forwarding, sieve/rules,
 Required tests:
 
 - external webmail remains usable until custom webmail is production-ready
-- custom `/webmail` shell is reachable from the repo-owned Compose `test-runner`
+- custom `/webmail` client and same-origin assets are reachable from the
+  repo-owned Compose `test-runner`
 - folder/message reads through IMAP with pagination/windowing
 - quota display uses Dovecot/core contract
 - compose/draft/submit/reply/forward flows

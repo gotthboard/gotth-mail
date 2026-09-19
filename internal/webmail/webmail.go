@@ -26,10 +26,11 @@ import (
 )
 
 type Message struct {
-	ID, Folder, From, To, Subject, BodyHTML, BodyText string
-	Date                                              time.Time
-	Flags                                             []string
-	Attachments                                       []Attachment
+	ID, Folder, From, To, Cc, Subject, BodyHTML, BodyText string
+	Date                                                  time.Time
+	Flags                                                 []string
+	Attachments                                           []Attachment
+	HasAttachments                                        bool
 }
 type Attachment struct {
 	Filename, ContentType string
@@ -39,6 +40,11 @@ type Attachment struct {
 type MessageSummary struct {
 	ID, From, Subject, Date string
 	Flags                   []string
+	HasAttachments          bool
+}
+type FolderInfo struct {
+	Name   string
+	Unread int
 }
 type ListResult struct {
 	Folder, Cursor, NextCursor string
@@ -52,6 +58,14 @@ type IMAPClient interface {
 	Search(context.Context, string, string, string, string, int) ([]Message, error)
 	Quota(context.Context, string) (int64, int64, error)
 }
+type IMAPMutator interface {
+	SetFlag(context.Context, string, string, string, string, bool) error
+	Move(context.Context, string, string, string, string) error
+	Delete(context.Context, string, string, string) error
+}
+type IMAPFolderLister interface {
+	ListFoldersDetailed(context.Context, string) ([]FolderInfo, error)
+}
 type SMTPSubmitter interface {
 	Submit(context.Context, Envelope, []byte) error
 }
@@ -63,6 +77,9 @@ type ExactSenderVerifier interface {
 }
 type SenderIdentityResolver interface {
 	ResolveSender(context.Context, string, string, string) (Identity, error)
+}
+type MailboxIdentityResolver interface {
+	DefaultIdentity(context.Context, string) (Identity, error)
 }
 type Identity struct{ Address, Fingerprint string }
 type SignatureStatus struct {
@@ -87,6 +104,25 @@ func (c Client) FolderList(ctx context.Context, user string) ([]string, error) {
 	sort.Strings(fs)
 	return fs, err
 }
+func (c Client) FolderListDetailed(ctx context.Context, user string) ([]FolderInfo, error) {
+	if c.IMAP == nil {
+		return nil, errors.New("imap client required")
+	}
+	if detailed, ok := c.IMAP.(IMAPFolderLister); ok {
+		folders, err := detailed.ListFoldersDetailed(ctx, user)
+		sort.Slice(folders, func(i, j int) bool { return folders[i].Name < folders[j].Name })
+		return folders, err
+	}
+	folders, err := c.FolderList(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]FolderInfo, 0, len(folders))
+	for _, folder := range folders {
+		out = append(out, FolderInfo{Name: folder})
+	}
+	return out, nil
+}
 func (c Client) Quota(ctx context.Context, user string) (int64, int64, error) {
 	if c.IMAP == nil {
 		return 0, 0, errors.New("imap client required")
@@ -100,15 +136,19 @@ func (c Client) List(ctx context.Context, user, folder, cursor string, limit int
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	msgs, err := c.IMAP.ListMessages(ctx, user, folder, cursor, limit)
+	msgs, err := c.IMAP.ListMessages(ctx, user, folder, cursor, limit+1)
 	if err != nil {
 		return ListResult{}, err
 	}
+	hadMore := len(msgs) > limit
+	if hadMore {
+		msgs = msgs[:limit]
+	}
 	out := ListResult{Folder: folder, Cursor: cursor}
 	for _, m := range msgs {
-		out.Messages = append(out.Messages, MessageSummary{ID: m.ID, From: html.EscapeString(m.From), Subject: html.EscapeString(m.Subject), Date: m.Date.Format(time.RFC3339), Flags: append([]string(nil), m.Flags...)})
+		out.Messages = append(out.Messages, MessageSummary{ID: m.ID, From: m.From, Subject: m.Subject, Date: m.Date.Format(time.RFC3339), Flags: append([]string(nil), m.Flags...), HasAttachments: m.HasAttachments || len(m.Attachments) > 0})
 	}
-	if len(msgs) == limit {
+	if hadMore && len(msgs) > 0 {
 		out.NextCursor = msgs[len(msgs)-1].ID
 	}
 	return out, nil
@@ -121,8 +161,6 @@ func (c Client) Read(ctx context.Context, user, folder, id string) (Message, err
 	if err != nil {
 		return Message{}, err
 	}
-	m.From = html.EscapeString(m.From)
-	m.Subject = html.EscapeString(m.Subject)
 	m.BodyHTML = SanitizeHTML(m.BodyHTML)
 	for i, a := range m.Attachments {
 		m.Attachments[i] = SafeAttachment(a)
@@ -146,12 +184,36 @@ func (c Client) Search(ctx context.Context, user, folder, query, cursor string, 
 	}
 	out := ListResult{Folder: folder, Cursor: cursor}
 	for _, m := range msgs {
-		out.Messages = append(out.Messages, MessageSummary{ID: m.ID, From: html.EscapeString(m.From), Subject: html.EscapeString(m.Subject), Date: m.Date.Format(time.RFC3339), Flags: append([]string(nil), m.Flags...)})
+		out.Messages = append(out.Messages, MessageSummary{ID: m.ID, From: m.From, Subject: m.Subject, Date: m.Date.Format(time.RFC3339), Flags: append([]string(nil), m.Flags...), HasAttachments: m.HasAttachments || len(m.Attachments) > 0})
 	}
 	if hadMore && len(msgs) > 0 {
 		out.NextCursor = msgs[len(msgs)-1].ID
 	}
 	return out, nil
+}
+
+func (c Client) SetFlag(ctx context.Context, user, folder, id, flag string, enabled bool) error {
+	mutator, ok := c.IMAP.(IMAPMutator)
+	if !ok {
+		return errors.New("imap mutation unavailable")
+	}
+	return mutator.SetFlag(ctx, user, folder, id, flag, enabled)
+}
+
+func (c Client) Move(ctx context.Context, user, folder, id, destination string) error {
+	mutator, ok := c.IMAP.(IMAPMutator)
+	if !ok {
+		return errors.New("imap mutation unavailable")
+	}
+	return mutator.Move(ctx, user, folder, id, destination)
+}
+
+func (c Client) Delete(ctx context.Context, user, folder, id string) error {
+	mutator, ok := c.IMAP.(IMAPMutator)
+	if !ok {
+		return errors.New("imap mutation unavailable")
+	}
+	return mutator.Delete(ctx, user, folder, id)
 }
 
 type Draft struct {
@@ -164,9 +226,18 @@ type Draft struct {
 	MessageID                   string
 	Date                        time.Time
 }
+type DraftSummary struct {
+	ID, To, Subject, State string
+}
 type DraftStore interface {
 	PutDraft(context.Context, Draft) error
 	Draft(context.Context, string) (Draft, bool, error)
+}
+type DraftLister interface {
+	ListDrafts(context.Context, string, int) ([]DraftSummary, error)
+}
+type DraftUpdater interface {
+	UpdateDraft(context.Context, Draft) (Draft, bool, error)
 }
 
 type DraftSubmitClaimer interface {
@@ -183,6 +254,14 @@ type Sender struct {
 	Resolver SenderIdentityResolver
 	Audit    audit.Writer
 	Policy   OutboundPolicyEvaluator
+}
+
+func (s *Sender) DefaultIdentity(ctx context.Context, mailbox string) (Identity, error) {
+	resolver, ok := s.Resolver.(MailboxIdentityResolver)
+	if !ok {
+		return Identity{}, errors.New("webmail mailbox identity unavailable")
+	}
+	return resolver.DefaultIdentity(ctx, mailbox)
 }
 
 type OutboundPolicyEvaluator interface {
@@ -214,6 +293,37 @@ func (m memoryDraftStore) Draft(ctx context.Context, id string) (Draft, bool, er
 	}
 	d, ok := (*m.drafts)[id]
 	return d, ok, nil
+}
+func (m memoryDraftStore) ListDrafts(ctx context.Context, mailbox string, limit int) ([]DraftSummary, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	out := make([]DraftSummary, 0, limit)
+	for _, draft := range *m.drafts {
+		if strings.EqualFold(draft.From, mailbox) && (draft.State == "" || draft.State == "draft" || draft.State == "failed") {
+			out = append(out, DraftSummary{ID: draft.ID, To: draft.To, Subject: draft.Subject, State: draft.State})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+func (m memoryDraftStore) UpdateDraft(ctx context.Context, d Draft) (Draft, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Draft{}, false, err
+	}
+	current, ok := (*m.drafts)[d.ID]
+	if !ok || !strings.EqualFold(current.From, d.From) || (current.State != "" && current.State != "draft" && current.State != "failed") {
+		return Draft{}, false, nil
+	}
+	d.State = "draft"
+	(*m.drafts)[d.ID] = d
+	return d, true, nil
 }
 
 type SQLDraftStore struct{ DB *sql.DB }
@@ -278,6 +388,55 @@ func (s SQLDraftStore) ClaimDraftForSubmission(ctx context.Context, id string) (
 	return d, true, nil
 }
 
+func (s SQLDraftStore) ListDrafts(ctx context.Context, mailbox string, limit int) ([]DraftSummary, error) {
+	if s.DB == nil {
+		return nil, errors.New("webmail draft db required")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,to_addr,subject,state FROM webmail_drafts WHERE mailbox=$1 AND state IN ('draft','failed') ORDER BY updated_at DESC,id DESC LIMIT $2`, strings.ToLower(mailbox), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]DraftSummary, 0, limit)
+	for rows.Next() {
+		var draft DraftSummary
+		if err := rows.Scan(&draft.ID, &draft.To, &draft.Subject, &draft.State); err != nil {
+			return nil, err
+		}
+		out = append(out, draft)
+	}
+	return out, rows.Err()
+}
+
+func (s SQLDraftStore) UpdateDraft(ctx context.Context, d Draft) (Draft, bool, error) {
+	if s.DB == nil {
+		return Draft{}, false, errors.New("webmail draft db required")
+	}
+	attachments, err := json.Marshal(d.Attachments)
+	if err != nil {
+		return Draft{}, false, err
+	}
+	cc, err := json.Marshal(d.Cc)
+	if err != nil {
+		return Draft{}, false, err
+	}
+	bcc, err := json.Marshal(d.Bcc)
+	if err != nil {
+		return Draft{}, false, err
+	}
+	updated, err := scanSQLDraft(s.DB.QueryRowContext(ctx, `UPDATE webmail_drafts SET to_addr=$3,subject=$4,body_text=$5,signing_fingerprint=$6,state='draft',reply_to=$7,forward_of=$8,attachments_json=$9,cc_json=$10,bcc_json=$11,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND mailbox=$2 AND state IN ('draft','failed') RETURNING id,mailbox,to_addr,subject,body_text,signing_fingerprint,state,reply_to,forward_of,attachments_json,cc_json,bcc_json`, d.ID, strings.ToLower(d.From), d.To, d.Subject, d.Body, d.SigningFingerprint, d.ReplyTo, d.ForwardOf, string(attachments), string(cc), string(bcc)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Draft{}, false, nil
+	}
+	if err != nil {
+		return Draft{}, false, err
+	}
+	return updated, true, nil
+}
+
 type sqlDraftScanner interface{ Scan(...any) error }
 
 func scanSQLDraft(row sqlDraftScanner) (Draft, error) {
@@ -307,7 +466,13 @@ func (s *Sender) draftStore() DraftStore {
 	return memoryDraftStore{drafts: &s.Drafts}
 }
 
-func (s *Sender) putDraft(ctx context.Context, d Draft) error { return s.draftStore().PutDraft(ctx, d) }
+func (s *Sender) putDraft(ctx context.Context, d Draft) error {
+	if s.Store == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
+	return s.draftStore().PutDraft(ctx, d)
+}
 
 func (s *Sender) SaveDraft(d Draft) Draft {
 	saved, err := s.SaveDraftContext(context.Background(), d)
@@ -319,6 +484,10 @@ func (s *Sender) SaveDraft(d Draft) Draft {
 }
 
 func (s *Sender) SaveDraftContext(ctx context.Context, d Draft) (Draft, error) {
+	if s.Store == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
 	store := s.draftStore()
 	if d.ID == "" {
 		for {
@@ -329,12 +498,24 @@ func (s *Sender) SaveDraftContext(ctx context.Context, d Draft) (Draft, error) {
 				break
 			}
 		}
+		d.State = "draft"
+		if err := store.PutDraft(ctx, d); err != nil {
+			return Draft{}, err
+		}
+		return d, nil
 	}
-	d.State = "draft"
-	if err := store.PutDraft(ctx, d); err != nil {
+	updater, ok := store.(DraftUpdater)
+	if !ok {
+		return Draft{}, errors.New("webmail draft update unavailable")
+	}
+	updated, ok, err := updater.UpdateDraft(ctx, d)
+	if err != nil {
 		return Draft{}, err
 	}
-	return d, nil
+	if !ok {
+		return Draft{}, errors.New("draft is no longer editable")
+	}
+	return updated, nil
 }
 func (s *Sender) Reply(orig Message, from, body string) Draft {
 	return s.SaveDraft(Draft{From: from, To: orig.From, Subject: "Re: " + orig.Subject, Body: body, ReplyTo: orig.ID})
@@ -351,7 +532,35 @@ func (s *Sender) Draft(id string) (Draft, bool) {
 }
 
 func (s *Sender) DraftContext(ctx context.Context, id string) (Draft, bool, error) {
+	if s.Store == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
 	return s.draftStore().Draft(ctx, id)
+}
+
+func (s *Sender) ListDrafts(ctx context.Context, mailbox string, limit int) ([]DraftSummary, error) {
+	if s.Store == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
+	lister, ok := s.draftStore().(DraftLister)
+	if !ok {
+		return nil, errors.New("webmail draft listing unavailable")
+	}
+	return lister.ListDrafts(ctx, mailbox, limit)
+}
+
+func (s *Sender) UpdateDraft(ctx context.Context, draft Draft) (Draft, bool, error) {
+	if s.Store == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
+	updater, ok := s.draftStore().(DraftUpdater)
+	if !ok {
+		return Draft{}, false, errors.New("webmail draft update unavailable")
+	}
+	return updater.UpdateDraft(ctx, draft)
 }
 
 func (s *Sender) claimDraftForSubmission(ctx context.Context, id string) (Draft, bool, error) {

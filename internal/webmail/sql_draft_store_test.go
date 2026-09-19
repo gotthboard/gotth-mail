@@ -85,6 +85,34 @@ func TestSQLDraftStoreRejectsCrossMailboxOverwrite(t *testing.T) {
 	}
 }
 
+func TestSQLDraftStoreListsOnlyMailboxOwnedEditableDrafts(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	st := SQLDraftStore{DB: db}
+	ctx := context.Background()
+	for _, draft := range []Draft{
+		{ID: "owned-draft", From: "a@example.test", Subject: "subject", Body: "body must not be listed", Attachments: []Attachment{{Filename: "large.bin", Content: []byte("bytes")}}, State: "draft"},
+		{ID: "owned-failed", From: "a@example.test", State: "failed"},
+		{ID: "owned-sent", From: "a@example.test", State: "sent"},
+		{ID: "other-draft", From: "b@example.test", State: "draft"},
+	} {
+		if err := st.PutDraft(ctx, draft); err != nil {
+			t.Fatal(err)
+		}
+	}
+	drafts, err := st.ListDrafts(ctx, "A@example.test", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drafts) != 2 {
+		t.Fatalf("drafts=%#v", drafts)
+	}
+	for _, draft := range drafts {
+		if draft.ID == "" || (draft.State != "draft" && draft.State != "failed") {
+			t.Fatalf("inadmissible draft listed: %#v", draft)
+		}
+	}
+}
+
 func TestSQLDraftStoreClaimsSubmissionExactlyOnce(t *testing.T) {
 	db := testpg.DB(t, store.MigrateSQL)
 	st := SQLDraftStore{DB: db}
@@ -98,6 +126,25 @@ func TestSQLDraftStoreClaimsSubmissionExactlyOnce(t *testing.T) {
 	}
 	if _, ok, err := st.ClaimDraftForSubmission(ctx, "draft-claim"); err != nil || ok {
 		t.Fatalf("second claim ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := st.UpdateDraft(ctx, Draft{ID: "draft-claim", From: "a@example.test", Subject: "must not revive"}); err != nil || ok {
+		t.Fatalf("claimed draft update ok=%v err=%v", ok, err)
+	}
+}
+
+func TestSQLDraftStoreUpdatesOnlyEditableOwnedDraft(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	st := SQLDraftStore{DB: db}
+	ctx := context.Background()
+	if err := st.PutDraft(ctx, Draft{ID: "draft-update", From: "a@example.test", To: "old@example.test", Subject: "old", State: "draft"}); err != nil {
+		t.Fatal(err)
+	}
+	updated, ok, err := st.UpdateDraft(ctx, Draft{ID: "draft-update", From: "a@example.test", To: "new@example.test", Subject: "new", Body: "body", SigningFingerprint: "fp"})
+	if err != nil || !ok || updated.To != "new@example.test" || updated.Subject != "new" || updated.State != "draft" {
+		t.Fatalf("update=%#v ok=%v err=%v", updated, ok, err)
+	}
+	if _, ok, err := st.UpdateDraft(ctx, Draft{ID: "draft-update", From: "b@example.test", Subject: "cross-mailbox"}); err != nil || ok {
+		t.Fatalf("cross-mailbox update ok=%v err=%v", ok, err)
 	}
 }
 

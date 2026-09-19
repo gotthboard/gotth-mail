@@ -30,7 +30,7 @@ func TestParseRawMessageHostileMultipartFixture(t *testing.T) {
 			t.Fatalf("sanitized html still contains %q: %s", bad, clean)
 		}
 	}
-	if len(msg.Attachments) != 1 {
+	if len(msg.Attachments) != 1 || !msg.HasAttachments {
 		t.Fatalf("attachments=%#v", msg.Attachments)
 	}
 	a := msg.Attachments[0]

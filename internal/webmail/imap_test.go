@@ -17,18 +17,23 @@ func TestNetIMAPClientFoldersListSearchReadWithFakeServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go fakeIMAPServer(t, ln)
+	commands := make(chan string, 64)
+	go fakeIMAPServer(t, ln, commands)
 	c := NetIMAPClient{Addr: ln.Addr().String(), Username: "u@example.test", Password: "secret", Timeout: 5 * time.Second}
 	folders, err := c.ListFolders(context.Background(), "u@example.test")
 	if err != nil || len(folders) != 1 || folders[0] != "INBOX" {
 		t.Fatalf("folders=%#v err=%v", folders, err)
 	}
+	detailed, err := c.ListFoldersDetailed(context.Background(), "u@example.test")
+	if err != nil || len(detailed) != 1 || detailed[0].Name != "INBOX" || detailed[0].Unread != 3 {
+		t.Fatalf("folder details=%#v err=%v", detailed, err)
+	}
 	msgs, err := c.ListMessages(context.Background(), "u@example.test", "INBOX", "", 10)
-	if err != nil || len(msgs) != 1 || msgs[0].Subject != "Fake IMAP smoke" || !strings.Contains(msgs[0].BodyText, "fake-body") {
+	if err != nil || len(msgs) != 2 || msgs[0].ID != "2" || msgs[1].ID != "1" || msgs[0].Subject != "Fake IMAP smoke" || msgs[0].BodyText != "" || !msgs[0].HasAttachments || !containsString(msgs[0].Flags, `\Seen`) {
 		t.Fatalf("msgs=%#v err=%v", msgs, err)
 	}
 	search, err := c.Search(context.Background(), "u@example.test", "INBOX", "fake-body", "", 10)
-	if err != nil || len(search) != 1 {
+	if err != nil || len(search) != 2 || search[0].ID != "2" || search[1].ID != "1" {
 		t.Fatalf("search=%#v err=%v", search, err)
 	}
 	msg, err := c.ReadMessage(context.Background(), "u@example.test", "INBOX", "1")
@@ -38,6 +43,31 @@ func TestNetIMAPClientFoldersListSearchReadWithFakeServer(t *testing.T) {
 	used, limit, err := c.Quota(context.Background(), "u@example.test")
 	if err != nil || used != 12*1024 || limit != 1024*1024 {
 		t.Fatalf("quota=%d/%d err=%v", used, limit, err)
+	}
+	if err := c.SetFlag(context.Background(), "u@example.test", "INBOX", "1", "seen", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Move(context.Background(), "u@example.test", "INBOX", "1", "Archive"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Delete(context.Background(), "u@example.test", "INBOX", "1"); err != nil {
+		t.Fatal(err)
+	}
+	close(commands)
+	var transcript string
+	for command := range commands {
+		transcript += command + "\n"
+	}
+	for _, want := range []string{"STATUS \"INBOX\" (UNSEEN)", "UID SEARCH ALL", "BODY.PEEK[HEADER.FIELDS", "UID FETCH 1 (FLAGS BODY[])", `UID STORE 1 +FLAGS.SILENT (\Seen)`, `UID MOVE 1 "Archive"`, `UID EXPUNGE 1`} {
+		if !strings.Contains(transcript, want) {
+			t.Fatalf("missing %q from IMAP transcript:\n%s", want, transcript)
+		}
+	}
+	if got := strings.Count(transcript, " SELECT "); got != 6 {
+		t.Fatalf("unexpected SELECT count %d; list summaries must reuse the selected mailbox:\n%s", got, transcript)
+	}
+	if err := c.Delete(context.Background(), "u@example.test", "INBOX", "1 EXPUNGE"); err == nil {
+		t.Fatal("unsafe IMAP UID accepted")
 	}
 }
 
@@ -104,18 +134,18 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
-func fakeIMAPServer(t *testing.T, ln net.Listener) {
+func fakeIMAPServer(t *testing.T, ln net.Listener, commands chan<- string) {
 	t.Helper()
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 9; i++ {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		go handleFakeIMAP(conn)
+		go handleFakeIMAP(conn, commands)
 	}
 }
 
-func handleFakeIMAP(conn net.Conn) {
+func handleFakeIMAP(conn net.Conn, commands chan<- string) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	r := bufio.NewReader(conn)
@@ -128,6 +158,7 @@ func handleFakeIMAP(conn net.Conn) {
 			return
 		}
 		line = strings.TrimRight(line, "\r\n")
+		commands <- line
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
@@ -140,10 +171,27 @@ func handleFakeIMAP(conn net.Conn) {
 			write("* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n" + tag + " OK list done\r\n")
 		case "SELECT":
 			write("* 1 EXISTS\r\n" + tag + " OK select done\r\n")
-		case "SEARCH":
-			write("* SEARCH 1\r\n" + tag + " OK search done\r\n")
-		case "FETCH":
-			write("* 1 FETCH (BODY[] {" + strconv.Itoa(len(msg)) + "}\r\n" + msg + ")\r\n" + tag + " OK fetch done\r\n")
+		case "STATUS":
+			write("* STATUS INBOX (UNSEEN 3)\r\n" + tag + " OK status done\r\n")
+		case "UID":
+			if len(fields) < 3 {
+				write(tag + " BAD missing UID command\r\n")
+				continue
+			}
+			switch strings.ToUpper(fields[2]) {
+			case "SEARCH":
+				write("* SEARCH 1 2\r\n" + tag + " OK search done\r\n")
+			case "FETCH":
+				payload := msg
+				if strings.Contains(line, "BODY.PEEK") {
+					payload = "From: sender@example.test\r\nTo: u@example.test\r\nDate: Thu, 01 Jan 1970 00:00:01 +0000\r\nSubject: Fake IMAP smoke\r\nContent-Type: multipart/mixed; boundary=fake\r\n\r\n"
+				}
+				write("* 1 FETCH (UID 1 FLAGS (\\Seen) BODY[] {" + strconv.Itoa(len(payload)) + "}\r\n" + payload + ")\r\n" + tag + " OK fetch done\r\n")
+			case "STORE", "MOVE", "EXPUNGE":
+				write(tag + " OK uid mutation done\r\n")
+			default:
+				write(tag + " BAD unknown UID command\r\n")
+			}
 		case "GETQUOTAROOT":
 			write("* QUOTAROOT INBOX \"\"\r\n* QUOTA \"\" (STORAGE 12 1024)\r\n" + tag + " OK quota done\r\n")
 		case "LOGOUT":

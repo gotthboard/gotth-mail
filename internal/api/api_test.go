@@ -209,7 +209,12 @@ func TestBoundOIDCSessionManagesOnlyOwnAppPasswordsWithCSRF(t *testing.T) {
 		authorization: gotthoidc.Authorization{URL: "https://auth.example.test/application/o/authorize/?state=" + state + "&nonce=nonce&code_challenge=challenge&code_challenge_method=S256", Attempt: attempt},
 		identity:      gotthoidc.Identity{Issuer: "https://auth.example.test/application/o/gotth-mail/", Subject: "bound-subject", Email: &email},
 	}
-	server := Server{OIDCClient: client, OIDCStore: authn.SQLStore{DB: db}, OIDCRedirectURI: "http://127.0.0.1:18080/api/v1/oidc/callback", OIDCNow: func() time.Time { return now }, Identity: ids, Authz: authz.StaticAuthorizer{}}
+	webmailSMTP := &apiFakeSMTP{}
+	server := Server{
+		OIDCClient: client, OIDCStore: authn.SQLStore{DB: db}, OIDCRedirectURI: "http://127.0.0.1:18080/api/v1/oidc/callback", OIDCNow: func() time.Time { return now }, Identity: ids, Authz: authz.StaticAuthorizer{},
+		WebmailClient: &webmail.Client{IMAP: apiFakeIMAP{messages: []webmail.Message{{ID: "1", Folder: "INBOX", From: "sender@example.test", Subject: "session mail"}}}},
+		WebmailSender: &webmail.Sender{Drafts: map[string]webmail.Draft{}, SMTP: webmailSMTP, Signer: apiFakeSigner{}, Resolver: apiFakeResolver{}, Policy: apiFakeOutboundPolicy{}, Audit: &audit.MemoryWriter{}},
+	}
 	h := server.Handler()
 	login := httptest.NewRecorder()
 	h.ServeHTTP(login, httptest.NewRequest(http.MethodGet, "/api/v1/oidc/login?mode=redirect", nil))
@@ -242,6 +247,39 @@ func TestBoundOIDCSessionManagesOnlyOwnAppPasswordsWithCSRF(t *testing.T) {
 		if strings.Contains(callback.Body.String(), secret) {
 			t.Fatalf("callback disclosed cookie secret %q", secret)
 		}
+	}
+	webmailIdentityRequest := httptest.NewRequest(http.MethodGet, "/api/v1/webmail/identity", nil)
+	webmailIdentityRequest.AddCookie(sessionCookie)
+	webmailIdentity := httptest.NewRecorder()
+	h.ServeHTTP(webmailIdentity, webmailIdentityRequest)
+	if webmailIdentity.Code != http.StatusOK || !strings.Contains(webmailIdentity.Body.String(), `"mailbox":"member@example.test"`) {
+		t.Fatalf("session webmail identity status=%d body=%s", webmailIdentity.Code, webmailIdentity.Body.String())
+	}
+	webmailDraftRequest := httptest.NewRequest(http.MethodPost, "/api/v1/webmail/drafts", strings.NewReader(`{"to":"recipient@example.test","subject":"session draft","body":"body"}`))
+	webmailDraftRequest.AddCookie(sessionCookie)
+	webmailDraftRequest.AddCookie(csrfCookie)
+	missingWebmailCSRF := httptest.NewRecorder()
+	h.ServeHTTP(missingWebmailCSRF, webmailDraftRequest)
+	if missingWebmailCSRF.Code != http.StatusForbidden {
+		t.Fatalf("missing webmail CSRF status=%d body=%s", missingWebmailCSRF.Code, missingWebmailCSRF.Body.String())
+	}
+	webmailDraftRequest = httptest.NewRequest(http.MethodPost, "/api/v1/webmail/drafts", strings.NewReader(`{"to":"recipient@example.test","subject":"session draft","body":"body"}`))
+	webmailDraftRequest.AddCookie(sessionCookie)
+	webmailDraftRequest.AddCookie(csrfCookie)
+	webmailDraftRequest.Header.Set("X-CSRF-Token", csrfCookie.Value)
+	webmailDraft := httptest.NewRecorder()
+	h.ServeHTTP(webmailDraft, webmailDraftRequest)
+	if webmailDraft.Code != http.StatusOK || !strings.Contains(webmailDraft.Body.String(), `"SigningFingerprint":"fp"`) {
+		t.Fatalf("session webmail draft status=%d body=%s", webmailDraft.Code, webmailDraft.Body.String())
+	}
+	webmailActionRequest := httptest.NewRequest(http.MethodPost, "/api/v1/webmail/message?folder=INBOX&id=1", strings.NewReader(`{"action":"mark_read"}`))
+	webmailActionRequest.AddCookie(sessionCookie)
+	webmailActionRequest.AddCookie(csrfCookie)
+	webmailActionRequest.Header.Set("X-CSRF-Token", csrfCookie.Value)
+	webmailAction := httptest.NewRecorder()
+	h.ServeHTTP(webmailAction, webmailActionRequest)
+	if webmailAction.Code != http.StatusOK {
+		t.Fatalf("session webmail action status=%d body=%s", webmailAction.Code, webmailAction.Body.String())
 	}
 
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/mailboxes/member@example.test/app-passwords", strings.NewReader(`{"label":"phone"}`))
@@ -1007,6 +1045,9 @@ type apiFakeIMAP struct{ messages []webmail.Message }
 func (f apiFakeIMAP) ListFolders(context.Context, string) ([]string, error) {
 	return []string{"INBOX"}, nil
 }
+func (f apiFakeIMAP) ListFoldersDetailed(context.Context, string) ([]webmail.FolderInfo, error) {
+	return []webmail.FolderInfo{{Name: "INBOX", Unread: 2}}, nil
+}
 func (f apiFakeIMAP) ListMessages(context.Context, string, string, string, int) ([]webmail.Message, error) {
 	return f.messages, nil
 }
@@ -1022,6 +1063,11 @@ func (f apiFakeIMAP) Search(ctx context.Context, user, folder, query, cursor str
 	return f.messages, nil
 }
 func (f apiFakeIMAP) Quota(context.Context, string) (int64, int64, error) { return 0, 0, nil }
+func (f apiFakeIMAP) SetFlag(context.Context, string, string, string, string, bool) error {
+	return nil
+}
+func (f apiFakeIMAP) Move(context.Context, string, string, string, string) error { return nil }
+func (f apiFakeIMAP) Delete(context.Context, string, string, string) error       { return nil }
 
 type apiFakeSMTP struct{ sent bool }
 
@@ -1051,6 +1097,9 @@ func (apiFakeOutboundPolicy) Decide(context.Context, string, outboundpolicy.Enfo
 func (apiFakeResolver) ResolveSender(ctx context.Context, fp, from, sender string) (webmail.Identity, error) {
 	return webmail.Identity{Address: from, Fingerprint: fp}, nil
 }
+func (apiFakeResolver) DefaultIdentity(ctx context.Context, mailbox string) (webmail.Identity, error) {
+	return webmail.Identity{Address: mailbox, Fingerprint: "fp"}, nil
+}
 
 func webmailServer(t *testing.T, smtp *apiFakeSMTP) http.Handler {
 	t.Helper()
@@ -1058,7 +1107,7 @@ func webmailServer(t *testing.T, smtp *apiFakeSMTP) http.Handler {
 	if err := ids.AddTokenWithScopes("web-user-token", "api_token", "web-secret-token", "mailbox:web-user@example.test:webmail:use"); err != nil {
 		t.Fatal(err)
 	}
-	client := &webmail.Client{IMAP: apiFakeIMAP{messages: []webmail.Message{{ID: "m1", Folder: "INBOX", From: "a@example.test", Subject: "Hi", BodyHTML: "<script>x</script><b>safe</b>"}}}}
+	client := &webmail.Client{IMAP: apiFakeIMAP{messages: []webmail.Message{{ID: "m1", Folder: "INBOX", From: "A User <a@example.test>", Subject: "Hi", BodyHTML: "<script>x</script><b>safe</b>", Attachments: []webmail.Attachment{{Filename: "note.txt", ContentType: "text/plain", Size: 5, Content: []byte("hello")}}}}}}
 	sender := &webmail.Sender{Drafts: map[string]webmail.Draft{}, SMTP: smtp, Signer: apiFakeSigner{}, Resolver: apiFakeResolver{}, Policy: apiFakeOutboundPolicy{}, Audit: &audit.MemoryWriter{}}
 	return Server{Identity: ids, WebmailClient: client, WebmailSender: sender}.Handler()
 }
@@ -1068,10 +1117,24 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/webmail", nil))
 	body := rr.Body.String()
-	for _, want := range []string{"GOTTH Mail Webmail", "/api/v1/webmail/folders", "/api/v1/webmail/messages", "/api/v1/webmail/drafts", "text-only"} {
+	for _, want := range []string{"GOTTH Mail", "folder-pane", "message-list", "reader-pane", "composer", "/webmail/assets/app.js"} {
 		if rr.Code != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("webmail shell status=%d missing %q body=%s", rr.Code, want, body)
 		}
+	}
+	if got := rr.Header().Get("Content-Security-Policy"); !strings.Contains(got, "default-src 'none'") || !strings.Contains(got, "script-src 'self'") || !strings.Contains(got, "trusted-types 'none'") {
+		t.Fatalf("webmail CSP=%q", got)
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("webmail cache control=%q", got)
+	}
+	asset := httptest.NewRecorder()
+	h.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/webmail/assets/app.js", nil))
+	if asset.Code != http.StatusOK || !strings.Contains(asset.Body.String(), "mark_read") || !strings.Contains(asset.Body.String(), "gotth_mail_csrf") {
+		t.Fatalf("webmail JS status=%d body=%s", asset.Code, asset.Body.String())
+	}
+	if got := asset.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("webmail asset cache control=%q", got)
 	}
 }
 
@@ -1090,7 +1153,7 @@ func TestLiveContainerWebmailShellReachable(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(b)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "GOTTH Mail Webmail") || !strings.Contains(body, "Custom webmail shell") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "GOTTH Mail") || !strings.Contains(body, "message-list") || !strings.Contains(body, "composer") {
 		t.Fatalf("webmail UI status=%d body=%s", resp.StatusCode, body)
 	}
 }
@@ -1117,12 +1180,51 @@ func TestWebmailAPIRoutesRequireAuthAndReachClientSender(t *testing.T) {
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "used_bytes") {
 		t.Fatalf("quota status=%d body=%s", rr.Code, rr.Body.String())
 	}
+	req = v3Req(http.MethodGet, "/api/v1/webmail/identity", "")
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"signing_fingerprint":"fp"`) {
+		t.Fatalf("identity status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = v3Req(http.MethodPost, "/api/v1/webmail/message?folder=INBOX&id=m1", `{"action":"mark_read"}`)
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("message action status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = v3Req(http.MethodPost, "/api/v1/webmail/message?folder=INBOX&id=m1", `{"action":"mark_read"} {}`)
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("trailing message action JSON status=%d body=%s", rr.Code, rr.Body.String())
+	}
 	req = v3Req(http.MethodGet, "/api/v1/webmail/messages/INBOX/m1", "")
 	req.Header.Set("Authorization", "Bearer web-secret-token")
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "<script>") {
 		t.Fatalf("read status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = v3Req(http.MethodGet, "/api/v1/webmail/message?folder=INBOX&id=m1", "")
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	var queryMessage webmail.Message
+	if err := json.Unmarshal(rr.Body.Bytes(), &queryMessage); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Code != http.StatusOK || queryMessage.From != "A User <a@example.test>" {
+		t.Fatalf("query read status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = v3Req(http.MethodGet, "/api/v1/webmail/attachment?folder=INBOX&id=m1&index=0", "")
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || rr.Body.String() != "hello" || rr.Header().Get("Content-Type") != "application/octet-stream" || !strings.Contains(rr.Header().Get("Content-Disposition"), "attachment") {
+		t.Fatalf("attachment status=%d headers=%v body=%q", rr.Code, rr.Header(), rr.Body.String())
 	}
 	req = v3Req(http.MethodPost, "/api/v1/webmail/drafts", `{"from":"web-user@example.test","to":"r@example.test","subject":"s","body":"b","signingfingerprint":"fp"}`)
 	req.Header.Set("Authorization", "Bearer web-secret-token")
@@ -1134,6 +1236,34 @@ func TestWebmailAPIRoutesRequireAuthAndReachClientSender(t *testing.T) {
 	var d webmail.Draft
 	if err := json.Unmarshal(rr.Body.Bytes(), &d); err != nil {
 		t.Fatal(err)
+	}
+	req = v3Req(http.MethodGet, "/api/v1/webmail/drafts", "")
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), d.ID) || strings.Contains(rr.Body.String(), `"Body"`) || strings.Contains(rr.Body.String(), `"Attachments"`) {
+		t.Fatalf("draft list status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = v3Req(http.MethodGet, "/api/v1/webmail/drafts/"+d.ID, "")
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"Body":"b"`) {
+		t.Fatalf("draft detail status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = v3Req(http.MethodPut, "/api/v1/webmail/drafts/"+d.ID, `{"to":"updated@example.test","subject":"updated","body":"updated body"}`)
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("draft update status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var updated webmail.Draft
+	if err := json.Unmarshal(rr.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.ID != d.ID || updated.From != "web-user@example.test" || updated.To != "updated@example.test" || updated.Subject != "updated" || updated.SigningFingerprint != "fp" {
+		t.Fatalf("updated draft=%+v", updated)
 	}
 	req = v3Req(http.MethodPost, "/api/v1/webmail/drafts/"+d.ID+"/submit", "")
 	req.Header.Set("Authorization", "Bearer web-secret-token")

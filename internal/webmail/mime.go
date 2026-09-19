@@ -33,7 +33,7 @@ func ParseRawMessage(id, folder string, raw []byte) (Message, error) {
 		return Message{}, err
 	}
 	date, _ := mail.ParseDate(msg.Header.Get("Date"))
-	out := Message{ID: id, Folder: folder, From: msg.Header.Get("From"), To: msg.Header.Get("To"), Subject: msg.Header.Get("Subject"), Date: date}
+	out := Message{ID: id, Folder: folder, From: msg.Header.Get("From"), To: msg.Header.Get("To"), Cc: msg.Header.Get("Cc"), Subject: msg.Header.Get("Subject"), Date: date}
 	if out.Date.IsZero() {
 		out.Date = time.Time{}
 	}
@@ -90,6 +90,7 @@ func parseMIMEEntity(header mail.Header, r io.Reader, out *Message, depth int, p
 	}
 	if strings.EqualFold(disp, "attachment") || filename != "" {
 		out.Attachments = append(out.Attachments, SafeAttachment(Attachment{Filename: filename, ContentType: mediaType, Size: int64(len(body)), Content: body}))
+		out.HasAttachments = true
 		return nil
 	}
 	switch mediaType {
@@ -103,6 +104,7 @@ func parseMIMEEntity(header mail.Header, r io.Reader, out *Message, depth int, p
 		}
 	default:
 		out.Attachments = append(out.Attachments, SafeAttachment(Attachment{Filename: filename, ContentType: mediaType, Size: int64(len(body)), Content: body}))
+		out.HasAttachments = true
 	}
 	return nil
 }

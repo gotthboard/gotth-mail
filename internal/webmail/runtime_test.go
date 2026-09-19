@@ -138,9 +138,11 @@ func TestRuntimeRegistryLiveComposeFlow(t *testing.T) {
 		t.Fatalf("submit state=%q err=%v", sent.State, err)
 	}
 	deadline := time.Now().Add(30 * time.Second)
+	var delivered Message
 	for {
 		messages, searchErr := runtime.Search(context.Background(), from, "INBOX", subject, "", 10)
 		if searchErr == nil && len(messages) > 0 && messages[0].Subject == subject {
+			delivered = messages[0]
 			break
 		}
 		if time.Now().After(deadline) {
@@ -151,6 +153,43 @@ func TestRuntimeRegistryLiveComposeFlow(t *testing.T) {
 	used, limit, err := runtime.Quota(context.Background(), from)
 	if err != nil || used <= 0 || limit != 1<<30 {
 		t.Fatalf("live quota used=%d limit=%d err=%v", used, limit, err)
+	}
+	folders, err := runtime.ListFoldersDetailed(context.Background(), from)
+	if err != nil || len(folders) < 2 {
+		t.Fatalf("live folder details=%#v err=%v", folders, err)
+	}
+	foundInbox := false
+	for _, folder := range folders {
+		if folder.Name == "INBOX" {
+			foundInbox = true
+			if folder.Unread < 1 {
+				t.Fatalf("live INBOX unread count=%d", folder.Unread)
+			}
+		}
+	}
+	if !foundInbox {
+		t.Fatalf("live INBOX missing from folder details: %#v", folders)
+	}
+	if err := runtime.SetFlag(context.Background(), from, "INBOX", delivered.ID, "flagged", true); err != nil {
+		t.Fatal(err)
+	}
+	flagged, err := runtime.ReadMessage(context.Background(), from, "INBOX", delivered.ID)
+	if err != nil || !containsString(flagged.Flags, `\Flagged`) {
+		t.Fatalf("live flag state=%#v err=%v", flagged.Flags, err)
+	}
+	if err := runtime.Move(context.Background(), from, "INBOX", delivered.ID, "Archive"); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := runtime.Search(context.Background(), from, "Archive", subject, "", 10)
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("live move search=%#v err=%v", archived, err)
+	}
+	if err := runtime.Delete(context.Background(), from, "Archive", archived[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := runtime.Search(context.Background(), from, "Archive", subject, "", 10)
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("live delete search=%#v err=%v", remaining, err)
 	}
 }
 

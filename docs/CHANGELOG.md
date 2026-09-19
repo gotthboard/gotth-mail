@@ -21,9 +21,55 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 12:52 CDT — Wire the production webmail transport and signing runtime
+### 2026-09-19 13:21 CDT — Replace the webmail shell with the interactive client
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- session-bound webmail authorization and CSRF enforcement
+- stable IMAP UID reads, flags, move, and exact delete
+- three-pane responsive browser client and same-origin assets
+- API identity, message action, and safe attachment routes
+- real Chromium and reference Dovecot interaction smokes
+- webmail architecture, implementation, workflow, and evidence
+
+Explanation:
+
+Replaced the static reachability page with the actual GOTTH Mail webmail
+client. The page now uses a bound OIDC mailbox session without putting bearer
+tokens in browser storage, requires the existing separate CSRF proof for every
+mutation, and exposes no control-plane authority. It provides folder/list/read,
+current-folder search, quota, sorting, reader placement and resizing,
+responsive drill-down, compose/save/send, summary-only saved-draft
+list/detail/reopen/edit,
+reply/reply-all/forward with attachment state, safe attachment download,
+read/unread with per-folder unread counts, flag/unflag, move/delete, keyboard
+commands, visible context-command parity, and light/dark themes under a strict
+CSP. Network IMAP message identity is now UID-based, list views fetch bounded
+header/flag metadata instead of complete message bodies, and the real Dovecot
+smoke exercises flag, move, and UID-scoped expunge in addition to
+read/search/quota. Draft edits use a mailbox- and state-conditional update, so
+an edit cannot revive a draft after submission has claimed it.
+
+Verification:
+
+- focused authz, webmail, API, and command tests
+- JavaScript syntax check with Node
+- real headless Chromium interaction smoke at desktop and mobile widths
+- rebuilt production-runtime Postfix/Dovecot/Rspamd smoke
+- shell syntax and `git diff --check`
+
+Risks / non-goals:
+
+- hostile HTML remains conservative text; no unsafe rich-HTML bypass was added
+- Sieve rules remain visibly unavailable because no Sieve runtime is configured
+- no live credential, mailbox, deployment, DNS record, tag, release, or
+  external service changed
+
+### 2026-09-19 12:52 CDT — Wire the production webmail transport and signing runtime
+
+Commit: `ee64ff3`
 
 Affected files:
 

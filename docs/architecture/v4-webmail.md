@@ -72,10 +72,10 @@ command, and table patterns so the product feels coherent. It remains a
 separate control surface, and presentation reuse grants webmail no additional
 authority.
 
-Go templates render the authoritative page structure. Tailwind supplies the
-project-owned visual tokens, and HTMX or bounded progressive enhancement may
-update panes and commands. The architecture does not introduce a client-side
-SPA state authority.
+Go-rendered markup provides the authoritative page structure. Repository-owned
+CSS variables and rules supply the visual tokens without a runtime or build
+framework dependency. Bounded progressive enhancement updates panes and
+commands; it is not a client-side SPA state authority.
 
 ## Security architecture
 
