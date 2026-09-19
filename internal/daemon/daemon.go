@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"net/mail"
 	"strconv"
 	"strings"
@@ -32,21 +33,22 @@ const (
 )
 
 type Response struct {
-	CorrelationID string   `json:"correlation_id"`
-	Decision      Decision `json:"decision"`
-	Reason        string   `json:"reason"`
-	Message       string   `json:"message,omitempty"`
-	Targets       []string `json:"targets,omitempty"`
-	Home          string   `json:"home,omitempty"`
-	UID           int      `json:"uid,omitempty"`
-	GID           int      `json:"gid,omitempty"`
-	QuotaBytes    int64    `json:"quota_bytes,omitempty"`
-	Domains       []string `json:"domains,omitempty"`
-	Selector      string   `json:"selector,omitempty"`
-	KeyPath       string   `json:"key_path,omitempty"`
-	Allowed       bool     `json:"allowed,omitempty"`
-	RetryAfterSec int      `json:"retry_after_sec,omitempty"`
-	Transport     string   `json:"transport,omitempty"`
+	CorrelationID   string            `json:"correlation_id"`
+	Decision        Decision          `json:"decision"`
+	Reason          string            `json:"reason"`
+	Message         string            `json:"message,omitempty"`
+	Targets         []string          `json:"targets,omitempty"`
+	Home            string            `json:"home,omitempty"`
+	UID             int               `json:"uid,omitempty"`
+	GID             int               `json:"gid,omitempty"`
+	QuotaBytes      int64             `json:"quota_bytes,omitempty"`
+	Domains         []string          `json:"domains,omitempty"`
+	Selector        string            `json:"selector,omitempty"`
+	KeyPath         string            `json:"key_path,omitempty"`
+	Allowed         bool              `json:"allowed,omitempty"`
+	RetryAfterSec   int               `json:"retry_after_sec,omitempty"`
+	Transport       string            `json:"transport,omitempty"`
+	PolicyRevisions map[string]uint64 `json:"policy_revisions,omitempty"`
 }
 
 type Domain struct {
@@ -86,6 +88,7 @@ type Service struct {
 	RateLimits           map[string]RateLimit
 	AppPasswordVerifiers map[string][]string
 	Audit                audit.Writer
+	OutboundPolicy       *outboundpolicy.EnforcementService
 	stateMu              *sync.RWMutex
 }
 
@@ -167,6 +170,37 @@ type PassdbRequest struct {
 type QuotaRequest struct {
 	Address    string `json:"address"`
 	QuotaBytes int64  `json:"quota_bytes"`
+}
+
+// PostfixOutboundPolicy delegates to the SQL-authoritative policy service and
+// maps its closed action/reason contract onto the daemon response.
+// Complexity: local time O(1), Omega(1), tight Theta(1); auxiliary space O(n),
+// Omega(1), where n is bounded policy revisions; delegated SQL/queue costs are
+// defined by outboundpolicy.EnforcementService.Decide.
+func (s Service) PostfixOutboundPolicy(ctx context.Context, correlationID string, req outboundpolicy.EnforcementRequest) Response {
+	if s.OutboundPolicy == nil {
+		return resp(correlationID, Defer, string(outboundpolicy.ReasonUnavailable))
+	}
+	decision, _ := s.OutboundPolicy.Decide(ctx, correlationID, req)
+	result := resp(correlationID, Defer, string(decision.Reason))
+	switch decision.Action {
+	case outboundpolicy.ActionOK:
+		result.Decision = OK
+	case outboundpolicy.ActionReject:
+		result.Decision = Reject
+	case outboundpolicy.ActionDefer:
+		result.Decision = Defer
+	default:
+		result.Decision = Defer
+		result.Reason = string(outboundpolicy.ReasonUnavailable)
+	}
+	if len(decision.Revisions) > 0 {
+		result.PolicyRevisions = make(map[string]uint64, len(decision.Revisions))
+		for domain, revision := range decision.Revisions {
+			result.PolicyRevisions[domain] = revision
+		}
+	}
+	return result
 }
 
 func (s Service) PostfixDomain(correlationID, domain string) Response {

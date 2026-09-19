@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/webmail"
 )
 
@@ -32,6 +33,8 @@ const (
 	ReasonConfigInvalid           = "notification_email_config_invalid"
 	ReasonPayloadInvalid          = "notification_payload_invalid"
 	ReasonCancelled               = "notification_cancelled"
+	ReasonOutboundPolicyBlocked   = "outbound_policy_blocked"
+	ReasonOutboundPolicyDown      = "outbound_policy_unavailable"
 	ReasonSignedEmailDelivered    = "signed_email_delivered"
 	VerificationValidExactSender  = "valid_exact_sender"
 	SignedEmailPolicyVersion      = "gotth-mail-exact-sender-v1"
@@ -64,9 +67,16 @@ type SignedEmailBackend struct {
 	Signer             webmail.OpenPGPSigner
 	Verifier           webmail.ExactSenderVerifier
 	Resolver           webmail.SenderIdentityResolver
+	Policy             webmail.OutboundPolicyEvaluator
 	Now                func() time.Time
 }
 
+// SendAlert applies system-sender outbound policy before key resolution,
+// signing, verification, or SMTP; forbidden automatic mail terminates without
+// generating another message.
+// Complexity: time O(a+m), Omega(a), tight Theta(a+m); auxiliary space O(a+m),
+// Omega(a), where a is bounded sanitized alert bytes and m is MIME bytes;
+// policy, key, signing, verification, recorder, and SMTP I/O are additive.
 func (b SignedEmailBackend) SendAlert(ctx context.Context, alert notification.Alert) (notification.DeliveryResult, error) {
 	if err := ctx.Err(); err != nil {
 		return deliveryFailure(notification.StatusFailedRetryable, ReasonCancelled)
@@ -75,7 +85,7 @@ func (b SignedEmailBackend) SendAlert(ctx context.Context, alert notification.Al
 	if err != nil {
 		return deliveryFailure(notification.StatusFailedPermanent, ReasonPayloadInvalid)
 	}
-	if b.SMTP == nil || b.Signer == nil || b.Verifier == nil || b.Resolver == nil {
+	if b.SMTP == nil || b.Signer == nil || b.Verifier == nil || b.Resolver == nil || b.Policy == nil {
 		return deliveryFailure(notification.StatusFailedPermanent, ReasonConfigInvalid)
 	}
 	from, err := oneAddress(b.From)
@@ -106,6 +116,22 @@ func (b SignedEmailBackend) SendAlert(ctx context.Context, alert notification.Al
 		IdentityStateRef:    "openpgp:" + fingerprint,
 		VerificationResult:  "verification_error",
 		Workflow:            SignedEmailWorkflow,
+	}
+	correlationID := clean.CorrelationID
+	if correlationID == "" {
+		correlationID = "notification-policy:" + clean.ID
+	}
+	policyDecision, policyErr := b.Policy.Decide(ctx, correlationID, outboundpolicy.EnforcementRequest{
+		Stage: outboundpolicy.StageSubmission, SystemSenderID: evidence.SenderIdentityID,
+		EnvelopeSender: from, Recipient: to,
+	})
+	if policyErr != nil || policyDecision.Action == outboundpolicy.ActionDefer {
+		evidence.VerificationResult = ReasonOutboundPolicyDown
+		return deliveryFailure(notification.StatusFailedRetryable, ReasonOutboundPolicyDown, evidence)
+	}
+	if policyDecision.Action != outboundpolicy.ActionOK {
+		evidence.VerificationResult = "policy_blocked"
+		return deliveryFailure(notification.StatusFailedPermanent, ReasonOutboundPolicyBlocked, evidence)
 	}
 
 	identity, err := b.Resolver.ResolveSender(ctx, fingerprint, from, "")

@@ -484,6 +484,7 @@ func validEmailConfig(path, fingerprint string) EmailConfig {
 		SigningFingerprint: strings.ToLower(fingerprint),
 		PrivateKeyFile:     path,
 		SMTPAddr:           "127.0.0.1:2525",
+		Policy:             notificationPolicyFunc(allowNotificationPolicy),
 		Now:                func() time.Time { return emailConfigTestTime.Add(2 * time.Hour) },
 	}
 }

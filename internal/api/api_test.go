@@ -25,6 +25,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
 	"forgejo/gotthboard/gotth-mail/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/testpg"
@@ -1037,6 +1038,12 @@ func (apiFakeSigner) SignMIME(ctx context.Context, id webmail.Identity, b []byte
 
 type apiFakeResolver struct{}
 
+type apiFakeOutboundPolicy struct{}
+
+func (apiFakeOutboundPolicy) Decide(context.Context, string, outboundpolicy.EnforcementRequest) (outboundpolicy.Decision, error) {
+	return outboundpolicy.Decision{Action: outboundpolicy.ActionOK, Reason: outboundpolicy.ReasonUnrestricted}, nil
+}
+
 func (apiFakeResolver) ResolveSender(ctx context.Context, fp, from, sender string) (webmail.Identity, error) {
 	return webmail.Identity{Address: from, Fingerprint: fp}, nil
 }
@@ -1048,7 +1055,7 @@ func webmailServer(t *testing.T, smtp *apiFakeSMTP) http.Handler {
 		t.Fatal(err)
 	}
 	client := &webmail.Client{IMAP: apiFakeIMAP{messages: []webmail.Message{{ID: "m1", Folder: "INBOX", From: "a@example.test", Subject: "Hi", BodyHTML: "<script>x</script><b>safe</b>"}}}}
-	sender := &webmail.Sender{Drafts: map[string]webmail.Draft{}, SMTP: smtp, Signer: apiFakeSigner{}, Resolver: apiFakeResolver{}, Audit: &audit.MemoryWriter{}}
+	sender := &webmail.Sender{Drafts: map[string]webmail.Draft{}, SMTP: smtp, Signer: apiFakeSigner{}, Resolver: apiFakeResolver{}, Policy: apiFakeOutboundPolicy{}, Audit: &audit.MemoryWriter{}}
 	return Server{Identity: ids, WebmailClient: client, WebmailSender: sender}.Handler()
 }
 
@@ -1135,7 +1142,7 @@ func TestWebmailDraftSubmitRequiresMailboxOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	smtp := &apiFakeSMTP{}
-	sender := &webmail.Sender{Drafts: map[string]webmail.Draft{}, SMTP: smtp, Signer: apiFakeSigner{}, Resolver: apiFakeResolver{}, Audit: &audit.MemoryWriter{}}
+	sender := &webmail.Sender{Drafts: map[string]webmail.Draft{}, SMTP: smtp, Signer: apiFakeSigner{}, Resolver: apiFakeResolver{}, Policy: apiFakeOutboundPolicy{}, Audit: &audit.MemoryWriter{}}
 	h := Server{Identity: ids, WebmailClient: &webmail.Client{IMAP: apiFakeIMAP{}}, WebmailSender: sender}.Handler()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/webmail/drafts", strings.NewReader(`{"from":"a@example.test","to":"r@example.test","subject":"s","body":"b","signingfingerprint":"fp"}`))
 	req.Header.Set("Authorization", "Bearer web-a-secret")
@@ -1167,7 +1174,7 @@ func TestWebmailAPIUsesSQLDraftStoreWhenConfigured(t *testing.T) {
 		t.Fatal(err)
 	}
 	smtp := &apiFakeSMTP{}
-	sender := &webmail.Sender{SMTP: smtp, Signer: apiFakeSigner{}, Resolver: apiFakeResolver{}, Audit: &audit.MemoryWriter{}}
+	sender := &webmail.Sender{SMTP: smtp, Signer: apiFakeSigner{}, Resolver: apiFakeResolver{}, Policy: apiFakeOutboundPolicy{}, Audit: &audit.MemoryWriter{}}
 	h := Server{AuditDB: db, Identity: ids, WebmailClient: &webmail.Client{IMAP: apiFakeIMAP{}}, WebmailSender: sender}.Handler()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/webmail/drafts", strings.NewReader(`{"id":"attacker-chosen","from":"web-user@example.test","to":"r@example.test","subject":"s","body":"b","replyto":"imap-42","forwardof":"imap-17","signingfingerprint":"fp","attachments":[{"filename":"note.txt","contenttype":"text/plain","size":5,"content":"aGVsbG8="}]}`))
 	req.Header.Set("Authorization", "Bearer web-secret-token")

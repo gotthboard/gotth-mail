@@ -45,6 +45,19 @@ func TestNormalizeDomainRejectsMalformedInput(t *testing.T) {
 	}
 }
 
+func TestRecipientDomainNormalizesUnicodeAndTerminalDot(t *testing.T) {
+	t.Parallel()
+	for _, address := range []string{"user@BÜCHER.example", "user@Example.TEST."} {
+		domain, err := recipientDomain(address)
+		if err != nil {
+			t.Fatalf("recipientDomain(%q): %v", address, err)
+		}
+		if domain != map[string]string{"user@BÜCHER.example": "xn--bcher-kva.example", "user@Example.TEST.": "example.test"}[address] {
+			t.Fatalf("recipientDomain(%q)=%q", address, domain)
+		}
+	}
+}
+
 func TestEvaluate(t *testing.T) {
 	t.Parallel()
 
@@ -82,6 +95,11 @@ func TestEvaluate(t *testing.T) {
 			name: "conflicting restricted domains reject",
 			req:  Request{Stage: StageSubmission, Recipient: "user@example.test", Governing: []GoverningDomain{{Domain: "example.test", Scope: ScopeSameDomainOnly, Revision: 1}, {Domain: "other.test", Scope: ScopeSameDomainOnly, Revision: 7}}},
 			want: Decision{Action: ActionReject, Reason: ReasonCrossDomainConflict, Revisions: map[string]uint64{"example.test": 1, "other.test": 7}},
+		},
+		{
+			name: "transport conflict holds whole message",
+			req:  Request{Stage: StageTransport, QueueID: "3Pt2mN2VXxznjll", Recipient: "user@example.test", Governing: []GoverningDomain{{Domain: "example.test", Scope: ScopeSameDomainOnly, Revision: 1}, {Domain: "other.test", Scope: ScopeSameDomainOnly, Revision: 7}}},
+			want: Decision{Action: ActionDefer, Reason: ReasonPolicyHold, Revisions: map[string]uint64{"example.test": 1, "other.test": 7}},
 		},
 		{
 			name: "identical duplicate authority is idempotent",

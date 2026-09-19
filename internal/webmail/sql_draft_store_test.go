@@ -83,7 +83,7 @@ func TestSQLDraftStoreRejectsCrossMailboxOverwrite(t *testing.T) {
 func TestSenderSubmitPersistsSQLDraftState(t *testing.T) {
 	db := testpg.DB(t, store.MigrateSQL)
 	smtp := &fakeSMTP{}
-	s := &Sender{Store: SQLDraftStore{DB: db}, SMTP: smtp, Signer: fakeSigner{}, Resolver: fakeResolver{}}
+	s := &Sender{Store: SQLDraftStore{DB: db}, SMTP: smtp, Signer: fakeSigner{}, Resolver: fakeResolver{}, Policy: fakeOutboundPolicy{}}
 	d, err := s.SaveDraftContext(context.Background(), Draft{From: "u@example.test", To: "r@example.test", Subject: "s", Body: "body", SigningFingerprint: "fp"})
 	if err != nil {
 		t.Fatal(err)

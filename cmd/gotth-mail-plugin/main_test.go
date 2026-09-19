@@ -5,8 +5,11 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/mail"
 	"os"
 	"os/exec"
@@ -17,6 +20,7 @@ import (
 
 	"forgejo/gotthboard/gotth-mail/internal/notification"
 	"forgejo/gotthboard/gotth-mail/internal/notifyruntime"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/webmail"
 	pluginv1 "forgejo/gotthboard/gotth-mail/proto/gotth/mail/plugin/v1"
@@ -40,7 +44,12 @@ func TestNotificationSinkForPreservesTelegramWithoutEmailConfig(t *testing.T) {
 }
 
 func TestNotificationSinkForSignedEmailRequiresExplicitConfig(t *testing.T) {
-	if _, err := notificationSinkFor(plugin.FirstEmailName, func(string) string { return "" }); err == nil || !strings.Contains(err.Error(), "from required") {
+	if _, err := notificationSinkFor(plugin.FirstEmailName, func(name string) string {
+		if name == "GOTTH_MAIL_OUTBOUND_POLICY_URL" {
+			return "http://127.0.0.1/internal/v1/postfix/outbound-policy"
+		}
+		return ""
+	}); err == nil || !strings.Contains(err.Error(), "from required") {
 		t.Fatalf("missing signed email config accepted: %v", err)
 	}
 }
@@ -60,6 +69,7 @@ func TestNotificationSinkForSignedEmailBuildsWorkingAdapter(t *testing.T) {
 		"GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT": fingerprint,
 		"GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE":    keyPath,
 		"GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR":           "127.0.0.1:2525",
+		"GOTTH_MAIL_OUTBOUND_POLICY_URL":                    "http://127.0.0.1/internal/v1/postfix/outbound-policy",
 	}
 	sink, err := notificationSinkFor(plugin.FirstEmailName, func(name string) string { return env[name] })
 	if err != nil {
@@ -71,6 +81,7 @@ func TestNotificationSinkForSignedEmailBuildsWorkingAdapter(t *testing.T) {
 	}
 	smtp := &pluginDirectCaptureSMTP{}
 	emailSink.backend.SMTP = smtp
+	emailSink.backend.Policy = pluginAllowPolicy{}
 	result, err := emailSink.SendAlert(context.Background(), notification.Alert{ID: "direct-alert", Class: "backup.failure", Severity: notification.SeverityCritical, Title: "Backup failed", Summary: "verification failed"})
 	if err != nil || result.Status != notification.StatusDelivered || smtp.calls != 1 {
 		t.Fatalf("direct signed email adapter result=%#v err=%v SMTP calls=%d", result, err, smtp.calls)
@@ -93,6 +104,8 @@ func TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAnd
 	now := time.Unix(1700000000, 0).UTC()
 	_, keyPath, fingerprint := writePluginSigningKey(t, now)
 	smtpAddr, captures := startPluginCaptureSMTP(t)
+	policyServer := startPluginAllowPolicyServer(t)
+	defer policyServer.Close()
 	endpoint := reservePluginEndpoint(t)
 	logPath, stop := startPluginProcess(t, endpoint, map[string]string{
 		"GOTTH_MAIL_PLUGIN_NAME":                            plugin.FirstEmailName,
@@ -103,6 +116,7 @@ func TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAnd
 		"GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT": fingerprint,
 		"GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE":    keyPath,
 		"GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR":           smtpAddr,
+		"GOTTH_MAIL_OUTBOUND_POLICY_URL":                    policyServer.URL,
 	})
 	defer stop()
 	conn, err := waitForPluginProcess(endpoint, "tok", 10*time.Second)
@@ -199,6 +213,31 @@ func TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAnd
 	if _, err := client.SendPrompt(ctx, &pluginv1.SendPromptRequest{Id: "prompt-email-1", CorrelationId: "corr-email-1"}); status.Code(err) != codes.Unimplemented {
 		t.Fatalf("signed email prompt error = %v, want unimplemented", err)
 	}
+}
+
+type pluginAllowPolicy struct{}
+
+func (pluginAllowPolicy) Decide(context.Context, string, outboundpolicy.EnforcementRequest) (outboundpolicy.Decision, error) {
+	return outboundpolicy.Decision{Action: outboundpolicy.ActionOK, Reason: outboundpolicy.ReasonUnrestricted}, nil
+}
+
+func startPluginAllowPolicyServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request outboundpolicy.EnforcementRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if request.SystemSenderID != "system:alerts@example.test" {
+			http.Error(w, "bad authority", http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"correlation_id": r.Header.Get("X-Correlation-ID"),
+			"decision":       "ok", "reason": "outbound_scope_unrestricted",
+		})
+	}))
 }
 
 func reservePluginEndpoint(t *testing.T) string {

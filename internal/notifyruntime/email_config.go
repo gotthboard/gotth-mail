@@ -43,6 +43,7 @@ type EmailConfig struct {
 	SMTPHelloName string
 	SMTPTimeout   time.Duration
 	Now           func() time.Time
+	Policy        webmail.OutboundPolicyEvaluator
 }
 
 func NewSignedEmailBackend(c EmailConfig) (SignedEmailBackend, error) {
@@ -65,6 +66,9 @@ func NewSignedEmailBackend(c EmailConfig) (SignedEmailBackend, error) {
 	if err := validateSMTPAddress(c.SMTPAddr); err != nil {
 		return SignedEmailBackend{}, err
 	}
+	if c.Policy == nil {
+		return SignedEmailBackend{}, errors.New("signed email outbound policy evaluator required")
+	}
 	clock := func() time.Time { return time.Now().UTC() }
 	if c.Now != nil {
 		clock = func() time.Time { return c.Now().UTC() }
@@ -85,6 +89,7 @@ func NewSignedEmailBackend(c EmailConfig) (SignedEmailBackend, error) {
 		Signer:             material,
 		Verifier:           material,
 		Resolver:           material,
+		Policy:             c.Policy,
 		Now:                clock,
 	}, nil
 }

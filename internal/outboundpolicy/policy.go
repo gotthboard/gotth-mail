@@ -109,15 +109,20 @@ func recipientDomain(raw string) (string, error) {
 	if len(trimmed) == 0 || len(trimmed) > maxEnvelopeRecipientBytes {
 		return "", errors.New("invalid envelope recipient")
 	}
-	parsed, err := mail.ParseAddress(trimmed)
-	if err != nil || parsed.Name != "" || parsed.Address != trimmed {
+	at := strings.LastIndexByte(trimmed, '@')
+	if at <= 0 || at == len(trimmed)-1 {
 		return "", errors.New("invalid envelope recipient")
 	}
-	at := strings.LastIndexByte(parsed.Address, '@')
-	if at <= 0 || at == len(parsed.Address)-1 {
+	domain, err := NormalizeDomain(trimmed[at+1:])
+	if err != nil {
 		return "", errors.New("invalid envelope recipient")
 	}
-	return NormalizeDomain(parsed.Address[at+1:])
+	canonical := trimmed[:at+1] + domain
+	parsed, err := mail.ParseAddress(canonical)
+	if err != nil || parsed.Name != "" || parsed.Address != canonical {
+		return "", errors.New("invalid envelope recipient")
+	}
+	return domain, nil
 }
 
 // validLongQueueID admits only the documented Postfix long-ID alphabet and
@@ -190,6 +195,9 @@ func Evaluate(req Request) Decision {
 		return Decision{Action: ActionOK, Reason: ReasonUnrestricted}
 	}
 	if len(restricted) > 1 {
+		if req.Stage == StageTransport {
+			return Decision{Action: ActionDefer, Reason: ReasonPolicyHold, Revisions: restricted}
+		}
 		return Decision{Action: ActionReject, Reason: ReasonCrossDomainConflict, Revisions: restricted}
 	}
 	for domain := range restricted {

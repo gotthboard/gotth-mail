@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 )
 
 type Message struct {
@@ -172,6 +173,11 @@ type Sender struct {
 	Signer   OpenPGPSigner
 	Resolver SenderIdentityResolver
 	Audit    audit.Writer
+	Policy   OutboundPolicyEvaluator
+}
+
+type OutboundPolicyEvaluator interface {
+	Decide(context.Context, string, outboundpolicy.EnforcementRequest) (outboundpolicy.Decision, error)
 }
 
 type memoryDraftStore struct{ drafts *map[string]Draft }
@@ -298,6 +304,11 @@ func (s *Sender) DraftContext(ctx context.Context, id string) (Draft, bool, erro
 	return s.draftStore().Draft(ctx, id)
 }
 
+// Submit applies atomic outbound policy before signing or SMTP, then preserves
+// the existing exact-sender and delivery-acceptance boundaries.
+// Complexity: time O(m+a), Omega(m), tight Theta(m+a); auxiliary space O(m+a),
+// Omega(m), where m is bounded MIME bytes and a is attachment bytes; policy,
+// signing, draft-store, audit, and SMTP I/O costs are additive.
 func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 	d, ok, err := s.DraftContext(ctx, id)
 	if err != nil {
@@ -315,8 +326,23 @@ func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 	if s.Resolver == nil {
 		return Draft{}, errors.New("exact sender resolver required")
 	}
+	if s.Policy == nil {
+		return Draft{}, errors.New("outbound policy evaluator required")
+	}
 	if _, err := mail.ParseAddress(d.To); err != nil {
 		return Draft{}, errors.New("invalid recipient")
+	}
+	policyDecision, policyErr := s.Policy.Decide(ctx, "webmail-policy:"+d.ID, outboundpolicy.EnforcementRequest{
+		Stage:                outboundpolicy.StageSubmission,
+		AuthenticatedMailbox: d.From,
+		EnvelopeSender:       d.From,
+		Recipient:            d.To,
+	})
+	if policyErr != nil || policyDecision.Action != outboundpolicy.ActionOK {
+		s.audit(ctx, d, "failure", "outbound_policy_"+string(policyDecision.Reason), SignatureStatus{})
+		d.State = "failed"
+		_ = s.putDraft(ctx, d)
+		return d, errors.New("outbound policy rejected submission")
 	}
 	if d.SigningFingerprint == "" {
 		s.audit(ctx, d, "failure", "openpgp signing identity required", SignatureStatus{})

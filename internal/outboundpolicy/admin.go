@@ -53,9 +53,10 @@ type policyQueryer interface {
 
 // Preview computes a confirmation digest from the current locked-state inputs
 // without mutating policy. Apply recomputes the same plan transactionally.
-// Complexity: worst-case time O(b), Omega(1), tight Theta(b); auxiliary space
-// O(j), Omega(1), where b is bounded total target bytes and j is the largest
-// bounded target document; delegated costs are one domain query and one scan.
+// Complexity: process time O(b), Omega(1), tight worst-case Theta(b); database
+// time adds O(q*s+r); auxiliary space O(j), Omega(1), where b is bounded alias
+// target bytes, j is one target document, q is queue messages, s their bounded
+// sources, and r their recipients.
 func (s AdminService) Preview(ctx context.Context, domain string, requested Scope) (ChangePlan, error) {
 	if s.DB == nil {
 		return ChangePlan{}, errors.New("outbound policy database is unavailable")
@@ -66,9 +67,9 @@ func (s AdminService) Preview(ctx context.Context, domain string, requested Scop
 // Apply serializes one revision-bound scope change and its redacted audit
 // event. Audit failure rolls back; commit failure is returned without claiming
 // success.
-// Complexity: worst-case time O(b), Omega(1), tight Theta(b); auxiliary space
-// O(j), Omega(1), where b is bounded total target bytes and j is the largest
-// bounded target document; database locking, audit, and commit are additive.
+// Complexity: process time O(b), Omega(1), tight worst-case Theta(b); database
+// time adds O(q*s+r); auxiliary space O(j), Omega(1), with Preview variables;
+// database locking, audit, and commit are additive.
 func (s AdminService) Apply(ctx context.Context, actor audit.ActorRef, correlationID, domain string, requested Scope, confirmation string) (ChangeResult, error) {
 	if s.DB == nil {
 		return ChangeResult{}, errors.New("outbound policy database is unavailable")
@@ -138,9 +139,8 @@ func (s AdminService) now() time.Time {
 
 // loadChangePlan reads the authoritative domain revision and the current alias
 // impact; lock requests a row lock for transactional confirmation.
-// Complexity: worst-case time O(b), Omega(1), tight Theta(b); auxiliary space
-// O(j), Omega(1), where b is bounded total target bytes and j is the largest
-// bounded target document.
+// Complexity: process time O(b), Omega(1), tight worst-case Theta(b); database
+// time adds O(q*s+r); auxiliary space O(j), Omega(1), with Preview variables.
 func loadChangePlan(ctx context.Context, queryer policyQueryer, rawDomain string, requested Scope, lock bool) (ChangePlan, error) {
 	if !validScope(requested) {
 		return ChangePlan{}, errors.New("invalid outbound scope")
@@ -170,11 +170,57 @@ func loadChangePlan(ctx context.Context, queryer policyQueryer, rawDomain string
 	if err != nil {
 		return ChangePlan{}, err
 	}
+	plan.Impact.QueuedRecipients, err = loadQueuedRecipientImpact(ctx, queryer, plan.DomainID, plan.Domain)
+	if err != nil {
+		return ChangePlan{}, err
+	}
 	plan.Digest, err = planDigest(plan)
 	if err != nil {
 		return ChangePlan{}, err
 	}
 	return plan, nil
+}
+
+// loadQueuedRecipientImpact counts active queued recipients outside the exact
+// domain when any immutable mailbox or expansion-source object belongs to that
+// domain. Any unresolved source fails the preview closed.
+// Complexity: database time O(q*s+r), Omega(1), tight worst-case Theta(q*s+r);
+// auxiliary process space O(1), Omega(1), where q is active queue messages, s
+// is bounded sources per message, and r is their recipient rows.
+func loadQueuedRecipientImpact(ctx context.Context, queryer policyQueryer, domainID, domain string) (int, error) {
+	var unresolved int64
+	if err := queryer.QueryRowContext(ctx, `SELECT count(*)
+FROM outbound_queue_sources s
+JOIN outbound_queue_messages q ON q.queue_id=s.queue_id
+LEFT JOIN mailboxes m ON s.source_kind IN ('authenticated_mailbox','envelope_sender') AND m.id::text=s.object_id
+LEFT JOIN aliases a ON s.source_kind IN ('alias','forward','list','catch_all') AND a.id::text=s.object_id
+LEFT JOIN outbound_system_senders y ON s.source_kind='system_sender' AND y.id=s.object_id
+WHERE q.hold_state <> 'released' AND m.id IS NULL AND a.id IS NULL AND y.id IS NULL`).Scan(&unresolved); err != nil {
+		return 0, err
+	}
+	if unresolved != 0 {
+		return 0, errors.New("active outbound queue contains unresolved policy sources")
+	}
+	var count int64
+	if err := queryer.QueryRowContext(ctx, `SELECT count(*)
+FROM outbound_queue_recipients r
+JOIN outbound_queue_messages q ON q.queue_id=r.queue_id
+WHERE q.hold_state <> 'released'
+  AND r.recipient_domain <> $2
+  AND EXISTS (
+      SELECT 1
+      FROM outbound_queue_sources s
+      LEFT JOIN mailboxes m ON s.source_kind IN ('authenticated_mailbox','envelope_sender') AND m.id::text=s.object_id
+      LEFT JOIN aliases a ON s.source_kind IN ('alias','forward','list','catch_all') AND a.id::text=s.object_id
+      LEFT JOIN outbound_system_senders y ON s.source_kind='system_sender' AND y.id=s.object_id
+      WHERE s.queue_id=q.queue_id AND (m.domain_id=$1 OR a.domain_id=$1 OR y.domain_id=$1)
+  )`, domainID, domain).Scan(&count); err != nil {
+		return 0, err
+	}
+	if count < 0 || uint64(count) > uint64(^uint(0)>>1) {
+		return 0, errors.New("outbound queue recipient impact exceeds process integer range")
+	}
+	return int(count), nil
 }
 
 // loadAliasImpact counts only enabled source aliases that currently expand to

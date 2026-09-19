@@ -6,6 +6,7 @@ services:
       GOTTH_MAIL_LISTEN: ":8080"
       GOTTH_MAIL_REFERENCE_FIXTURE: "1"
       GOTTH_MAIL_POSTFIX_POLICY_LISTEN: ":10025"
+      GOTTH_MAIL_NOTIFICATION_EMAIL_FROM: ${GOTTH_MAIL_NOTIFICATION_EMAIL_FROM:-}
     ports:
       - "8080:8080"
     depends_on:
@@ -228,12 +229,14 @@ services:
       GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE: /run/secrets/notification-signing-key.asc
       # NetSMTPSubmitter is plaintext/no-auth; runtime confines this to a trusted local relay.
       GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR: ${GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR:-postfix:25}
+      GOTTH_MAIL_OUTBOUND_POLICY_URL: http://gotth-mail:8080/internal/v1/postfix/outbound-policy
     volumes:
       - type: bind
         source: ${GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_SOURCE:-./secrets/notification-signing-key.asc}
         target: /run/secrets/notification-signing-key.asc
         read_only: true
     depends_on:
+      - gotth-mail
       - postfix
 volumes:
   backup-data:

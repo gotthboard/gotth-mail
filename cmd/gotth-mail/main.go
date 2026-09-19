@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/diag"
 	"forgejo/gotthboard/gotth-mail/internal/httpui"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/version"
@@ -164,6 +166,18 @@ func configureDatabaseFromEnv(ctx context.Context, server *api.Server) (*sql.DB,
 	identityService.Audit = audit.SQLWriter{DB: db}
 	server.OIDCStore = authn.SQLStore{DB: db}
 	server.Identity = identityService
+	policy := &outboundpolicy.EnforcementService{DB: db, Queue: outboundpolicy.QueueStore{DB: db}, HoldActor: audit.ActorRef{Type: "service", ID: "outbound-policy"}}
+	server.Daemon.OutboundPolicy = policy
+	if configuredSender := strings.TrimSpace(os.Getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_FROM")); configuredSender != "" {
+		parsed, err := mail.ParseAddress(configuredSender)
+		if err != nil {
+			return closeOnError(fmt.Errorf("parse notification system sender: %w", err))
+		}
+		id := "system:" + strings.ToLower(parsed.Address)
+		if _, err := (outboundpolicy.SystemSenderStore{DB: db}).Bind(ctx, audit.ActorRef{Type: "service", ID: "runtime-config"}, "runtime-config:notification-system-sender", id, parsed.Address); err != nil {
+			return closeOnError(fmt.Errorf("bind notification system sender: %w", err))
+		}
+	}
 	return db, nil
 }
 

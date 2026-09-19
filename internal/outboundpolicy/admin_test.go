@@ -68,6 +68,50 @@ func TestAdminPreviewAndApplyAreRevisionBoundAndAudited(t *testing.T) {
 	}
 }
 
+func TestAdminPreviewCountsExternalQueuedRecipientsFromAuthoritativeSourceIDs(t *testing.T) {
+	db := policyDB(t)
+	insertPolicyDomain(t, db)
+	mailboxID := "00000000-0000-4000-8000-000000000814"
+	if _, err := db.Exec(`INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ($1,$2,'sender',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, mailboxID, policyDomainID); err != nil {
+		t.Fatal(err)
+	}
+	queue := QueueStore{DB: db}
+	if _, _, err := queue.Register(context.Background(), QueueRegistration{
+		QueueID:            "3Pt2mN2VXxznjll",
+		ArrivalFingerprint: strings.Repeat("a", 64),
+		EnvelopeSender:     "sender@example.test",
+		Recipients:         []string{"local@example.test", "outside@example.net"},
+		Sources:            []QueueSource{{Kind: SourceAuthenticatedMailbox, ObjectID: mailboxID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := (AdminService{DB: db}).Preview(context.Background(), "example.test", ScopeSameDomainOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Impact.QueuedRecipients != 1 {
+		t.Fatalf("queued recipient impact=%d, want 1", plan.Impact.QueuedRecipients)
+	}
+}
+
+func TestAdminPreviewFailsClosedOnUnresolvedQueuedSource(t *testing.T) {
+	db := policyDB(t)
+	insertPolicyDomain(t, db)
+	queue := QueueStore{DB: db}
+	if _, _, err := queue.Register(context.Background(), QueueRegistration{
+		QueueID:            "3Pt2mN2VXxznjll",
+		ArrivalFingerprint: strings.Repeat("b", 64),
+		EnvelopeSender:     "sender@example.test",
+		Recipients:         []string{"outside@example.net"},
+		Sources:            []QueueSource{{Kind: SourceSystemSender, ObjectID: "system:alerts@example.test"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (AdminService{DB: db}).Preview(context.Background(), "example.test", ScopeSameDomainOnly); err == nil {
+		t.Fatal("unresolved queue source accepted")
+	}
+}
+
 func TestAdminApplyRejectsStaleOrWrongConfirmation(t *testing.T) {
 	db := policyDB(t)
 	insertPolicyDomain(t, db)

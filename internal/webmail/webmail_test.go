@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 )
 
 type fakeIMAP struct {
@@ -75,6 +76,18 @@ type fakeSigner struct{ fail bool }
 
 type fakeResolver struct{}
 
+type fakeOutboundPolicy struct {
+	decision outboundpolicy.Decision
+	err      error
+}
+
+func (f fakeOutboundPolicy) Decide(context.Context, string, outboundpolicy.EnforcementRequest) (outboundpolicy.Decision, error) {
+	if f.decision.Action == "" {
+		f.decision = outboundpolicy.Decision{Action: outboundpolicy.ActionOK, Reason: outboundpolicy.ReasonUnrestricted}
+	}
+	return f.decision, f.err
+}
+
 func (fakeResolver) ResolveSender(ctx context.Context, fp, from, sender string) (Identity, error) {
 	if fp == "bad" {
 		return Identity{}, errors.New("mismatched_from")
@@ -125,7 +138,7 @@ func TestIMAPFolderListReadPaginationQuotaSearch(t *testing.T) {
 func TestComposeDraftSubmitRequiresOpenPGPMIMEAndSMTP(t *testing.T) {
 	w := &audit.MemoryWriter{}
 	smtp := &fakeSMTP{}
-	s := &Sender{Audit: w, SMTP: smtp, Signer: fakeSigner{}, Resolver: fakeResolver{}, Drafts: map[string]Draft{}}
+	s := &Sender{Audit: w, SMTP: smtp, Signer: fakeSigner{}, Resolver: fakeResolver{}, Policy: fakeOutboundPolicy{}, Drafts: map[string]Draft{}}
 	d := s.SaveDraft(Draft{From: "u@example.test", To: "r@example.test", Subject: "s", Body: "body"})
 	if _, err := s.Submit(context.Background(), d.ID); err == nil {
 		t.Fatal("unsigned send accepted")
@@ -146,7 +159,7 @@ func TestComposeDraftSubmitRequiresOpenPGPMIMEAndSMTP(t *testing.T) {
 }
 func TestReplyForwardAndSendFailure(t *testing.T) {
 	smtp := &fakeSMTP{}
-	s := &Sender{SMTP: smtp, Signer: fakeSigner{fail: true}, Resolver: fakeResolver{}, Drafts: map[string]Draft{}}
+	s := &Sender{SMTP: smtp, Signer: fakeSigner{fail: true}, Resolver: fakeResolver{}, Policy: fakeOutboundPolicy{}, Drafts: map[string]Draft{}}
 	r := s.Reply(Message{ID: "m1", From: "a@example.test", Subject: "Hi"}, "u@example.test", "reply")
 	if r.ReplyTo != "m1" || !strings.HasPrefix(r.Subject, "Re:") {
 		t.Fatalf("reply=%#v", r)
@@ -162,6 +175,20 @@ func TestReplyForwardAndSendFailure(t *testing.T) {
 	}
 	if smtp.submitted {
 		t.Fatal("submitted after signing failure")
+	}
+}
+
+func TestComposeDraftPolicyRejectsAtomicallyBeforeSigningOrSMTP(t *testing.T) {
+	smtp := &fakeSMTP{}
+	s := &Sender{
+		SMTP: smtp, Signer: fakeSigner{}, Resolver: fakeResolver{},
+		Policy: fakeOutboundPolicy{decision: outboundpolicy.Decision{Action: outboundpolicy.ActionReject, Reason: outboundpolicy.ReasonRecipientForbidden}},
+		Drafts: map[string]Draft{},
+	}
+	draft := s.SaveDraft(Draft{From: "u@example.test", To: "outside@example.net", Subject: "s", Body: "body", SigningFingerprint: "fp"})
+	result, err := s.Submit(context.Background(), draft.ID)
+	if err == nil || result.State != "failed" || smtp.submitted {
+		t.Fatalf("result=%+v err=%v smtp=%v", result, err, smtp.submitted)
 	}
 }
 func TestSecurityPolicy(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/testpg"
 	"forgejo/gotthboard/gotth-mail/internal/webmail"
@@ -44,6 +45,16 @@ func (f signerFunc) SignMIME(ctx context.Context, identity webmail.Identity, msg
 }
 
 type verifierFunc func(context.Context, []byte, webmail.Identity) (webmail.SignatureStatus, error)
+
+type notificationPolicyFunc func(context.Context, string, outboundpolicy.EnforcementRequest) (outboundpolicy.Decision, error)
+
+func (f notificationPolicyFunc) Decide(ctx context.Context, correlationID string, request outboundpolicy.EnforcementRequest) (outboundpolicy.Decision, error) {
+	return f(ctx, correlationID, request)
+}
+
+func allowNotificationPolicy(context.Context, string, outboundpolicy.EnforcementRequest) (outboundpolicy.Decision, error) {
+	return outboundpolicy.Decision{Action: outboundpolicy.ActionOK, Reason: outboundpolicy.ReasonUnrestricted}, nil
+}
 
 func (f verifierFunc) VerifyExactSender(ctx context.Context, msg []byte, identity webmail.Identity) (webmail.SignatureStatus, error) {
 	return f(ctx, msg, identity)
@@ -115,6 +126,38 @@ func TestSignedEmailBackendTreatsUnsupportedSigningHashAsPermanentWithoutSMTP(t 
 	assertFailedWithoutSMTP(t, result, err, ReasonSigningHashUnsupported, smtp)
 	if result.Evidence.VerificationResult != "unsupported_signing_hash" {
 		t.Fatalf("unsupported hash evidence = %#v", result.Evidence)
+	}
+}
+
+func TestSignedEmailBackendSuppressesPolicyBlockedAutomaticMail(t *testing.T) {
+	entity := notifyTestOpenPGPEntity(t, "Notifier", "alerts@example.test")
+	identity := webmail.Identity{Address: "alerts@example.test", Fingerprint: notifyEntityFingerprint(entity)}
+	smtp := &captureSMTP{}
+	backend := signedEmailTestBackend(entity, identity, smtp)
+	backend.Policy = notificationPolicyFunc(func(_ context.Context, _ string, request outboundpolicy.EnforcementRequest) (outboundpolicy.Decision, error) {
+		if request.SystemSenderID != "system:alerts@example.test" || request.EnvelopeSender != identity.Address || request.Recipient != "ops@example.test" {
+			t.Fatalf("policy request=%+v", request)
+		}
+		return outboundpolicy.Decision{Action: outboundpolicy.ActionReject, Reason: outboundpolicy.ReasonRecipientForbidden}, nil
+	})
+	result, err := backend.SendAlert(context.Background(), notification.Alert{ID: "policy-block", Class: "backup.failure", Title: "Backup failed", Summary: "failed"})
+	assertFailedWithoutSMTP(t, result, err, ReasonOutboundPolicyBlocked, smtp)
+	if result.Evidence.VerificationResult != "policy_blocked" {
+		t.Fatalf("evidence=%+v", result.Evidence)
+	}
+}
+
+func TestSignedEmailBackendDefersWhenPolicyIsUnavailable(t *testing.T) {
+	entity := notifyTestOpenPGPEntity(t, "Notifier", "alerts@example.test")
+	identity := webmail.Identity{Address: "alerts@example.test", Fingerprint: notifyEntityFingerprint(entity)}
+	smtp := &captureSMTP{}
+	backend := signedEmailTestBackend(entity, identity, smtp)
+	backend.Policy = notificationPolicyFunc(func(context.Context, string, outboundpolicy.EnforcementRequest) (outboundpolicy.Decision, error) {
+		return outboundpolicy.Decision{Action: outboundpolicy.ActionDefer, Reason: outboundpolicy.ReasonUnavailable}, errors.New("policy database unavailable")
+	})
+	result, err := backend.SendAlert(context.Background(), notification.Alert{ID: "policy-down", Class: "backup.failure", Title: "Backup failed", Summary: "failed"})
+	if err == nil || result.Status != notification.StatusFailedRetryable || result.Reason != ReasonOutboundPolicyDown || len(smtp.bodies) != 0 {
+		t.Fatalf("result=%+v err=%v smtp=%d", result, err, len(smtp.bodies))
 	}
 }
 
@@ -401,7 +444,8 @@ func signedEmailTestBackend(entity *protonpgp.Entity, identity webmail.Identity,
 		Resolver: resolverFunc(func(context.Context, string, string, string) (webmail.Identity, error) {
 			return identity, nil
 		}),
-		Now: fixedNotifyPGPTime,
+		Policy: notificationPolicyFunc(allowNotificationPolicy),
+		Now:    fixedNotifyPGPTime,
 	}
 }
 

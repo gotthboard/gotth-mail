@@ -67,12 +67,17 @@ func notificationSinkFor(name string, getenv func(string) string) (plugin.Notifi
 	case plugin.FirstNotifyName:
 		return plugin.LocalNotificationSink{}, nil
 	case plugin.FirstEmailName:
+		policy, err := notifyruntime.NewHTTPPolicyClient(getenv("GOTTH_MAIL_OUTBOUND_POLICY_URL"))
+		if err != nil {
+			return nil, fmt.Errorf("configure %s policy: %w", plugin.FirstEmailName, err)
+		}
 		backend, err := notifyruntime.NewSignedEmailBackend(notifyruntime.EmailConfig{
 			From:               getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_FROM"),
 			To:                 getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_TO"),
 			SigningFingerprint: getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT"),
 			PrivateKeyFile:     getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE"),
 			SMTPAddr:           getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR"),
+			Policy:             policy,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("configure %s: %w", plugin.FirstEmailName, err)

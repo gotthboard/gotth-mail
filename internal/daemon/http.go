@@ -2,8 +2,12 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
+
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 )
 
 func (s Service) Register(mux *http.ServeMux) {
@@ -47,6 +51,15 @@ func (s Service) Register(mux *http.ServeMux) {
 		var req SenderLoginRequest
 		if decode(w, r, &req) {
 			write(w, s.PostfixSenderPolicy(correlationHeader(r), req))
+		}
+	})
+	mux.HandleFunc("/internal/v1/postfix/outbound-policy", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, http.MethodPost) {
+			return
+		}
+		var req outboundpolicy.EnforcementRequest
+		if decodeStrict(w, r, &req) {
+			write(w, s.PostfixOutboundPolicy(r.Context(), correlationHeader(r), req))
 		}
 	})
 	mux.HandleFunc("/internal/v1/postfix/rate-limit/", func(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +148,25 @@ func method(w http.ResponseWriter, r *http.Request, want string) bool {
 	return true
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(v); err != nil {
+		write(w, Response{CorrelationID: correlationHeader(r), Decision: Error, Reason: "malformed_json", Message: "error: malformed json"})
+		return false
+	}
+	return true
+}
+
+// decodeStrict bounds one internal request, rejects unknown authority fields,
+// and requires exactly one JSON value.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(n),
+// Omega(1), where n is request bytes capped at 1 MiB.
+func decodeStrict(w http.ResponseWriter, r *http.Request, v any) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(v); err != nil {
+		write(w, Response{CorrelationID: correlationHeader(r), Decision: Error, Reason: "malformed_json", Message: "error: malformed json"})
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		write(w, Response{CorrelationID: correlationHeader(r), Decision: Error, Reason: "malformed_json", Message: "error: malformed json"})
 		return false
 	}

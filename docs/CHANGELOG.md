@@ -21,9 +21,74 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 07:00 CDT — Start same-domain outbound enforcement
+### 2026-09-19 08:15 CDT — Add durable outbound queue enforcement boundaries
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `migrations/0009_outbound_queue.sql` and embedded migration parity
+- `internal/outboundpolicy/`
+- daemon, webmail, notification, and plugin policy wiring
+- reference Compose configuration and focused contract tests
+- same-domain feature evidence and changelog
+
+Explanation:
+
+Added durable queue provenance, immutable authoritative source identities,
+policy-revision snapshots, whole-message hold state, and idempotent hold
+reconciliation. Queue registration binds a strict Postfix long queue ID to an
+arrival fingerprint, canonical envelope sender, complete remaining-recipient
+set, and authoritative local source object IDs. A reused or changing queue ID,
+missing source, corrupt state, or policy uncertainty now fails closed.
+
+Added a narrow Postfix boundary that reads bounded `postqueue -j` JSON Lines,
+derives and rechecks arrival identity, and can invoke only
+`postsuper -h <validated-long-queue-id>` without a shell. The reconciler locks
+one queue message, records intent before the external helper, verifies metadata
+before and after the hold, records retryable reconciliation errors, and never
+claims a partial database/external command transaction.
+
+Submission decisions now resolve authenticated mailboxes, admitted envelope
+senders, durable system senders, and expansion objects from PostgreSQL rather
+than accepting caller-supplied governing domains. Transport decisions ignore
+caller authority, reload immutable queue provenance, re-evaluate current policy
+revisions, and mark newly forbidden messages for a policy hold. Activation
+preview now includes durable queued-recipient impact and refuses unresolved
+active sources.
+
+Webmail rejects the complete draft before signing or SMTP if any recipient is
+forbidden. Signed-email notifications use a durable system-sender identity,
+suppress policy-blocked delivery without generating another message, and defer
+when policy is unavailable. The standalone notification plugin calls the
+bounded internal policy endpoint. The daemon exposes the same closed decision
+contract and rejects caller-supplied authority fields.
+
+Verification:
+
+- `go test -p=1 ./internal/notifyruntime ./cmd/gotth-mail-plugin ./cmd/gotth-mail ./internal/outboundpolicy ./internal/daemon ./internal/render ./internal/webmail ./internal/store -count=1`
+- `go vet` passed for the same packages
+- `go test -p=1 ./... -count=1`, repository-wide `go vet ./...`, and builds
+  of all three commands passed on the development host
+- focused race tests passed for the changed runtime packages and commands
+- PostgreSQL tests cover registration identity, immutable provenance, source
+  resolution, transport re-evaluation, activation races, audit atomicity, and
+  hold reconciliation success/failure/idempotence
+- command-boundary tests cover fixed executable names/arguments, output bounds,
+  malformed/changing queue data, helper failure, and metadata mismatch
+- `git diff --check`
+
+Risks / non-goals:
+
+- this remains an in-progress checkpoint; actual generated Postfix policy and
+  final-transport wiring, container queue proof, explicit release, diagnostics,
+  restore proof, and the full hostile-path matrix are still open
+- no live queue was held or released and no deployment, DNS, credential, tag,
+  release, product-main merge, or external message occurred
+
+### 2026-09-19 07:00 CDT — Start same-domain outbound enforcement
+
+Commit: `50d618d`
 
 Affected files:
 
