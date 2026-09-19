@@ -15,6 +15,7 @@ import (
 type fakeHolder struct {
 	holdCalls    int
 	releaseCalls int
+	snapshotErr  error
 }
 
 func (f *fakeHolder) Hold(context.Context, string) error {
@@ -28,7 +29,25 @@ func (f *fakeHolder) Release(context.Context, string) error {
 }
 
 func (f *fakeHolder) Snapshot(context.Context, string) (outboundpolicy.QueueSnapshot, error) {
-	return outboundpolicy.QueueSnapshot{Digest: strings.Repeat("a", 64)}, nil
+	return outboundpolicy.QueueSnapshot{Digest: strings.Repeat("a", 64)}, f.snapshotErr
+}
+
+func TestHelperClassifiesMissingQueueSnapshot(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	const releaseToken = "abcdef0123456789abcdef0123456789"
+	holder := &fakeHolder{snapshotErr: outboundpolicy.ErrQueueIDNotFound}
+	helper, err := NewHelper(fakeInspector{metadata: gateMetadata()}, holder, holder, holder, token, releaseToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"queue_id": gateMetadata().QueueID})
+	request := httptest.NewRequest(http.MethodPost, "/v1/queue/summary", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	helper.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("missing queue snapshot status=%d body=%q", response.Code, response.Body.String())
+	}
 }
 func (f *fakeHolder) Flush(context.Context) error         { return nil }
 func (f *fakeHolder) Retry(context.Context, string) error { return nil }

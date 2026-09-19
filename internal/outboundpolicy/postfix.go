@@ -14,6 +14,8 @@ import (
 	"sync"
 )
 
+var ErrQueueIDNotFound = errors.New("Postfix queue ID not found")
+
 const (
 	defaultPostfixOutputBytes = 64 << 20
 	maxPostfixOutputBytes     = 64 << 20
@@ -117,7 +119,7 @@ func (b PostfixBoundary) Snapshot(ctx context.Context, queueID string) (QueueSna
 		return QueueSnapshot{}, errors.New("Postfix queue snapshot output exceeded line limit")
 	}
 	if queueID != "" && len(entries) == 0 {
-		return QueueSnapshot{}, errors.New("Postfix queue ID not found")
+		return QueueSnapshot{}, ErrQueueIDNotFound
 	}
 	sort.Strings(entries)
 	result.Total = len(entries)
@@ -137,7 +139,14 @@ func (b PostfixBoundary) Retry(ctx context.Context, queueID string) error {
 	if !validLongQueueID(queueID) {
 		return errors.New("invalid Postfix retry request")
 	}
-	return b.runPostqueueMutation(ctx, []string{"-i", queueID})
+	err := b.runPostqueueMutation(ctx, []string{"-i", queueID})
+	if err == nil {
+		return nil
+	}
+	if _, snapshotErr := b.Snapshot(ctx, queueID); errors.Is(snapshotErr, ErrQueueIDNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (b PostfixBoundary) runPostqueueMutation(ctx context.Context, args []string) error {

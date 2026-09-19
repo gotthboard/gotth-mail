@@ -73,6 +73,17 @@ the API/prompt/webhook/lease/helper path, injects a post-flush ambiguous crash,
 recovers it through an idempotent second flush, proves delivery, durable audit,
 and replay rejection.
 
+A third cold pass found six remaining fail-closed defects: exact retry relied
+on undocumented repeatability, expired executing approvals could wedge,
+command and execution paths tolerated missing audit writers, unsupported
+Telegram updates escaped identity-aware audit, approval creation attributed
+the prompted actor instead of the authenticated initiator, and a missing gRPC
+notification sink silently fell back to a local success implementation. This
+repair reconciles ambiguous exact retry by checking whether the queue ID still
+exists, expires stale executions, makes audit dependencies mandatory, records
+fixed-code denied events for unsupported updates, preserves initiator
+attribution, and rejects unwired notification servers as unavailable.
+
 Verification:
 
 - full serial Go suite and focused race suite

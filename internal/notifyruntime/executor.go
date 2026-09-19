@@ -36,7 +36,7 @@ type ExecutionResult struct {
 }
 
 func (e ApprovalExecutor) ExecuteTelegramApproval(ctx context.Context, approvalID, bindingToken string, actor notification.TransportActor) (ExecutionResult, error) {
-	if e.Mapper == nil || e.Approvals == nil || e.Authorizer == nil {
+	if e.Mapper == nil || e.Approvals == nil || e.Authorizer == nil || e.Audit == nil {
 		return ExecutionResult{}, errors.New("approval execution dependencies required")
 	}
 	mapped, ok, err := e.Mapper.Map(ctx, actor)
@@ -169,9 +169,6 @@ func (e ApprovalExecutor) lease() time.Duration {
 }
 
 func (e ApprovalExecutor) writeAudit(ctx context.Context, r notification.ApprovalRequest, result, code string) error {
-	if e.Audit == nil {
-		return nil
-	}
 	return e.Audit.Write(ctx, audit.Event{Actor: audit.ActorRef{Type: r.Actor.Type, ID: r.Actor.ID}, Action: "notification.approval.execute", Resource: audit.ResourceRef{Type: r.Resource.Type, ID: r.Resource.ID}, CorrelationID: r.CorrelationID, Result: result, ErrorCode: code, AfterRedacted: map[string]any{"approval_id": r.ID, "approved_action": string(r.Action)}})
 }
 

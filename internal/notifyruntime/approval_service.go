@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/authz"
@@ -26,6 +27,7 @@ type PromptSender interface {
 
 type TelegramApprovalRequest struct {
 	TransportActor notification.TransportActor
+	Initiator      authz.Actor
 	Action         authz.Action
 	Resource       authz.Resource
 	CorrelationID  string
@@ -46,6 +48,9 @@ type ApprovalService struct {
 func (s ApprovalService) RequestTelegramApproval(ctx context.Context, input TelegramApprovalRequest) (notification.ApprovalRequest, error) {
 	if s.Mapper == nil || s.Authorizer == nil || s.Store == nil || s.Prompter == nil || s.Queue == nil {
 		return notification.ApprovalRequest{}, errors.New("approval request dependencies required")
+	}
+	if strings.TrimSpace(input.Initiator.Type) == "" || strings.TrimSpace(input.Initiator.ID) == "" {
+		return notification.ApprovalRequest{}, errors.New("approval initiator required")
 	}
 	if input.Action != "queue:flush" && input.Action != "queue:retry" {
 		return notification.ApprovalRequest{}, errors.New("unsupported approval action")
@@ -72,7 +77,7 @@ func (s ApprovalService) RequestTelegramApproval(ctx context.Context, input Tele
 	if err != nil {
 		return notification.ApprovalRequest{}, err
 	}
-	created, err := s.Store.Create(ctx, notification.ApprovalRequest{TransportActor: input.TransportActor, Actor: actor, Action: input.Action, Resource: input.Resource, RequestHash: requestHash, CorrelationID: input.CorrelationID, ExpiresAt: input.ExpiresAt}, now)
+	created, err := s.Store.Create(ctx, notification.ApprovalRequest{TransportActor: input.TransportActor, Initiator: input.Initiator, Actor: actor, Action: input.Action, Resource: input.Resource, RequestHash: requestHash, CorrelationID: input.CorrelationID, ExpiresAt: input.ExpiresAt}, now)
 	if err != nil {
 		return notification.ApprovalRequest{}, err
 	}

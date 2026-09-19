@@ -8,15 +8,31 @@ import (
 )
 
 type fakeCommandRunner struct {
-	output []byte
-	err    error
-	path   string
-	args   []string
+	output  []byte
+	err     error
+	outputs [][]byte
+	errs    []error
+	calls   int
+	path    string
+	args    []string
 }
 
 func (f *fakeCommandRunner) Run(_ context.Context, path string, args []string, _ int) ([]byte, error) {
 	f.path = path
 	f.args = append([]string(nil), args...)
+	index := f.calls
+	f.calls++
+	if index < len(f.outputs) || index < len(f.errs) {
+		var output []byte
+		var err error
+		if index < len(f.outputs) {
+			output = f.outputs[index]
+		}
+		if index < len(f.errs) {
+			err = f.errs[index]
+		}
+		return append([]byte(nil), output...), err
+	}
 	return append([]byte(nil), f.output...), f.err
 }
 
@@ -87,6 +103,24 @@ func TestPostfixBoundarySnapshotsAndUsesDocumentedDeliveryScheduling(t *testing.
 	}
 	if err := boundary.Retry(context.Background(), "ALL"); err == nil {
 		t.Fatal("unsafe retry selector accepted")
+	}
+}
+
+func TestPostfixBoundaryRetryAcceptsQueueIDRemovedAfterAmbiguousSchedule(t *testing.T) {
+	runner := &fakeCommandRunner{outputs: [][]byte{nil, nil}, errs: []error{errors.New("ambiguous postqueue failure"), nil}}
+	boundary := PostfixBoundary{Runner: runner, PostqueuePath: "/usr/sbin/postqueue", InstanceID: "mail.example.test", MaxOutputBytes: 1 << 20}
+	if err := boundary.Retry(context.Background(), "3Pt2mN2VXxznjll"); err != nil {
+		t.Fatalf("vanished exact queue ID was not admitted as completed scheduling: %v", err)
+	}
+	if runner.calls != 2 || len(runner.args) != 1 || runner.args[0] != "-j" {
+		t.Fatalf("retry recovery calls=%d final args=%q", runner.calls, runner.args)
+	}
+
+	line := []byte(`{"queue_name":"deferred","queue_id":"3Pt2mN2VXxznjll","arrival_time":1700000000,"message_size":512,"sender":"sender@example.test","recipients":[{"address":"outside@example.test"}]}` + "\n")
+	runner = &fakeCommandRunner{outputs: [][]byte{nil, line}, errs: []error{errors.New("postqueue failed"), nil}}
+	boundary.Runner = runner
+	if err := boundary.Retry(context.Background(), "3Pt2mN2VXxznjll"); err == nil {
+		t.Fatal("failed schedule was hidden while the queue ID still existed")
 	}
 }
 

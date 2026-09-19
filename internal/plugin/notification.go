@@ -56,7 +56,7 @@ func (s NotificationServer) SendAlert(ctx context.Context, in *pluginv1.SendAler
 	}
 	sink := s.Sink
 	if sink == nil {
-		sink = LocalNotificationSink{}
+		return nil, status.Error(codes.Unavailable, "notification delivery unavailable")
 	}
 	result, err := sink.SendAlert(ctx, protoAlert(in.GetAlert()))
 	reason := notification.SanitizeDeliveryReason(result.Reason)
@@ -120,7 +120,7 @@ func (s NotificationServer) SendPrompt(ctx context.Context, in *pluginv1.SendPro
 	}
 	sink := s.Sink
 	if sink == nil {
-		sink = LocalNotificationSink{}
+		return nil, status.Error(codes.Unavailable, "notification delivery unavailable")
 	}
 	result, err := sink.SendPrompt(ctx, NotificationPrompt{ID: in.GetId(), CorrelationID: in.GetCorrelationId(), Transport: in.GetTransport(), ExternalActorID: in.GetExternalActorId(), ActorType: in.GetActorType(), ActorID: in.GetActorId(), Action: in.GetAction(), ResourceType: in.GetResourceType(), ResourceID: in.GetResourceId(), RequestHash: in.GetRequestHash(), ExpiresAt: in.GetExpiresAt(), Title: in.GetTitle(), Summary: in.GetSummary(), ConfirmationToken: in.GetConfirmationToken()})
 	if err != nil {

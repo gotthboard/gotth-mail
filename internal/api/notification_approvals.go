@@ -69,6 +69,7 @@ func (s Server) registerNotificationApprovals(mux *http.ServeMux, ids *identity.
 			}
 			created, err := s.ApprovalService.RequestTelegramApproval(r.Context(), notifyruntime.TelegramApprovalRequest{
 				TransportActor: notification.TransportActor{Transport: "telegram", ExternalID: in.ExternalActorID},
+				Initiator:      initiator,
 				Action:         action, Resource: resource, CorrelationID: correlationID,
 				ExpiresAt: time.Now().UTC().Add(5 * time.Minute), Title: title, Summary: summary,
 			})

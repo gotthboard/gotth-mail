@@ -58,8 +58,8 @@ func (s CommandService) Run(ctx context.Context, req CommandRequest) (CommandRes
 	if s.Authorizer == nil {
 		return CommandResponse{}, errors.New("notification command authorizer required")
 	}
-	if s.Provider == nil {
-		return CommandResponse{}, errors.New("notification command provider required")
+	if s.Provider == nil || s.Audit == nil {
+		return CommandResponse{}, errors.New("notification command provider and audit writer required")
 	}
 	cmd, err := commandSpec(req.Command)
 	if err != nil {
@@ -122,14 +122,31 @@ func commandSpec(c ReadOnlyCommand) (readCommandSpec, error) {
 }
 
 func (s CommandService) audit(ctx context.Context, actor authz.Actor, req CommandRequest, cmd readCommandSpec, result string, err error) error {
-	if s.Audit == nil {
-		return nil
-	}
 	e := audit.Event{Time: s.now(), Actor: audit.ActorRef{Type: actor.Type, ID: actor.ID}, Action: "notification.command." + string(req.Command), Resource: audit.ResourceRef{Type: cmd.Resource.Type, ID: cmd.Resource.ID}, CorrelationID: cleanToken(req.CorrelationID, 128), Result: result, AfterRedacted: map[string]any{"transport": req.TransportActor.Transport, "external_actor_id": req.TransportActor.ExternalID, "authorized_action": string(cmd.Action)}}
 	if err != nil {
 		e.ErrorCode = boundLine(err.Error(), 80)
 	}
 	return s.Audit.Write(ctx, e)
+}
+
+func (s CommandService) RejectUnsupported(ctx context.Context, transportActor TransportActor, correlationID, kind string) error {
+	if s.Mapper == nil || s.Audit == nil {
+		return errors.New("notification command mapper and audit writer required")
+	}
+	actor, ok, mapErr := s.Mapper.Map(ctx, transportActor)
+	if mapErr != nil || !ok {
+		actor = authz.Actor{Type: "unmapped", ID: transportActor.ExternalID}
+	}
+	kind = cleanToken(kind, 40)
+	if kind != "command" && kind != "callback" && kind != "update" {
+		kind = "update"
+	}
+	err := errors.New("unsupported_telegram_" + kind)
+	event := audit.Event{Time: s.now(), Actor: audit.ActorRef{Type: actor.Type, ID: actor.ID}, Action: "notification.telegram.unsupported", Resource: audit.ResourceRef{Type: "telegram_update", ID: cleanToken(correlationID, 128)}, CorrelationID: cleanToken(correlationID, 128), Result: "denied", ErrorCode: err.Error(), AfterRedacted: map[string]any{"transport": transportActor.Transport, "external_actor_id": transportActor.ExternalID, "mapped": ok && mapErr == nil}}
+	if auditErr := s.Audit.Write(ctx, event); auditErr != nil {
+		return errors.New("notification command audit unavailable")
+	}
+	return err
 }
 
 func (s CommandService) now() time.Time {

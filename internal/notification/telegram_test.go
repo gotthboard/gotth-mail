@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/testpg"
@@ -28,7 +29,7 @@ func TestTelegramReceiverRoutesReadOnlyCommandThroughCommandService(t *testing.T
 		t.Fatal(err)
 	}
 	provider := &fakeSummaryProvider{out: "doctor ok password=hunter2"}
-	recv := TelegramReceiver{Commands: CommandService{Mapper: mapper, Authorizer: authz.StaticAuthorizer{}, Provider: provider}}
+	recv := TelegramReceiver{Commands: CommandService{Mapper: mapper, Authorizer: authz.StaticAuthorizer{}, Provider: provider, Audit: &audit.MemoryWriter{}}}
 	reply, err := recv.Process(context.Background(), telegramUpdate{Message: &telegramMessage{MessageID: 7, From: telegramUser{ID: 99}, Chat: telegramChat{ID: 42}, Text: "/doctor@GOTTH MailBot"}})
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +46,7 @@ func TestTelegramReceiverRoutesReadOnlyCommandThroughCommandService(t *testing.T
 
 func TestTelegramReceiverRejectsUnmappedCommandActor(t *testing.T) {
 	db := testpg.DB(t, store.MigrateSQL)
-	recv := TelegramReceiver{Commands: CommandService{Mapper: SQLActorMapper{DB: db}, Authorizer: authz.StaticAuthorizer{}, Provider: &fakeSummaryProvider{out: "ok"}}}
+	recv := TelegramReceiver{Commands: CommandService{Mapper: SQLActorMapper{DB: db}, Authorizer: authz.StaticAuthorizer{}, Provider: &fakeSummaryProvider{out: "ok"}, Audit: &audit.MemoryWriter{}}}
 	reply, err := recv.Process(context.Background(), telegramUpdate{Message: &telegramMessage{MessageID: 7, From: telegramUser{ID: 99}, Chat: telegramChat{ID: 42}, Text: "/doctor"}})
 	if err == nil || !strings.Contains(err.Error(), "mapping") || !strings.Contains(reply.Text, "denied") {
 		t.Fatalf("unmapped command accepted reply=%#v err=%v", reply, err)
@@ -62,7 +63,7 @@ func TestTelegramReceiverConfirmsApprovalThroughSQLStoreOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	approvals := SQLApprovalStore{DB: db}
-	created, err := approvals.Create(context.Background(), ApprovalRequest{ID: "approval-1", TransportActor: transportActor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: "sha256:abc", CorrelationID: "corr-1", ExpiresAt: now.Add(time.Minute)}, now)
+	created, err := approvals.Create(context.Background(), ApprovalRequest{ID: "approval-1", TransportActor: transportActor, Initiator: actor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: "sha256:abc", CorrelationID: "corr-1", ExpiresAt: now.Add(time.Minute)}, now)
 	if err != nil || created.ID == "" {
 		t.Fatalf("create=%#v err=%v", created, err)
 	}
@@ -104,7 +105,7 @@ func TestTelegramReceiverRejectsWrongCallbackActor(t *testing.T) {
 		t.Fatal(err)
 	}
 	approvals := SQLApprovalStore{DB: db}
-	created, err := approvals.Create(context.Background(), ApprovalRequest{ID: "approval-1", TransportActor: transportActor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: "sha256:abc", CorrelationID: "corr-1", ExpiresAt: now.Add(time.Minute)}, now)
+	created, err := approvals.Create(context.Background(), ApprovalRequest{ID: "approval-1", TransportActor: transportActor, Initiator: actor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: "sha256:abc", CorrelationID: "corr-1", ExpiresAt: now.Add(time.Minute)}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestTelegramReceiverRejectsWrongCallbackActor(t *testing.T) {
 }
 
 func TestTelegramReceiverNeverReturnsDependencyErrors(t *testing.T) {
-	receiver := TelegramReceiver{Commands: CommandService{Mapper: errorActorMapper{err: errors.New("pq: password=super-secret host=db.internal")}, Authorizer: authz.StaticAuthorizer{}, Provider: &fakeSummaryProvider{}}}
+	receiver := TelegramReceiver{Commands: CommandService{Mapper: errorActorMapper{err: errors.New("pq: password=super-secret host=db.internal")}, Authorizer: authz.StaticAuthorizer{}, Provider: &fakeSummaryProvider{}, Audit: &audit.MemoryWriter{}}}
 	reply, err := receiver.processMessage(context.Background(), telegramMessage{MessageID: 1, From: telegramUser{ID: 99}, Chat: telegramChat{ID: 42}, Text: "/doctor"})
 	if err == nil || reply.Text != "command denied" || strings.Contains(reply.Text, "secret") || strings.Contains(reply.Text, "pq") {
 		t.Fatalf("unsafe command reply=%#v err=%v", reply, err)
@@ -136,6 +137,27 @@ func TestTelegramReceiverNeverReturnsDependencyErrors(t *testing.T) {
 	reply, err = receiver.processCallback(context.Background(), telegramCallbackQuery{ID: "cb", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "gm:a:approval-1:abcdefghijklmnopqrstuv"})
 	if err == nil || reply.Text != "approval rejected" || strings.Contains(reply.Text, "secret") {
 		t.Fatalf("unsafe approval reply=%#v err=%v", reply, err)
+	}
+}
+
+func TestTelegramReceiverMapsAndAuditsUnsupportedRequests(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	mapper := SQLActorMapper{DB: db}
+	actor := authz.Actor{Type: "api_token", ID: "ops"}
+	ta := TransportActor{Transport: "telegram", ExternalID: "chat:42:user:99"}
+	if err := mapper.Put(context.Background(), ActorMapping{TransportActor: ta, Actor: actor}, time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	receiver := TelegramReceiver{Commands: CommandService{Mapper: mapper, Audit: audit.SQLWriter{DB: db}}}
+	if reply, err := receiver.Process(context.Background(), telegramUpdate{UpdateID: 1, Message: &telegramMessage{MessageID: 7, From: telegramUser{ID: 99}, Chat: telegramChat{ID: 42}, Text: "/shell"}}); err == nil || reply.Text != "unsupported command" {
+		t.Fatalf("unsupported command was not denied: reply=%#v err=%v", reply, err)
+	}
+	if reply, err := receiver.Process(context.Background(), telegramUpdate{UpdateID: 2, CallbackQuery: &telegramCallbackQuery{ID: "cb-unsafe", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: "unsafe"}}); err == nil || reply.Text != "unsupported callback" {
+		t.Fatalf("unsupported callback was not denied: reply=%#v err=%v", reply, err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM audit_events WHERE actor_id='ops' AND action='notification.telegram.unsupported' AND result='denied'`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("unsupported request audits=%d err=%v", count, err)
 	}
 }
 

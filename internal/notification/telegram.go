@@ -88,13 +88,15 @@ func (r TelegramReceiver) Process(ctx context.Context, update telegramUpdate) (T
 	if update.CallbackQuery != nil {
 		return r.processCallback(ctx, *update.CallbackQuery)
 	}
-	return TelegramReply{}, errors.New("unsupported telegram update")
+	correlationID := "telegram:update:" + strconv.Itoa(update.UpdateID)
+	err := r.Commands.RejectUnsupported(ctx, TransportActor{Transport: "telegram", ExternalID: correlationID}, correlationID, "update")
+	return TelegramReply{}, err
 }
 
 func (r TelegramReceiver) processMessage(ctx context.Context, msg telegramMessage) (TelegramReply, error) {
 	cmd, ok := parseTelegramCommand(msg.Text)
 	if !ok {
-		return TelegramReply{ChatID: msg.ChatID(), Text: "unsupported command"}, nil
+		return TelegramReply{ChatID: msg.ChatID(), Text: "unsupported command"}, r.Commands.RejectUnsupported(ctx, msg.Actor(), msg.CorrelationID(), "command")
 	}
 	resp, err := r.Commands.Run(ctx, CommandRequest{TransportActor: msg.Actor(), Command: cmd, CorrelationID: msg.CorrelationID()})
 	if err != nil {
@@ -106,7 +108,8 @@ func (r TelegramReceiver) processMessage(ctx context.Context, msg telegramMessag
 func (r TelegramReceiver) processCallback(ctx context.Context, cb telegramCallbackQuery) (TelegramReply, error) {
 	id, bindingToken, ok := parseApprovalCallback(cb.Data)
 	if !ok {
-		return TelegramReply{ChatID: cb.ChatID(), Text: "unsupported callback"}, nil
+		correlationID := "telegram:callback:" + cleanToken(cb.ID, 80)
+		return TelegramReply{ChatID: cb.ChatID(), Text: "unsupported callback"}, r.Commands.RejectUnsupported(ctx, cb.Actor(), correlationID, "callback")
 	}
 	if r.ExecuteApproval == nil {
 		return TelegramReply{ChatID: cb.ChatID(), Text: "approval service unavailable"}, errors.New("approval service unavailable")

@@ -94,6 +94,10 @@ func (h Helper) Handler() http.Handler {
 		}
 		summary, err := h.Operator.Snapshot(r.Context(), queueID)
 		if err != nil {
+			if errors.Is(err, outboundpolicy.ErrQueueIDNotFound) {
+				http.Error(w, "queue ID not found", http.StatusNotFound)
+				return
+			}
 			http.Error(w, "queue snapshot failed", http.StatusConflict)
 			return
 		}

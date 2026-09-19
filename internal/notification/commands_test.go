@@ -94,9 +94,17 @@ func TestCommandServiceAuditsProviderFailure(t *testing.T) {
 }
 
 func TestCommandServiceRejectsUnsupportedCommand(t *testing.T) {
-	svc := CommandService{Mapper: SQLActorMapper{DB: testpg.DB(t, store.MigrateSQL)}, Authorizer: authz.StaticAuthorizer{}, Provider: &fakeSummaryProvider{}}
+	svc := CommandService{Mapper: SQLActorMapper{DB: testpg.DB(t, store.MigrateSQL)}, Authorizer: authz.StaticAuthorizer{}, Provider: &fakeSummaryProvider{}, Audit: &audit.MemoryWriter{}}
 	if _, err := svc.Run(context.Background(), CommandRequest{Command: ReadOnlyCommand("shell")}); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("unsupported command accepted: %v", err)
+	}
+}
+
+func TestCommandServiceRequiresAuditWriter(t *testing.T) {
+	svc := CommandService{Mapper: SQLActorMapper{DB: testpg.DB(t, store.MigrateSQL)}, Authorizer: authz.StaticAuthorizer{}, Provider: &fakeSummaryProvider{}}
+	_, err := svc.Run(context.Background(), CommandRequest{Command: CommandDoctorSummary})
+	if err == nil || !strings.Contains(err.Error(), "audit writer") {
+		t.Fatalf("command ran without audit writer: %v", err)
 	}
 }
 

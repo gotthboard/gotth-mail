@@ -200,6 +200,9 @@ func (b *RemotePostfixBoundary) callOptional(ctx context.Context, path, queueID 
 		return errors.New("Postfix helper response invalid")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if path == "/v1/queue/summary" && response.StatusCode == http.StatusNotFound {
+			return ErrQueueIDNotFound
+		}
 		return errors.New("Postfix helper rejected request")
 	}
 	if out == nil {

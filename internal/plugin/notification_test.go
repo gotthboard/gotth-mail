@@ -76,7 +76,7 @@ func TestNotificationBackendGRPCSendsAlertAndPromptWithServiceIdentity(t *testin
 	lis := bufconn.Listen(1024 * 1024)
 	srv := grpc.NewServer()
 	registry := reg()
-	RegisterNotificationServer(srv, NotificationServer{Name: "stub", Registry: registry})
+	RegisterNotificationServer(srv, NotificationServer{Name: "stub", Registry: registry, Sink: LocalNotificationSink{}})
 	go func() { _ = srv.Serve(lis) }()
 	defer srv.Stop()
 	conn, err := grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }), grpc.WithInsecure())
@@ -107,7 +107,7 @@ func TestNotificationBackendGRPCSendsAlertAndPromptWithServiceIdentity(t *testin
 func TestNotificationBackendRejectsWrongTokenAndUnsafePayloads(t *testing.T) {
 	lis := bufconn.Listen(1024 * 1024)
 	srv := grpc.NewServer()
-	RegisterNotificationServer(srv, NotificationServer{Name: "stub", Registry: reg()})
+	RegisterNotificationServer(srv, NotificationServer{Name: "stub", Registry: reg(), Sink: LocalNotificationSink{}})
 	go func() { _ = srv.Serve(lis) }()
 	defer srv.Stop()
 	conn, err := grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }), grpc.WithInsecure())
@@ -128,6 +128,20 @@ func TestNotificationBackendRejectsWrongTokenAndUnsafePayloads(t *testing.T) {
 	}
 	if _, err := client.SendPrompt(goodCtx, &pluginv1.SendPromptRequest{Id: "prompt-1", CorrelationId: "corr-1", Transport: "telegram", ExternalActorId: "chat:42:user:99", ActorType: "api_token", ActorId: "ops", Action: "queue:flush", ResourceType: "queue", ResourceId: "default", RequestHash: "sha256:abc", ExpiresAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339), Title: "Approve", Summary: "token=secret", ConfirmationToken: "abcdefghijklmnopqrstuv"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unsafe prompt accepted: %v", err)
+	}
+}
+
+func TestNotificationBackendFailsClosedWithoutSink(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(MetadataCorrelationID, "corr-1", MetadataServiceToken, "tok"))
+	server := NotificationServer{Name: "stub", Registry: reg()}
+	alert := &pluginv1.SendAlertRequest{Alert: &pluginv1.AlertMessage{Id: "alert-1", Class: "doctor.failure", Severity: "critical", Title: "Doctor failed", Summary: "database failed", CorrelationId: "corr-1"}}
+	if _, err := server.SendAlert(ctx, alert); status.Code(err) != codes.Unavailable {
+		t.Fatalf("missing sink accepted alert: %v", err)
+	}
+	if _, err := server.SendPrompt(ctx, validPromptRequest()); status.Code(err) != codes.Unavailable {
+		t.Fatalf("missing sink accepted prompt: %v", err)
 	}
 }
 

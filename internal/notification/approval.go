@@ -131,6 +131,7 @@ func (s SQLActorMapper) Map(ctx context.Context, ta TransportActor) (authz.Actor
 type ApprovalRequest struct {
 	ID                 string
 	TransportActor     TransportActor
+	Initiator          authz.Actor
 	Actor              authz.Actor
 	Action             authz.Action
 	Resource           authz.Resource
@@ -190,7 +191,9 @@ func (s SQLApprovalStore) Create(ctx context.Context, r ApprovalRequest, now tim
 		return ApprovalRequest{}, errors.New("valid approval binding token required")
 	}
 	r.BindingHash = hashBindingToken(r.BindingToken)
-	if now.IsZero() || r.TransportActor.Transport == "" || r.TransportActor.ExternalID == "" || r.Actor.Type == "" || r.Actor.ID == "" || r.Action == "" || r.Resource.Type == "" || r.Resource.ID == "" || r.RequestHash == "" || !r.ExpiresAt.After(now) {
+	r.Initiator.Type = cleanToken(r.Initiator.Type, 40)
+	r.Initiator.ID = strings.TrimSpace(r.Initiator.ID)
+	if now.IsZero() || r.TransportActor.Transport == "" || r.TransportActor.ExternalID == "" || r.Initiator.Type == "" || r.Initiator.ID == "" || r.Actor.Type == "" || r.Actor.ID == "" || r.Action == "" || r.Resource.Type == "" || r.Resource.ID == "" || r.RequestHash == "" || !r.ExpiresAt.After(now) {
 		return ApprovalRequest{}, errors.New("complete unexpired approval request required")
 	}
 	r.CreatedAt = now.UTC()
@@ -203,7 +206,17 @@ func (s SQLApprovalStore) Create(ctx context.Context, r ApprovalRequest, now tim
 	if _, err = tx.ExecContext(ctx, `INSERT INTO notification_approvals(id, transport, external_actor_id, actor_type, actor_id, action, resource_type, resource_id, request_hash, confirmation_binding_hash, correlation_id, expires_at, result, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'creating',$13,$13)`, r.ID, r.TransportActor.Transport, r.TransportActor.ExternalID, r.Actor.Type, r.Actor.ID, string(r.Action), r.Resource.Type, r.Resource.ID, r.RequestHash, r.BindingHash, r.CorrelationID, r.ExpiresAt.UTC(), r.CreatedAt); err != nil {
 		return ApprovalRequest{}, err
 	}
-	if err := audit.WriteSQL(ctx, tx, approvalAuditEvent(r, "notification.approval.create", "success", nil)); err != nil {
+	createEvent := approvalAuditEvent(r, "notification.approval.create", "success", nil)
+	createEvent.Actor = audit.ActorRef{Type: r.Initiator.Type, ID: r.Initiator.ID}
+	createEvent.AfterRedacted = map[string]any{
+		"approval_id":         r.ID,
+		"transport":           r.TransportActor.Transport,
+		"external_actor_id":   r.TransportActor.ExternalID,
+		"request_hash":        r.RequestHash,
+		"prompted_actor_type": r.Actor.Type,
+		"prompted_actor_id":   r.Actor.ID,
+	}
+	if err := audit.WriteSQL(ctx, tx, createEvent); err != nil {
 		return ApprovalRequest{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -237,8 +250,8 @@ func (s SQLApprovalStore) Activate(ctx context.Context, id string, now time.Time
 }
 
 // Claim atomically reserves a verified approval for execution. A stale claim
-// may be recovered because the admitted queue mutations are idempotent
-// scheduling operations (`postqueue -f` and `postqueue -i`).
+// may be recovered because whole-queue flush is repeatable and exact-message
+// retry reconciles a failed scheduling call against the queue ID's live state.
 func (s SQLApprovalStore) Claim(ctx context.Context, c ApprovalConfirmation, lease time.Duration) (ApprovalRequest, error) {
 	if s.DB == nil {
 		return ApprovalRequest{}, errors.New("notification approval db required")
@@ -413,7 +426,7 @@ func (s SQLApprovalStore) recordDenied(ctx context.Context, r ApprovalRequest, n
 	}
 	defer tx.Rollback()
 	if terminal {
-		res, err := tx.ExecContext(ctx, `UPDATE notification_approvals SET result='expired', updated_at=$2 WHERE id=$1 AND result='pending'`, r.ID, now.UTC())
+		res, err := tx.ExecContext(ctx, `UPDATE notification_approvals SET result='expired', updated_at=$2 WHERE id=$1 AND result IN ('pending','executing')`, r.ID, now.UTC())
 		if err != nil {
 			return err
 		}

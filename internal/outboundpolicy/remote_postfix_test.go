@@ -3,6 +3,7 @@ package outboundpolicy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -101,5 +102,23 @@ func TestRemotePostfixBoundaryRejectsBadConfigurationAndResponses(t *testing.T) 
 	}
 	if _, err := boundary.Inspect(context.Background(), "BCDFGHJKLMNPz6789"); err == nil {
 		t.Fatal("accepted invalid helper metadata")
+	}
+}
+
+func TestRemotePostfixBoundaryClassifiesMissingExactQueueID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/queue/summary" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "queue ID not found", http.StatusNotFound)
+	}))
+	defer server.Close()
+	boundary, err := NewRemotePostfixBoundary(server.URL, "0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := boundary.Snapshot(context.Background(), "BCDFGHJKLMNPz6789"); !errors.Is(err, ErrQueueIDNotFound) {
+		t.Fatalf("missing queue ID classification=%v", err)
 	}
 }

@@ -30,7 +30,7 @@ func TestApprovalExecutorConfirmsAndExecutesQueueFlushOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := approvals.Create(context.Background(), notification.ApprovalRequest{ID: "approval-1", TransportActor: transportActor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: requestHash, CorrelationID: "corr-1", ExpiresAt: now.Add(time.Minute)}, now)
+	created, err := approvals.Create(context.Background(), notification.ApprovalRequest{ID: "approval-1", TransportActor: transportActor, Initiator: actor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: requestHash, CorrelationID: "corr-1", ExpiresAt: now.Add(time.Minute)}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,14 +69,14 @@ func TestApprovalExecutorRecoversMutationFailureAndExpiredClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	approvalStore := notification.SQLApprovalStore{DB: db}
-	created, err := approvalStore.Create(context.Background(), notification.ApprovalRequest{ID: "approval-recover", TransportActor: ta, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: hash, CorrelationID: "corr-recover", ExpiresAt: now.Add(10 * time.Minute)}, now)
+	created, err := approvalStore.Create(context.Background(), notification.ApprovalRequest{ID: "approval-recover", TransportActor: ta, Initiator: actor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: hash, CorrelationID: "corr-recover", ExpiresAt: now.Add(10 * time.Minute)}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := approvalStore.Activate(context.Background(), created.ID, now); err != nil {
 		t.Fatal(err)
 	}
-	executor := ApprovalExecutor{Mapper: mapper, Approvals: approvalStore, Authorizer: authz.StaticAuthorizer{}, Queue: queue, Now: func() time.Time { return now.Add(time.Minute) }}
+	executor := ApprovalExecutor{Mapper: mapper, Approvals: approvalStore, Authorizer: authz.StaticAuthorizer{}, Queue: queue, Audit: audit.SQLWriter{DB: db}, Now: func() time.Time { return now.Add(time.Minute) }}
 	if _, err := executor.ExecuteTelegramApproval(context.Background(), created.ID, created.BindingToken, ta); err == nil {
 		t.Fatal("mutation failure accepted")
 	}
@@ -113,7 +113,7 @@ func TestApprovalExecutorRecoversAmbiguousPostMutationCrashAfterQueueChanges(t *
 		t.Fatal(err)
 	}
 	approvals := notification.SQLApprovalStore{DB: db}
-	created, err := approvals.Create(context.Background(), notification.ApprovalRequest{ID: "approval-ambiguous", TransportActor: ta, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "postfix_queue", ID: "default"}, RequestHash: hash, CorrelationID: "corr-ambiguous", ExpiresAt: now.Add(10 * time.Minute)}, now)
+	created, err := approvals.Create(context.Background(), notification.ApprovalRequest{ID: "approval-ambiguous", TransportActor: ta, Initiator: actor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "postfix_queue", ID: "default"}, RequestHash: hash, CorrelationID: "corr-ambiguous", ExpiresAt: now.Add(10 * time.Minute)}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestApprovalExecutorRejectsUnsupportedMutationBeforeConfirmation(t *testing
 		t.Fatal(err)
 	}
 	approvals := notification.SQLApprovalStore{DB: db}
-	created, err := approvals.Create(context.Background(), notification.ApprovalRequest{ID: "approval-1", TransportActor: transportActor, Actor: actor, Action: "domain:delete", Resource: authz.Resource{Type: "domain", ID: "example.test"}, RequestHash: "sha256:abc", CorrelationID: "corr-1", ExpiresAt: now.Add(time.Minute)}, now)
+	created, err := approvals.Create(context.Background(), notification.ApprovalRequest{ID: "approval-1", TransportActor: transportActor, Initiator: actor, Actor: actor, Action: "domain:delete", Resource: authz.Resource{Type: "domain", ID: "example.test"}, RequestHash: "sha256:abc", CorrelationID: "corr-1", ExpiresAt: now.Add(time.Minute)}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,6 +183,20 @@ func TestApprovalExecutorRejectsUnmappedActorBeforeConfirmation(t *testing.T) {
 	}
 }
 
+func TestApprovalExecutorRequiresAuditWriter(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	exec := ApprovalExecutor{
+		Mapper:     notification.SQLActorMapper{DB: db},
+		Approvals:  notification.SQLApprovalStore{DB: db},
+		Authorizer: authz.StaticAuthorizer{},
+		Queue:      &fakeQueueController{},
+	}
+	_, err := exec.ExecuteTelegramApproval(context.Background(), "approval-1", "abcdefghijklmnopqrstuv", notification.TransportActor{Transport: "telegram", ExternalID: "chat:42:user:99"})
+	if err == nil || !strings.Contains(err.Error(), "dependencies") {
+		t.Fatalf("missing audit writer accepted: %v", err)
+	}
+}
+
 func TestApprovalExecutorRejectsChangedQueueStateWithoutConsumingPrompt(t *testing.T) {
 	db := testpg.DB(t, store.MigrateSQL)
 	now := time.Unix(4, 0).UTC()
@@ -198,7 +212,7 @@ func TestApprovalExecutorRejectsChangedQueueStateWithoutConsumingPrompt(t *testi
 		t.Fatal(err)
 	}
 	approvals := notification.SQLApprovalStore{DB: db}
-	created, err := approvals.Create(context.Background(), notification.ApprovalRequest{ID: "approval-change", TransportActor: transportActor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: requestHash, CorrelationID: "corr-change", ExpiresAt: now.Add(time.Minute)}, now)
+	created, err := approvals.Create(context.Background(), notification.ApprovalRequest{ID: "approval-change", TransportActor: transportActor, Initiator: actor, Actor: actor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, RequestHash: requestHash, CorrelationID: "corr-change", ExpiresAt: now.Add(time.Minute)}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
