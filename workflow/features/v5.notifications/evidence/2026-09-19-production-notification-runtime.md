@@ -1,6 +1,6 @@
 # Production notification runtime admission — 2026-09-19
 
-Candidate repair commits: `3f34aa5`, `78ce26e`, `23075c5`, `38db220`
+Candidate repair commits: `3f34aa5`, `78ce26e`, `23075c5`, `38db220`, `d70e4b7`
 
 ## Admitted behavior
 
