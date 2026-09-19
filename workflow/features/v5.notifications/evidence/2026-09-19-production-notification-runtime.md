@@ -1,6 +1,6 @@
 # Production notification runtime admission — 2026-09-19
 
-Candidate repair commit: `3f34aa5`
+Candidate repair commits: `3f34aa5`, `78ce26e`
 
 ## Admitted behavior
 
@@ -56,6 +56,19 @@ discarded audit failures, a Compose profile that did not actually select
 signed email, and no container proof of an approved real Postfix mutation.
 Commit `3f34aa5` closes all seven rather than narrowing the claims around them.
 
+A fresh cold pass then rejected six remaining defects: exact-message retry
+claimed undocumented repeatability, expired `executing` approvals could remain
+wedged, missing audit writers allowed command and approval execution, unsupported
+Telegram messages and callbacks escaped identity-aware audit, approval creation
+was attributed to the prompted Telegram actor instead of the authenticated API
+initiator, and an unwired notification gRPC server silently used the local
+success sink. Commit `78ce26e` closes those defects. Exact retry now reconciles
+an immediate scheduling failure against the live exact queue ID; stale executing
+approvals can expire; command, rejection, and mutation paths require audit;
+unsupported updates produce bounded denied events; creation records the real
+initiator and prompted actor separately; and a missing sink returns gRPC
+`Unavailable`.
+
 ## Verification
 
 - `GOMAXPROCS=4 go test -count=1 -p=2 ./...`
@@ -68,7 +81,8 @@ Commit `3f34aa5` closes all seven rather than narrowing the claims around them.
 - `scripts/verify-notification-compose.sh`
 - normal and signed-email-overlay `docker compose config`
 - focused SQL migration, gRPC, Telegram API, webhook, command, approval,
-  exact-sender email, and secret-redaction tests
+  exact-message retry reconciliation, exact-sender email, and secret-redaction
+  tests
 - `git diff --check`
 
 ## Deployment boundary
