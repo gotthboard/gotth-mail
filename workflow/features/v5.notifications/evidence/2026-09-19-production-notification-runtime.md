@@ -86,6 +86,13 @@ candidate classes remain rejected until separately specified and proven core
 mutation mechanisms exist. The correction does not add a fake generic
 chat-to-function path or weaken confirmation policy.
 
+A later trust-boundary pass rejected the statement that every raw Telegram HTTP
+request could be mapped to an identity. Authentication failures and malformed
+JSON have no trustworthy Telegram actor. The corrected contract requires every
+authenticated, well-formed update—including unsupported commands, callbacks,
+and update shapes—to map and audit, while transport-authentication and decoding
+failures remain outside actor admission and fail closed.
+
 ## Verification
 
 - `GOMAXPROCS=4 go test -count=1 -p=2 ./...`

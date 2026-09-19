@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-19 — Telegram actor-admission contract correction
+
+- Clarified that Telegram identity mapping and action audit begin only after
+  webhook authentication and bounded update decoding. Authenticated,
+  well-formed updates—including unsupported shapes—remain mapped and audited;
+  unauthenticated or malformed HTTP input fails closed without a fabricated
+  actor.
+
 All meaningful repository changes must be recorded here in the same commit that makes the change.
 
 This changelog is operator-facing project history, not a replacement for workflow evidence. Entries must be verbose enough that a reviewer can understand what changed without reading the full diff first.

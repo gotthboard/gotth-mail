@@ -64,7 +64,9 @@ Rules:
 
 - Telegram actor-to-identity mapping.
 - No authorization by chat membership alone.
-- Every Telegram-triggered action audited.
+- Every authenticated, well-formed Telegram-triggered action is mapped to an
+  identity and audited. Requests rejected at the webhook-authentication or JSON
+  decoding boundary are not admitted as Telegram actors or actions.
 - No secrets in Telegram messages.
 - No full tokens, private keys, passwords, or unredacted before/after values.
 - Failure to deliver notification must be visible in core status.
@@ -91,7 +93,9 @@ After Telegram proves the seam:
 - Telegram plugin passes health/version/capability checks.
 - Operational alerts are delivered through Telegram without exposing secrets.
 - Read-only Telegram commands return bounded summaries.
-- Every Telegram request is mapped to an identity and audited.
+- Every authenticated, well-formed Telegram update is mapped to an identity and
+  audited, including unsupported commands, callbacks, and update shapes.
+  Unauthenticated or malformed HTTP requests fail closed before actor mapping.
 - The enabled queue approval workflow uses core authorization/confirmation/mutation/audit paths and rejects stale, replayed, mismatched, or expired approvals; unimplemented approval classes remain rejected.
 
 ## Mandatory OpenPGP signing for email notifications

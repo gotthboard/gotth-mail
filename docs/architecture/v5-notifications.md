@@ -47,7 +47,7 @@ Read-only Telegram commands:
 - deployment status
 - plugin health status
 
-Read-only commands still authenticate the Telegram actor, map actor to identity, and write an audit event.
+Read-only commands still authenticate the Telegram actor, map actor to identity, and write an audit event. Webhook authentication and bounded JSON decoding precede actor admission; rejected transport input is not assigned a fabricated Telegram identity.
 
 ## Approval workflow architecture
 
@@ -110,7 +110,9 @@ These remain notification backends, not authorities.
 - alerts deliver without exposing secrets
 - notification delivery failures are visible in core status
 - read-only commands return bounded summaries
-- every Telegram request maps to identity and audit event
+- every authenticated, well-formed Telegram update maps to an identity and an
+  audit event, including unsupported commands, callbacks, and update shapes;
+  unauthenticated or malformed HTTP input fails closed before actor admission
 - approval workflows use core authorization/confirmation/mutation/audit paths
 - approval workflows reject stale/replayed/mismatched/expired approvals
 - actions outside the admitted queue flush/retry set are rejected before claim
