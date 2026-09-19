@@ -13,8 +13,12 @@ virtual_mailbox_maps = lmdb:/etc/postfix/virtual_mailboxes
 virtual_alias_maps = lmdb:/etc/postfix/virtual_aliases
 virtual_uid_maps = static:5000
 virtual_gid_maps = static:5000
-smtpd_relay_restrictions = permit_mynetworks,reject_unauth_destination
-smtpd_recipient_restrictions = check_policy_service inet:gotth-mail:10025,reject_unauth_destination
+smtpd_relay_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination
+smtpd_recipient_restrictions = check_policy_service inet:gotth-mail:10025,permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination
+smtpd_sasl_auth_enable = yes
+smtpd_sasl_type = cyrus
+smtpd_sasl_path = smtpd
+smtpd_sasl_security_options = noanonymous
 default_transport = gotth_policy:
 relay_transport = gotth_policy:
 import_environment = MAIL_CONFIG MAIL_DEBUG MAIL_LOGTAG TZ XAUTHORITY DISPLAY LANG=C GOTTH_MAIL_CORE_URL GOTTH_MAIL_POSTFIX_HELPER_TOKEN GOTTH_MAIL_POSTFIX_INSTANCE GOTTH_MAIL_OUTBOUND_RELAY_ADDR

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -60,6 +61,45 @@ func TestNotificationSinkForRejectsUnknownNotificationName(t *testing.T) {
 	}
 }
 
+func TestNotificationSMTPPasswordSupportsPrivateFileAndRejectsAmbiguity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "smtp-password")
+	if err := os.WriteFile(path, []byte("file-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secret, err := notificationSMTPPassword(func(name string) string {
+		if name == "GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD_FILE" {
+			return path
+		}
+		return ""
+	})
+	if err != nil || secret != "file-secret" {
+		t.Fatalf("file secret=%q err=%v", secret, err)
+	}
+	if _, err := notificationSMTPPassword(func(name string) string {
+		switch name {
+		case "GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD":
+			return "direct-secret"
+		case "GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD_FILE":
+			return path
+		default:
+			return ""
+		}
+	}); err == nil {
+		t.Fatal("accepted ambiguous direct and file SMTP secrets")
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := notificationSMTPPassword(func(name string) string {
+		if name == "GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD_FILE" {
+			return path
+		}
+		return ""
+	}); err == nil {
+		t.Fatal("accepted group/world-readable SMTP secret file")
+	}
+}
+
 func TestNotificationSinkForSignedEmailBuildsWorkingAdapter(t *testing.T) {
 	now := time.Now().UTC()
 	_, keyPath, fingerprint := writePluginSigningKey(t, now)
@@ -69,6 +109,8 @@ func TestNotificationSinkForSignedEmailBuildsWorkingAdapter(t *testing.T) {
 		"GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT": fingerprint,
 		"GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE":    keyPath,
 		"GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR":           "127.0.0.1:2525",
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_USERNAME":       "system:alerts@example.test",
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD":       "smtp-secret",
 		"GOTTH_MAIL_OUTBOUND_POLICY_URL":                    "http://127.0.0.1/internal/v1/postfix/outbound-policy",
 	}
 	sink, err := notificationSinkFor(plugin.FirstEmailName, func(name string) string { return env[name] })
@@ -116,6 +158,8 @@ func TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAnd
 		"GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT": fingerprint,
 		"GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE":    keyPath,
 		"GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR":           smtpAddr,
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_USERNAME":       "system:alerts@example.test",
+		"GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD":       "smtp-secret",
 		"GOTTH_MAIL_OUTBOUND_POLICY_URL":                    policyServer.URL,
 	})
 	defer stop()
@@ -178,7 +222,7 @@ func TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAnd
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if !strings.Contains(capture.mailFrom, "alerts@example.test") || !strings.Contains(capture.rcptTo, "ops@example.test") {
+	if capture.authUser != "system:alerts@example.test" || !strings.Contains(capture.mailFrom, "alerts@example.test") || !strings.Contains(capture.rcptTo, "ops@example.test") {
 		t.Fatalf("bad SMTP envelope: %#v", capture)
 	}
 	for i, value := range capture.body {
@@ -346,6 +390,7 @@ func waitForPluginProcess(endpoint, token string, timeout time.Duration) (*grpc.
 }
 
 type pluginSMTPCapture struct {
+	authUser string
 	mailFrom string
 	rcptTo   string
 	body     []byte
@@ -375,6 +420,7 @@ func startPluginCaptureSMTP(t *testing.T) (string, <-chan pluginSMTPCapture) {
 			return
 		}
 		var capture pluginSMTPCapture
+		awaitingCRAM := false
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
@@ -384,11 +430,26 @@ func startPluginCaptureSMTP(t *testing.T) (string, <-chan pluginSMTPCapture) {
 			command := strings.TrimRight(line, "\r\n")
 			upper := strings.ToUpper(command)
 			switch {
+			case awaitingCRAM:
+				awaitingCRAM = false
+				var decoded []byte
+				decoded, err = base64.StdEncoding.DecodeString(command)
+				if err == nil {
+					capture.authUser = strings.SplitN(string(decoded), " ", 2)[0]
+					err = write("235 2.7.0 authentication successful\r\n")
+				}
 			case strings.HasPrefix(upper, "EHLO "), strings.HasPrefix(upper, "HELO "):
-				err = write("250 capture.example.test\r\n")
+				err = write("250-capture.example.test\r\n250 AUTH CRAM-MD5\r\n")
+			case upper == "AUTH CRAM-MD5":
+				awaitingCRAM = true
+				err = write("334 PDEyMzQ1LjY3ODkwQGNhcHR1cmUuZXhhbXBsZS50ZXN0Pg==\r\n")
 			case strings.HasPrefix(upper, "MAIL FROM:"):
-				capture.mailFrom = command
-				err = write("250 ok\r\n")
+				if capture.authUser != "system:alerts@example.test" {
+					err = write("530 authentication required\r\n")
+				} else {
+					capture.mailFrom = command
+					err = write("250 ok\r\n")
+				}
 			case strings.HasPrefix(upper, "RCPT TO:"):
 				capture.rcptTo = command
 				err = write("250 ok\r\n")

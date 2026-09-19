@@ -155,10 +155,8 @@ func deliveryAuthority(authenticated, explicitSystem string) (string, string, er
 	if explicitSystem != "" {
 		return "", explicitSystem, nil
 	}
-	if strings.HasPrefix(authenticated, "system:") {
-		return "", authenticated, nil
-	}
-	return authenticated, "", nil
+	mailbox, systemSenderID := outboundpolicy.AuthenticatedIdentity(authenticated)
+	return mailbox, systemSenderID, nil
 }
 
 type stringList []string

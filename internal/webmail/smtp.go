@@ -19,6 +19,7 @@ type NetSMTPSubmitter struct {
 	Addr      string
 	HelloName string
 	Timeout   time.Duration
+	Auth      smtp.Auth
 }
 
 type SMTPFailureClass string
@@ -98,6 +99,11 @@ func (s NetSMTPSubmitter) Submit(ctx context.Context, envelope Envelope, msg []b
 	if hello := strings.TrimSpace(s.HelloName); hello != "" {
 		if err := client.Hello(hello); err != nil {
 			return classifySMTPFailure("hello", err, false)
+		}
+	}
+	if s.Auth != nil {
+		if err := client.Auth(s.Auth); err != nil {
+			return classifySMTPFailure("authentication", err, false)
 		}
 	}
 	if err := client.Mail(from.Address); err != nil {

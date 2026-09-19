@@ -3,8 +3,10 @@ package webmail
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"errors"
 	"net"
+	"net/smtp"
 	"net/textproto"
 	"os"
 	"strings"
@@ -79,6 +81,36 @@ func TestNetSMTPSubmitterTalksSMTPAndRejectsInvalidEnvelope(t *testing.T) {
 	}
 }
 
+func TestNetSMTPSubmitterAuthenticatesBeforeEnvelope(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	got := make(chan []string, 1)
+	go fakeSMTPAuthServer(t, ln, got)
+	s := NetSMTPSubmitter{
+		Addr: ln.Addr().String(), HelloName: "gotth-mail-notification", Timeout: 5 * time.Second,
+		Auth: smtp.CRAMMD5Auth("system:alerts@example.test", "smtp-secret"),
+	}
+	if err := s.Submit(context.Background(), Envelope{From: "alerts@example.test", To: []string{"outside@example.net"}}, []byte("Subject: authenticated\r\n\r\nbody")); err != nil {
+		t.Fatal(err)
+	}
+	lines := <-got
+	if len(lines) < 3 || lines[1] != "AUTH CRAM-MD5" {
+		t.Fatalf("SMTP authentication did not precede the envelope: %#v", lines)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(lines[2])
+	if err != nil || !strings.HasPrefix(string(decoded), "system:alerts@example.test ") {
+		t.Fatalf("CRAM-MD5 response identity = %q err=%v", decoded, err)
+	}
+	for i, line := range lines {
+		if strings.HasPrefix(line, "MAIL FROM:") && i < 3 {
+			t.Fatalf("envelope began before authentication completed: %#v", lines)
+		}
+	}
+}
+
 func TestNetSMTPSubmitterLiveComposePostfix(t *testing.T) {
 	addr := os.Getenv("GOTTH_MAIL_LIVE_SMTP_ADDR")
 	if addr == "" {
@@ -88,11 +120,26 @@ func TestNetSMTPSubmitterLiveComposePostfix(t *testing.T) {
 	if subject == "" {
 		subject = "GOTTH Mail webmail SMTP smoke"
 	}
-	msg := []byte("From: smoke@example.test\r\nTo: alias@example.test\r\nSubject: " + subject + "\r\n\r\ncontainerized-webmail-smtp-smoke")
+	from := os.Getenv("GOTTH_MAIL_LIVE_SMTP_FROM")
+	if from == "" {
+		from = "smoke@example.test"
+	}
+	to := os.Getenv("GOTTH_MAIL_LIVE_SMTP_TO")
+	if to == "" {
+		to = "alias@example.test"
+	}
+	msg := []byte("From: " + from + "\r\nTo: " + to + "\r\nSubject: " + subject + "\r\n\r\ncontainerized-webmail-smtp-smoke")
 	s := NetSMTPSubmitter{Addr: addr, HelloName: "gotth-mail-webmail-smoke", Timeout: 20 * time.Second}
+	authUser, authPassword := os.Getenv("GOTTH_MAIL_LIVE_SMTP_USERNAME"), os.Getenv("GOTTH_MAIL_LIVE_SMTP_PASSWORD")
+	if (authUser == "") != (authPassword == "") {
+		t.Fatal("live SMTP username and password must be configured together")
+	}
+	if authUser != "" {
+		s.Auth = smtp.CRAMMD5Auth(authUser, authPassword)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	if err := s.Submit(ctx, Envelope{From: "smoke@example.test", To: []string{"alias@example.test"}}, msg); err != nil {
+	if err := s.Submit(ctx, Envelope{From: from, To: []string{to}}, msg); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -144,6 +191,53 @@ func fakeSMTPServer(t *testing.T, ln net.Listener, got chan<- []string) {
 			return
 		default:
 			write("250 ok\r\n")
+		}
+	}
+}
+
+func fakeSMTPAuthServer(t *testing.T, ln net.Listener, got chan<- []string) {
+	t.Helper()
+	conn, err := ln.Accept()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	r := bufio.NewReader(conn)
+	var lines []string
+	write := func(s string) { _, _ = conn.Write([]byte(s)) }
+	write("220 fake.example.test ESMTP\r\n")
+	inData := false
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return
+		}
+		line = strings.TrimRight(line, "\r\n")
+		lines = append(lines, line)
+		upper := strings.ToUpper(line)
+		switch {
+		case inData && line == ".":
+			inData = false
+			write("250 queued\r\n")
+		case inData:
+		case strings.HasPrefix(upper, "EHLO"):
+			write("250-fake.example.test\r\n250 AUTH CRAM-MD5\r\n")
+		case upper == "AUTH CRAM-MD5":
+			write("334 PDEyMzQ1LjY3ODkwQGZha2UuZXhhbXBsZS50ZXN0Pg==\r\n")
+		case len(lines) == 3:
+			write("235 2.7.0 authentication successful\r\n")
+		case strings.HasPrefix(upper, "MAIL FROM:"), strings.HasPrefix(upper, "RCPT TO:"):
+			write("250 ok\r\n")
+		case upper == "DATA":
+			inData = true
+			write("354 end with dot\r\n")
+		case upper == "QUIT":
+			write("221 bye\r\n")
+			got <- lines
+			return
+		default:
+			write("500 unexpected\r\n")
 		}
 	}
 }

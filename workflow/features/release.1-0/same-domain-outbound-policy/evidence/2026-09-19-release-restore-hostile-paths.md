@@ -68,7 +68,7 @@ reviews remain before workflow completion.
    `pipe(8)` request and observed exactly one SMTP DATA transaction containing
    both envelope recipients.
 
-The final disposable held queue ID was `4hnDJ22jm6zffR7`. The cleanup trap
+The final disposable held queue ID was `4hnF160N5dzg8VL`. The cleanup trap
 removed the entire Compose project and its volumes.
 
 ## Verification completed in this checkpoint
@@ -133,6 +133,19 @@ authority, ordinary SASL identities remain mailbox authority, and ambiguous
 dual authority is rejected. The smoke reuses the held inbound forward after
 explicit release. Both fixtures now expand it to two external recipients, and
 the rebuilt stack proved one final SMTP transaction with both recipients.
+
+The next runtime pass found that signed notification email performed the
+correct durable system-sender policy check but used unauthenticated SMTP, so
+the final Postfix gate could not recover that authority. The notification
+transport now requires CRAM-MD5 authentication with a username exactly equal
+to `system:<from-address>` and a bounded direct or private-file secret.
+Submission policy and final transport share the same authenticated-identity
+classifier. A real Postfix/Cyrus spike proved that a colon-bearing system ID is
+stored unchanged as the queue `sasl_username`. The rebuilt reference stack
+then proved the restricted identity is rejected at RCPT, and—after an explicit
+policy change—the same authenticated identity is admitted at submission,
+recorded as system-sender queue provenance, rechecked at final transport, and
+accepted in exactly one SMTP transaction.
 
 ## Remaining admission work
 

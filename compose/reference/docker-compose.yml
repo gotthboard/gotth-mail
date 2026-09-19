@@ -2,6 +2,7 @@ services:
   gotth-mail:
     build:
       context: ../..
+    restart: "on-failure:5"
     environment:
       GOTTH_MAIL_LISTEN: ":8080"
       GOTTH_MAIL_REFERENCE_FIXTURE: "1"
@@ -105,6 +106,8 @@ services:
       GOTTH_MAIL_POSTFIX_RELEASE_TOKEN: ${GOTTH_MAIL_POSTFIX_RELEASE_TOKEN:-reference-postfix-release-token-32byte}
       GOTTH_MAIL_POSTFIX_INSTANCE: mail.example.test
       GOTTH_MAIL_OUTBOUND_RELAY_ADDR: ${GOTTH_MAIL_OUTBOUND_RELAY_ADDR:-127.0.0.1:9}
+      GOTTH_MAIL_SYSTEM_SENDER_SMTP_USERNAME: ${GOTTH_MAIL_SYSTEM_SENDER_SMTP_USERNAME:-system:alerts@example.test}
+      GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD: ${GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD:-reference-system-sender-smtp-secret}
     command:
       - /bin/sh
       - -lc
@@ -115,6 +118,13 @@ services:
         chown -R 5000:5000 /mail
         cp /reference/postfix/main.cf /etc/postfix/main.cf
         cat /reference/postfix/gotth-policy.master.cf >> /etc/postfix/master.cf
+        mkdir -p /etc/sasl2
+        printf 'pwcheck_method: auxprop\nauxprop_plugin: sasldb\nmech_list: CRAM-MD5\nsasldb_path: /etc/sasldb2\n' > /etc/sasl2/smtpd.conf
+        test -n "$$GOTTH_MAIL_SYSTEM_SENDER_SMTP_USERNAME"
+        test -n "$$GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD"
+        printf '%s' "$$GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD" | saslpasswd2 -c -p -f /etc/sasldb2 -a smtp "$$GOTTH_MAIL_SYSTEM_SENDER_SMTP_USERNAME"
+        chown root:postfix /etc/sasldb2
+        chmod 0640 /etc/sasldb2
         until curl -fsS http://gotth-mail:8080/healthz >/dev/null; do sleep 1; done
         curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gotth-mail:8080/internal/v1/postfix/mailboxes/smoke@example.test | jq -e '.decision == "ok"' >/dev/null
         curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gotth-mail:8080/internal/v1/postfix/mailboxes/postmaster@example.test | jq -e '.decision == "ok"' >/dev/null
@@ -253,8 +263,9 @@ services:
       GOTTH_MAIL_NOTIFICATION_EMAIL_TO: ${GOTTH_MAIL_NOTIFICATION_EMAIL_TO:-}
       GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT: ${GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT:-}
       GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE: /run/secrets/notification-signing-key.asc
-      # NetSMTPSubmitter is plaintext/no-auth; runtime confines this to a trusted local relay.
       GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR: ${GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR:-postfix:25}
+      GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_USERNAME: ${GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_USERNAME:-system:alerts@example.test}
+      GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD: ${GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD:-reference-system-sender-smtp-secret}
       GOTTH_MAIL_OUTBOUND_POLICY_URL: http://gotth-mail:8080/internal/v1/postfix/outbound-policy
     volumes:
       - type: bind

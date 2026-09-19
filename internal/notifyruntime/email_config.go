@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/mail"
+	"net/smtp"
 	"os"
 	"strconv"
 	"strings"
@@ -18,7 +19,10 @@ import (
 	protonpgp "github.com/ProtonMail/go-crypto/openpgp"
 )
 
-const maxNotificationPrivateKeyBytes = 8 << 20
+const (
+	maxNotificationPrivateKeyBytes = 8 << 20
+	maxNotificationSMTPSecretBytes = 4 << 10
+)
 
 var (
 	ErrSigningKeyMissing       = errors.New("signing_key_missing")
@@ -36,10 +40,12 @@ type EmailConfig struct {
 	From, To           string
 	SigningFingerprint string
 	PrivateKeyFile     string
-	// SMTPAddr is a trusted local, plaintext relay endpoint. NetSMTPSubmitter
-	// does not provide TLS or authentication, so public IPs and FQDNs are not
-	// admissible here.
+	// SMTPAddr is a trusted local relay endpoint. System-sender authority is
+	// carried with CRAM-MD5 SMTP authentication so the password is not sent in
+	// plaintext and Postfix can persist the exact durable identity in its queue.
 	SMTPAddr      string
+	SMTPUsername  string
+	SMTPPassword  string
 	SMTPHelloName string
 	SMTPTimeout   time.Duration
 	Now           func() time.Time
@@ -66,6 +72,13 @@ func NewSignedEmailBackend(c EmailConfig) (SignedEmailBackend, error) {
 	if err := validateSMTPAddress(c.SMTPAddr); err != nil {
 		return SignedEmailBackend{}, err
 	}
+	smtpUsername := strings.TrimSpace(c.SMTPUsername)
+	if smtpUsername != "system:"+from {
+		return SignedEmailBackend{}, errors.New("signed email smtp username must equal durable system sender identity")
+	}
+	if c.SMTPPassword == "" || len(c.SMTPPassword) > maxNotificationSMTPSecretBytes {
+		return SignedEmailBackend{}, errors.New("valid signed email smtp password required")
+	}
 	if c.Policy == nil {
 		return SignedEmailBackend{}, errors.New("signed email outbound policy evaluator required")
 	}
@@ -85,12 +98,15 @@ func NewSignedEmailBackend(c EmailConfig) (SignedEmailBackend, error) {
 		From:               from,
 		To:                 to,
 		SigningFingerprint: fingerprint,
-		SMTP:               webmail.NetSMTPSubmitter{Addr: strings.TrimSpace(c.SMTPAddr), HelloName: hello, Timeout: c.SMTPTimeout},
-		Signer:             material,
-		Verifier:           material,
-		Resolver:           material,
-		Policy:             c.Policy,
-		Now:                clock,
+		SMTP: webmail.NetSMTPSubmitter{
+			Addr: strings.TrimSpace(c.SMTPAddr), HelloName: hello, Timeout: c.SMTPTimeout,
+			Auth: smtp.CRAMMD5Auth(smtpUsername, c.SMTPPassword),
+		},
+		Signer:   material,
+		Verifier: material,
+		Resolver: material,
+		Policy:   c.Policy,
+		Now:      clock,
 	}, nil
 }
 

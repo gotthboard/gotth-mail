@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"strings"
 
 	"forgejo/gotthboard/gotth-mail/internal/notification"
 	"forgejo/gotthboard/gotth-mail/internal/notifyruntime"
@@ -71,12 +73,18 @@ func notificationSinkFor(name string, getenv func(string) string) (plugin.Notifi
 		if err != nil {
 			return nil, fmt.Errorf("configure %s policy: %w", plugin.FirstEmailName, err)
 		}
+		smtpPassword, err := notificationSMTPPassword(getenv)
+		if err != nil {
+			return nil, fmt.Errorf("configure %s SMTP authentication: %w", plugin.FirstEmailName, err)
+		}
 		backend, err := notifyruntime.NewSignedEmailBackend(notifyruntime.EmailConfig{
 			From:               getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_FROM"),
 			To:                 getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_TO"),
 			SigningFingerprint: getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_SIGNING_FINGERPRINT"),
 			PrivateKeyFile:     getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_FILE"),
 			SMTPAddr:           getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR"),
+			SMTPUsername:       getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_USERNAME"),
+			SMTPPassword:       smtpPassword,
 			Policy:             policy,
 		})
 		if err != nil {
@@ -86,6 +94,38 @@ func notificationSinkFor(name string, getenv func(string) string) (plugin.Notifi
 	default:
 		return nil, fmt.Errorf("notification sink %q is not wired", name)
 	}
+}
+
+func notificationSMTPPassword(getenv func(string) string) (string, error) {
+	const maxBytes = 4 << 10
+	direct := getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD")
+	path := strings.TrimSpace(getenv("GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD_FILE"))
+	if direct != "" && path != "" {
+		return "", fmt.Errorf("SMTP password and password file are mutually exclusive")
+	}
+	if path == "" {
+		if len(direct) > maxBytes {
+			return "", fmt.Errorf("SMTP password exceeds %d bytes", maxBytes)
+		}
+		return direct, nil
+	}
+	handle, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open SMTP password file: %w", err)
+	}
+	defer handle.Close()
+	info, err := handle.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("SMTP password file must be a private regular file")
+	}
+	data, err := io.ReadAll(io.LimitReader(handle, maxBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("read SMTP password file: %w", err)
+	}
+	if len(data) > maxBytes {
+		return "", fmt.Errorf("SMTP password file exceeds %d bytes", maxBytes)
+	}
+	return strings.TrimRight(string(data), "\r\n"), nil
 }
 
 type signedEmailNotificationSink struct {

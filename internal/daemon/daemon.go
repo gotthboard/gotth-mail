@@ -239,11 +239,15 @@ func (s Service) PostfixOutboundPolicy(ctx context.Context, correlationID string
 // RCPT request against authoritative SQL state.
 // Complexity: local time and space O(1); delegated costs are defined by
 // outboundpolicy.EnforcementService.DecideSMTPRecipient.
-func (s Service) PostfixSubmissionRecipient(ctx context.Context, correlationID, authenticatedMailbox, envelopeSender, recipient string) Response {
+func (s Service) PostfixSubmissionRecipient(ctx context.Context, correlationID, authenticatedIdentity, envelopeSender, recipient string) Response {
 	if s.OutboundPolicy == nil {
 		return resp(correlationID, Defer, string(outboundpolicy.ReasonUnavailable))
 	}
-	decision, _ := s.OutboundPolicy.DecideSMTPRecipient(ctx, correlationID, authenticatedMailbox, envelopeSender, recipient)
+	mailbox, systemSenderID := outboundpolicy.AuthenticatedIdentity(authenticatedIdentity)
+	decision, _ := s.OutboundPolicy.Decide(ctx, correlationID, outboundpolicy.EnforcementRequest{
+		Stage: outboundpolicy.StageSubmission, AuthenticatedMailbox: mailbox,
+		SystemSenderID: systemSenderID, EnvelopeSender: envelopeSender, Recipient: recipient,
+	})
 	return outboundDecisionResponse(correlationID, decision)
 }
 

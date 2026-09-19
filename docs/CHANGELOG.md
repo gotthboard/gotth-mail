@@ -21,9 +21,48 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 10:40 CDT — Preserve admitted authority through final relay
+### 2026-09-19 11:14 CDT — Authenticate automatic-mail authority through final transport
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- notification SMTP configuration, secret loading, and integration tests
+- shared authenticated-identity classification and Postfix gate wiring
+- reference Postfix SASL configuration and outbound-policy container smoke
+- same-domain hostile-path evidence and changelog
+
+Explanation:
+
+Closed a cold runtime-review defect where signed notification email passed its
+initial durable system-sender policy check but submitted unauthenticated SMTP,
+leaving the final queue gate unable to recover that authority. Signed email now
+requires a CRAM-MD5 SMTP username exactly equal to `system:<from-address>` and a
+bounded direct or private-file secret. Submission policy and the final gate use
+the same authority classifier. The reference Postfix service authenticates the
+exact system ID and permits authenticated relay only after the outbound policy
+check. A bounded core restart handles the observed Postgres health/network
+startup race without masking persistent failure.
+
+Verification:
+
+- focused development-host normal and race suites passed for webmail,
+  notification runtime/plugin, daemon, gate, and outbound policy
+- a throwaway real Postfix/Cyrus spike proved colon-bearing durable IDs survive
+  SMTP AUTH into the queued `sasl_username` attribute
+- the rebuilt reference stack rejected the restricted system sender, then
+  admitted it after explicit policy change through both SMTP submission and
+  final transport, with exactly one captured relay
+- repository-wide tests passed inside the rebuilt container image
+
+Risks / non-goals:
+
+- no live queue, domain policy, deployment, production credential, tag,
+  release, or external service changed
+
+### 2026-09-19 10:40 CDT — Preserve admitted authority through final relay
+
+Commit: `767d62e`
 
 Affected files:
 

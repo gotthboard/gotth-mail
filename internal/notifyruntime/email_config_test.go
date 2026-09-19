@@ -70,7 +70,7 @@ func TestNewSignedEmailBackendUsesRuntimeClockAndExplicitSMTPOptions(t *testing.
 		t.Fatalf("runtime clock = %s, expected current time", gotNow)
 	}
 	smtp, ok := backend.SMTP.(webmail.NetSMTPSubmitter)
-	if !ok || smtp.HelloName != config.SMTPHelloName || smtp.Timeout != config.SMTPTimeout {
+	if !ok || smtp.HelloName != config.SMTPHelloName || smtp.Timeout != config.SMTPTimeout || smtp.Auth == nil {
 		t.Fatalf("bad SMTP options: %#v", backend.SMTP)
 	}
 }
@@ -92,6 +92,12 @@ func TestNewSignedEmailBackendRejectsIncompleteConfig(t *testing.T) {
 		"missing smtp":        func(c *EmailConfig) { c.SMTPAddr = "" },
 		"smtp without port":   func(c *EmailConfig) { c.SMTPAddr = "mail.example.test" },
 		"smtp invalid port":   func(c *EmailConfig) { c.SMTPAddr = "mail.example.test:70000" },
+		"missing smtp user":   func(c *EmailConfig) { c.SMTPUsername = "" },
+		"wrong smtp user":     func(c *EmailConfig) { c.SMTPUsername = "system:other@example.test" },
+		"missing smtp secret": func(c *EmailConfig) { c.SMTPPassword = "" },
+		"oversized smtp secret": func(c *EmailConfig) {
+			c.SMTPPassword = strings.Repeat("x", maxNotificationSMTPSecretBytes+1)
+		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -160,7 +166,12 @@ func TestNewSignedEmailBackendRejectsMissingAmbiguousAndMismatchedIdentity(t *te
 		want   error
 	}{
 		{name: "missing fingerprint", config: validEmailConfig(path, strings.Repeat("0", len(fingerprint))), want: ErrSigningKeyMissing},
-		{name: "unmapped from", config: func() EmailConfig { c := validEmailConfig(path, fingerprint); c.From = "other@example.test"; return c }(), want: ErrSigningIdentityMismatch},
+		{name: "unmapped from", config: func() EmailConfig {
+			c := validEmailConfig(path, fingerprint)
+			c.From = "other@example.test"
+			c.SMTPUsername = "system:other@example.test"
+			return c
+		}(), want: ErrSigningIdentityMismatch},
 		{name: "ambiguous entity", config: validEmailConfig(writeEmailConfigKeyFile(t, protonpgp.PrivateKeyType, false, entity, entity), fingerprint), want: ErrAmbiguousSigner},
 	}
 	for _, tt := range tests {
@@ -484,6 +495,8 @@ func validEmailConfig(path, fingerprint string) EmailConfig {
 		SigningFingerprint: strings.ToLower(fingerprint),
 		PrivateKeyFile:     path,
 		SMTPAddr:           "127.0.0.1:2525",
+		SMTPUsername:       "system:alerts@example.test",
+		SMTPPassword:       "smtp-secret",
 		Policy:             notificationPolicyFunc(allowNotificationPolicy),
 		Now:                func() time.Time { return emailConfigTestTime.Add(2 * time.Hour) },
 	}

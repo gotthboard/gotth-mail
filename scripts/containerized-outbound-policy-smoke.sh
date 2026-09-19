@@ -5,8 +5,12 @@ repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compose_file="$repo_dir/compose/reference/docker-compose.yml"
 project="gotth-mail-outbound-policy-${USER:-test}-$$"
 docker_command=${DOCKER:-docker}
+: "${GOTTH_MAIL_NOTIFICATION_EMAIL_FROM:=alerts@example.test}"
+: "${GOTTH_MAIL_SYSTEM_SENDER_SMTP_USERNAME:=system:alerts@example.test}"
+: "${GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD:=reference-system-sender-smtp-secret}"
+export GOTTH_MAIL_NOTIFICATION_EMAIL_FROM GOTTH_MAIL_SYSTEM_SENDER_SMTP_USERNAME GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD
 if ! $docker_command info >/dev/null 2>&1; then
-  docker_command="sudo docker"
+  docker_command="sudo --preserve-env=GOTTH_MAIL_NOTIFICATION_EMAIL_FROM,GOTTH_MAIL_SYSTEM_SENDER_SMTP_USERNAME,GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD docker"
 fi
 compose() {
   $docker_command compose -p "$project" -f "$compose_file" "$@"
@@ -54,6 +58,9 @@ printf '%s\n' "$external_response" | grep -q '^action=550 5.7.1 '
 
 same_domain_response=$(compose exec -T postfix sh -c "printf 'request=smtpd_access_policy\nprotocol_state=RCPT\ninstance=smoke-2\nsasl_username=smoke@example.test\nsender=smoke@example.test\nrecipient=postmaster@example.test\n\n' | nc gotth-mail 10025")
 printf '%s\n' "$same_domain_response" | grep -qx 'action=DUNNO'
+
+system_external_response=$(compose exec -T postfix sh -c "printf 'request=smtpd_access_policy\nprotocol_state=RCPT\ninstance=smoke-system-1\nsasl_username=system:alerts@example.test\nsender=alerts@example.test\nrecipient=outside@example.net\n\n' | nc gotth-mail 10025")
+printf '%s\n' "$system_external_response" | grep -q '^action=550 5.7.1 '
 
 compose exec -T postfix sh -c "printf 'From: sender@remote.test\nTo: forward@example.test\nSubject: inbound forward policy hold smoke\n\npolicy smoke\n' | /usr/sbin/sendmail -f sender@remote.test forward@example.test"
 
@@ -147,4 +154,24 @@ if ! compose exec -T postfix sh -c "test \"\$(wc -l < /tmp/gotth-mail-outbound-s
   exit 1
 fi
 
-printf 'containerized outbound policy smoke passed; inbound forward queue %s held, rechecked, explicitly released, and one unrestricted two-recipient relay accepted\n' "$queue_id"
+compose exec -T postfix rm -f /tmp/gotth-mail-outbound-sink.accepted
+GOTTH_MAIL_LIVE_SMTP_ADDR=127.0.0.1:2525 \
+GOTTH_MAIL_LIVE_SMTP_FROM=alerts@example.test \
+GOTTH_MAIL_LIVE_SMTP_TO=outside@example.net \
+GOTTH_MAIL_LIVE_SMTP_USERNAME="$GOTTH_MAIL_SYSTEM_SENDER_SMTP_USERNAME" \
+GOTTH_MAIL_LIVE_SMTP_PASSWORD="$GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD" \
+  go test ./internal/webmail -run '^TestNetSMTPSubmitterLiveComposePostfix$' -count=1
+attempt=0
+until compose exec -T postfix test -f /tmp/gotth-mail-outbound-sink.accepted; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 60 ]; then
+    compose logs gotth-mail postfix
+    compose exec -T postfix cat /tmp/gotth-mail-outbound-sink.log || true
+    exit 1
+  fi
+  sleep 1
+done
+compose exec -T postfix sh -c "test \"\$(wc -l < /tmp/gotth-mail-outbound-sink.accepted)\" -eq 1 && grep -qx 1 /tmp/gotth-mail-outbound-sink.accepted"
+compose exec -T database psql -U gotth_mail -d gotth_mail -Atc "SELECT count(*) FROM outbound_queue_sources WHERE source_kind='system_sender' AND object_id='system:alerts@example.test'" | grep -qx 1
+
+printf 'containerized outbound policy smoke passed; inbound forward queue %s held, rechecked, explicitly released, one unrestricted two-recipient relay accepted, and one authenticated system-sender relay admitted at submission and final transport\n' "$queue_id"
