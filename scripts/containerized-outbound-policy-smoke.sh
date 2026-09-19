@@ -45,7 +45,7 @@ done
 compose exec -T postfix postconf -h enable_long_queue_ids | grep -qx yes
 compose exec -T postfix postconf -h default_transport | grep -qx 'gotth_policy:'
 compose exec -T postfix postmap -q '<>' lmdb:/etc/postfix/sender_default_transports | grep -qx 'gotth_automatic:'
-compose exec -T postfix postconf -M gotth_automatic/unix | grep -q -- '--system-sender-id=system:mailer-daemon@example.test'
+compose exec -T postfix postconf -M gotth_automatic/unix | grep -q -- '--system-sender-id=system:mailer-daemon@example.test --client-address=${client_address}'
 if compose exec -T postfix postconf -h import_environment | grep -q 'GOTTH_MAIL_POSTFIX_RELEASE_TOKEN'; then
   echo 'release credential leaked into Postfix import_environment' >&2
   exit 1
@@ -64,7 +64,8 @@ printf '%s\n' "$same_domain_response" | grep -qx 'action=DUNNO'
 system_external_response=$(compose exec -T postfix sh -c "printf 'request=smtpd_access_policy\nprotocol_state=RCPT\ninstance=smoke-system-1\nsasl_username=system:alerts@example.test\nsender=alerts@example.test\nrecipient=outside@example.net\n\n' | nc gotth-mail 10025")
 printf '%s\n' "$system_external_response" | grep -q '^action=550 5.7.1 '
 
-compose exec -T postfix sh -c "printf 'From: sender@remote.test\nTo: forward@example.test\nSubject: inbound forward policy hold smoke\n\npolicy smoke\n' | /usr/sbin/sendmail -f sender@remote.test forward@example.test"
+inbound_response=$(compose exec -T postfix sh -c "{ sleep 1; printf 'EHLO remote.test\r\n'; sleep 1; printf 'MAIL FROM:<>\r\n'; sleep 1; printf 'RCPT TO:<forward@example.test>\r\n'; sleep 1; printf 'DATA\r\n'; sleep 1; printf 'From: Mailer Daemon <mailer-daemon@remote.test>\r\nTo: forward@example.test\r\nSubject: inbound null-sender forward policy hold smoke\r\n\r\npolicy smoke\r\n.\r\n'; sleep 1; printf 'QUIT\r\n'; } | nc -w 10 127.0.0.1 25 || true")
+printf '%s\n' "$inbound_response" | grep -q '250 2.0.0 Ok: queued as '
 
 attempt=0
 queue_id=""
@@ -81,6 +82,8 @@ done
 
 hold_state=$(compose exec -T database psql -U gotth_mail -d gotth_mail -Atc "SELECT hold_state FROM outbound_queue_messages WHERE queue_id='$queue_id'")
 test "$hold_state" = "held"
+compose exec -T database psql -U gotth_mail -d gotth_mail -Atc "SELECT count(*) FROM outbound_queue_sources WHERE queue_id='$queue_id' AND source_kind='system_sender'" | grep -qx 0
+compose exec -T database psql -U gotth_mail -d gotth_mail -Atc "SELECT count(*) FROM outbound_queue_sources WHERE queue_id='$queue_id' AND source_kind='list'" | grep -qx 1
 
 compose exec -T gotth-mail wget -qO- \
   --header='Content-Type: application/json' \

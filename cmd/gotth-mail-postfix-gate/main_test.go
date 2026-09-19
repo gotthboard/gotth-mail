@@ -43,15 +43,26 @@ func TestRunDeliveryRejectsMalformedArgumentsBeforeIO(t *testing.T) {
 }
 
 func TestDeliveryAuthoritySeparatesMailboxAndSystemSASLIdentities(t *testing.T) {
-	mailbox, system, err := deliveryAuthority("user@example.test", "")
+	mailbox, system, err := deliveryAuthority("user@example.test", "", "192.0.2.1")
 	if err != nil || mailbox != "user@example.test" || system != "" {
 		t.Fatalf("mailbox=%q system=%q err=%v", mailbox, system, err)
 	}
-	mailbox, system, err = deliveryAuthority("system:alerts@example.test", "")
+	mailbox, system, err = deliveryAuthority("system:alerts@example.test", "", "192.0.2.1")
 	if err != nil || mailbox != "" || system != "system:alerts@example.test" {
 		t.Fatalf("mailbox=%q system=%q err=%v", mailbox, system, err)
 	}
-	if _, _, err := deliveryAuthority("user@example.test", "system:alerts@example.test"); err == nil {
+	if _, _, err := deliveryAuthority("user@example.test", "system:alerts@example.test", ""); err == nil {
 		t.Fatal("accepted ambiguous mailbox and system authority")
+	}
+}
+
+func TestDeliveryAuthorityDoesNotMislabelInboundNullSender(t *testing.T) {
+	mailbox, system, err := deliveryAuthority("", "system:mailer-daemon@example.test", "192.0.2.1")
+	if err != nil || mailbox != "" || system != "" {
+		t.Fatalf("mailbox=%q system=%q err=%v", mailbox, system, err)
+	}
+	mailbox, system, err = deliveryAuthority("", "system:mailer-daemon@example.test", "")
+	if err != nil || mailbox != "" || system != "system:mailer-daemon@example.test" {
+		t.Fatalf("mailbox=%q system=%q err=%v", mailbox, system, err)
 	}
 }

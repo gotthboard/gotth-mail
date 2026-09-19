@@ -50,7 +50,10 @@ reviews remain before workflow completion.
   transport carrying a fixed durable mailer-daemon system identity. Queue
   inspection canonicalizes Postfix's `MAILER-DAEMON` JSON display to `<>`;
   admission then persists that exact null reverse path with system-sender
-  provenance before the final policy decision and relay.
+  provenance before the final policy decision and relay. The pipe also carries
+  Postfix's documented `client_address`: an inbound null-sender message has a
+  client address and therefore receives no system identity, instead retaining
+  only the authoritative local expansion provenance that caused forwarding.
 - Rejection audit stores only the recipient domain, decision reason, and policy
   revisions; no local part, message body, credential, or signing material is
   persisted.
@@ -63,7 +66,8 @@ reviews remain before workflow completion.
 2. accepted inbound mail to `forward@example.test` independently of the
    domain's outbound restriction;
 3. expanded that local forward to two external recipients, registered immutable
-   alias provenance, and held the complete long-ID queue message;
+   list provenance, and held the complete long-ID queue message without
+   assigning the inbound null sender a system identity;
 4. repeated reconciliation without duplicating the hold audit;
 5. rejected the helper credential at the release-preview route;
 6. changed the disposable fixture policy to `unrestricted`, previewed with the
@@ -167,6 +171,17 @@ accepts `<>` only with an explicit durable system identity, while ordinary
 address-bearing identities retain exact envelope binding. Focused normal and
 race suites passed, and the rebuilt container stack relayed one null-sender
 message only after registering the expected system-sender provenance.
+
+That repair's fresh review found that sender-dependent transport selection was
+not itself proof of local generation: an unauthenticated inbound bounce also
+uses `MAIL FROM:<>`. Postfix's documented pipe contract exposes the original
+`client_address`, so the dedicated transport now passes it to the gate. A
+non-empty client address suppresses the fixed system identity and leaves
+authority to the proven local expansion objects. The rebuilt stack submitted
+an inbound null-sender message over SMTP, held its two-target expansion with
+exactly one list source and no system source, explicitly released and relayed
+it, then separately proved that locally generated null-sender mail receives
+the durable mailer-daemon source.
 
 ## Remaining admission work
 

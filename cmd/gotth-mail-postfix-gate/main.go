@@ -98,12 +98,13 @@ func runDelivery(args []string, message io.Reader) error {
 	queueID := flags.String("queue-id", "", "")
 	authenticated := flags.String("authenticated-mailbox", "", "")
 	systemSender := flags.String("system-sender-id", "", "")
+	clientAddress := flags.String("client-address", "", "")
 	flags.Var(&originals, "original-recipient", "")
 	flags.Var(&recipients, "recipient", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || len(originals) == 0 || len(originals) != len(recipients) {
 		return errors.New("invalid Postfix pipe arguments")
 	}
-	authenticatedMailbox, systemSenderID, err := deliveryAuthority(*authenticated, *systemSender)
+	authenticatedMailbox, systemSenderID, err := deliveryAuthority(*authenticated, *systemSender, *clientAddress)
 	if err != nil {
 		return err
 	}
@@ -144,15 +145,19 @@ func runDelivery(args []string, message io.Reader) error {
 }
 
 // deliveryAuthority maps Postfix's authenticated SASL identity onto exactly
-// one durable authority class. System senders authenticate with their stable
-// `system:` object ID; ordinary identities remain mailbox addresses.
+// one durable authority class. A fixed automatic-mail identity applies only
+// when Postfix has no remote SMTP client; inbound null-sender mail must derive
+// authority from its local expansion objects instead.
 // Complexity: time O(n), Omega(1); auxiliary space O(1), where n is bounded
 // identity text.
-func deliveryAuthority(authenticated, explicitSystem string) (string, string, error) {
+func deliveryAuthority(authenticated, explicitSystem, clientAddress string) (string, string, error) {
 	if authenticated != "" && explicitSystem != "" {
 		return "", "", errors.New("ambiguous Postfix delivery authority")
 	}
 	if explicitSystem != "" {
+		if clientAddress != "" {
+			return "", "", nil
+		}
 		return "", explicitSystem, nil
 	}
 	mailbox, systemSenderID := outboundpolicy.AuthenticatedIdentity(authenticated)

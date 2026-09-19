@@ -1,4 +1,4 @@
 gotth_policy unix - n n - - pipe
   flags=q user=nobody null_sender= argv=/usr/local/bin/gotth-mail-postfix-gate deliver --queue-id=${queue_id} --authenticated-mailbox=${sasl_username} --original-recipient=${original_recipient} --recipient=${recipient}
 gotth_automatic unix - n n - - pipe
-  flags=q user=nobody null_sender= argv=/usr/local/bin/gotth-mail-postfix-gate deliver --queue-id=${queue_id} --system-sender-id=system:mailer-daemon@example.test --original-recipient=${original_recipient} --recipient=${recipient}
+  flags=q user=nobody null_sender= argv=/usr/local/bin/gotth-mail-postfix-gate deliver --queue-id=${queue_id} --system-sender-id=system:mailer-daemon@example.test --client-address=${client_address} --original-recipient=${original_recipient} --recipient=${recipient}

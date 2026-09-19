@@ -21,9 +21,45 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 11:42 CDT — Enforce null-sender automatic mail at final transport
+### 2026-09-19 11:58 CDT — Preserve inbound null-sender provenance
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- Postfix automatic-mail pipe arguments and gate authority classification
+- gate authority regression tests
+- outbound-policy reference-stack smoke
+- same-domain hostile-path evidence and changelog
+
+Explanation:
+
+Repaired a fresh-review provenance flaw in the null-sender transport. An
+inbound unauthenticated bounce also has `MAIL FROM:<>`, so sender-dependent
+transport selection alone cannot prove that Postfix generated it locally. The
+automatic pipe now passes Postfix's documented `client_address` attribute. The
+gate grants the fixed mailer-daemon system identity only when that attribute is
+empty; an inbound null-sender message instead derives authority solely from
+the authoritative alias/list/forward objects that caused outbound expansion.
+
+Verification:
+
+- focused gate/helper/outbound-policy tests passed on the development host
+- the rebuilt reference stack accepted an unauthenticated null-sender SMTP
+  message to the local two-target list, held it under list provenance with no
+  system-sender source, and later relayed the explicitly released message
+- the same stack separately proved that a locally injected null-sender
+  automatic message receives the durable mailer-daemon source
+- repository-wide tests passed inside the rebuilt container image
+
+Risks / non-goals:
+
+- no live queue, domain policy, deployment, production credential, tag,
+  release, or external service changed
+
+### 2026-09-19 11:42 CDT — Enforce null-sender automatic mail at final transport
+
+Commit: `9c69831`
 
 Affected files:
 
