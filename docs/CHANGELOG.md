@@ -21,9 +21,42 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 12:09 CDT — Bind activation confirmation and apply queue holds
+### 2026-09-19 12:14 CDT — Clarify policy activation completion state
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- outbound-policy API request canonicalization and response status
+- API activation regressions and activation complexity contract
+- same-domain hostile-path evidence and changelog
+
+Explanation:
+
+Closed two product-boundary defects found in the repaired activation route.
+Domain input is now canonicalized before scoped authorization, so DNS-equivalent
+forms such as `Example.TEST.` use the same lower-case administrative resource.
+When policy has committed but one or more queue holds remain incomplete, the
+API now returns `202 Accepted` with exact reconciliation counts instead of an
+indistinguishable `200 OK`. This preserves the truth that policy is already
+authoritative while making pending retry work machine-visible.
+
+Verification:
+
+- the scoped API integration test now previews and applies a mixed-case,
+  terminal-dot domain through a lower-case domain token
+- a second API integration test commits a policy with an unavailable
+  reconciler and requires `202` plus one reported failed hold
+- focused API and outbound-policy suites passed on the development host
+
+Risks / non-goals:
+
+- no live queue, domain policy, deployment, production credential, tag,
+  release, or external service changed
+
+### 2026-09-19 12:09 CDT — Bind activation confirmation and apply queue holds
+
+Commit: `fd156d8`
 
 Affected files:
 

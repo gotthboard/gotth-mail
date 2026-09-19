@@ -154,6 +154,9 @@ func (s AdminService) Apply(ctx context.Context, actor audit.ActorRef, correlati
 // structured result because the authoritative policy has already committed.
 // Repeating a confirmed same-scope apply retries incomplete holds without
 // implicitly releasing anything.
+// Complexity: process time O(q*r*(s*m+r log r+b)), Omega(q); auxiliary space
+// O(q+r+s+b), where q is selected queues and the remaining bounded variables
+// follow EnforcementService.Decide and QueueReconciler.Reconcile.
 func (s ActivationService) Apply(ctx context.Context, actor audit.ActorRef, correlationID, domain string, requested Scope, confirmation string) (ChangeResult, error) {
 	result, err := s.Admin.Apply(ctx, actor, correlationID, domain, requested, confirmation)
 	if err != nil || requested != ScopeSameDomainOnly {

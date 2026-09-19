@@ -43,7 +43,7 @@ func TestOutboundPolicyAdminAPIRequiresScopedPreviewAndConfirmation(t *testing.T
 	handler := (Server{AuditDB: db, Identity: ids, Authz: authz.StaticAuthorizer{}, Daemon: daemon.Service{
 		OutboundPolicy: policy, OutboundReconciler: &outboundpolicy.QueueReconciler{Store: queue, Inspector: boundary, Holder: boundary},
 	}}).Handler()
-	body := `{"domain":"example.test","scope":"same_domain_only"}`
+	body := `{"domain":"Example.TEST.","scope":"same_domain_only"}`
 	unauthorized := httptest.NewRecorder()
 	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/api/v1/domains/outbound-policy/preview", strings.NewReader(body)))
 	if unauthorized.Code != http.StatusUnauthorized {
@@ -82,6 +82,43 @@ func TestOutboundPolicyAdminAPIRequiresScopedPreviewAndConfirmation(t *testing.T
 	}
 	if scope != string(outboundpolicy.ScopeSameDomainOnly) || revision != 2 {
 		t.Fatalf("scope=%q revision=%d", scope, revision)
+	}
+}
+
+func TestOutboundPolicyAdminAPIReportsCommittedPendingReconciliation(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	if _, err := db.Exec(`INSERT INTO domains(id,name,enabled,outbound_scope,outbound_policy_revision,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000a11','example.test',true,'unrestricted',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP); INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000a12','00000000-0000-4000-8000-000000000a11','sender',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	queue := outboundpolicy.QueueStore{DB: db}
+	if _, _, err := queue.Register(context.Background(), outboundpolicy.QueueRegistration{
+		QueueID: "BCDFGHJKLMNPz2345", ArrivalFingerprint: strings.Repeat("b", 64), EnvelopeSender: "sender@example.test",
+		Recipients: []string{"outside@example.net"}, Sources: []outboundpolicy.QueueSource{{Kind: outboundpolicy.SourceAuthenticatedMailbox, ObjectID: "00000000-0000-4000-8000-000000000a12"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ids := identity.NewService("example.test")
+	if err := ids.AddTokenWithScopes("domain-admin", "api_token", "domain-admin-secret", "domain:admin:example.test"); err != nil {
+		t.Fatal(err)
+	}
+	handler := (Server{AuditDB: db, Identity: ids, Authz: authz.StaticAuthorizer{}}).Handler()
+	request := func(path, body string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer domain-admin-secret")
+		r.Header.Set("X-Correlation-ID", "outbound-policy-pending-test")
+		handler.ServeHTTP(response, r)
+		return response
+	}
+	preview := request("/api/v1/domains/outbound-policy/preview", `{"domain":"example.test","scope":"same_domain_only"}`)
+	var plan outboundpolicy.ChangePlan
+	if preview.Code != http.StatusOK || json.Unmarshal(preview.Body.Bytes(), &plan) != nil {
+		t.Fatalf("preview status=%d body=%s", preview.Code, preview.Body.String())
+	}
+	applied := request("/api/v1/domains/outbound-policy/apply", `{"domain":"example.test","scope":"same_domain_only","confirmation":"`+plan.Digest+`"}`)
+	var result outboundpolicy.ChangeResult
+	if err := json.Unmarshal(applied.Body.Bytes(), &result); applied.Code != http.StatusAccepted || err != nil || !result.Changed || result.Reconciliation == nil || result.Reconciliation.Failed != 1 {
+		t.Fatalf("status=%d result=%#v err=%v", applied.Code, result, err)
 	}
 }
 

@@ -85,6 +85,9 @@ func (s Server) registerOutboundPolicyAdmin(mux *http.ServeMux, ids *identity.Se
 			http.Error(w, "outbound policy apply failed", http.StatusBadRequest)
 			return
 		}
+		if result.Reconciliation != nil && result.Reconciliation.Failed > 0 {
+			w.WriteHeader(http.StatusAccepted)
+		}
 		writeJSON(w, result)
 	})
 }
@@ -103,5 +106,11 @@ func decodeOutboundPolicyAdmin(w http.ResponseWriter, r *http.Request, out *outb
 		http.Error(w, "bad outbound policy request", http.StatusBadRequest)
 		return false
 	}
+	domain, err := outboundpolicy.NormalizeDomain(out.Domain)
+	if err != nil {
+		http.Error(w, "bad outbound policy request", http.StatusBadRequest)
+		return false
+	}
+	out.Domain = domain
 	return true
 }

@@ -143,6 +143,14 @@ repeating a confirmed same-scope apply retries the hold without implicit
 release. The API integration test observes the queue reach `held` through this
 real route.
 
+The repaired API pass then found that authorization used the raw domain before
+normalization and that incomplete post-commit reconciliation still returned an
+ordinary `200`. Requests now canonicalize the domain before resolving the
+domain-scoped token. Fully reconciled activation returns `200`; committed
+policy with remaining hold failures returns `202 Accepted` and exact selected,
+held, already-held, no-longer-blocked, and failed counts. API tests cover both
+the DNS-equivalent authorization form and the pending-reconciliation status.
+
 The repaired-tree pass found that unauthenticated inbound queue admission
 treated a reverse path matching a hosted mailbox as authoritative local sender
 provenance. That trusted spoofable envelope text and could inject an unintended
