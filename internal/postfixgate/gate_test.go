@@ -70,10 +70,11 @@ func TestGateRegistersChecksEveryRecipientThenRelays(t *testing.T) {
 	}
 }
 
-func TestGateReconcilesPolicyHoldBeforeRelay(t *testing.T) {
+func TestGateHoldsWholeMixedRecipientMessageBeforeRelay(t *testing.T) {
 	metadata := gateMetadata()
 	control := &fakeController{decisions: map[string]outboundpolicy.Decision{
-		"one@example.net": {Action: outboundpolicy.ActionDefer, Reason: outboundpolicy.ReasonPolicyHold},
+		"one@example.net": {Action: outboundpolicy.ActionOK, Reason: outboundpolicy.ReasonUnrestricted},
+		"two@example.net": {Action: outboundpolicy.ActionDefer, Reason: outboundpolicy.ReasonPolicyHold},
 	}}
 	relay := &fakeRelay{}
 	err := (Gate{Inspector: fakeInspector{metadata: metadata}, Control: control, Relay: relay}).Deliver(context.Background(), DeliveryRequest{
@@ -99,6 +100,27 @@ func TestGateFailsClosedBeforeReadingOrRelaying(t *testing.T) {
 	}, strings.NewReader(strings.Repeat("x", 1024)))
 	if err == nil || relay.calls != 0 {
 		t.Fatalf("relay=%d err=%v", relay.calls, err)
+	}
+}
+
+func TestGateRetryAndReplayRecheckCurrentPolicy(t *testing.T) {
+	metadata := gateMetadata()
+	control := &fakeController{decisions: map[string]outboundpolicy.Decision{
+		"one@example.net": {Action: outboundpolicy.ActionOK, Reason: outboundpolicy.ReasonUnrestricted},
+		"two@example.net": {Action: outboundpolicy.ActionOK, Reason: outboundpolicy.ReasonUnrestricted},
+	}}
+	relay := &fakeRelay{}
+	gate := Gate{Inspector: fakeInspector{metadata: metadata}, Control: control, Relay: relay}
+	request := DeliveryRequest{QueueID: metadata.QueueID, Deliveries: []outboundpolicy.QueueDelivery{{OriginalRecipient: "one@example.net", Recipient: "one@example.net"}}}
+	if err := gate.Deliver(context.Background(), request, bytes.NewBufferString("first")); err != nil {
+		t.Fatal(err)
+	}
+	control.decisions["two@example.net"] = outboundpolicy.Decision{Action: outboundpolicy.ActionDefer, Reason: outboundpolicy.ReasonPolicyHold}
+	if err := gate.Deliver(context.Background(), request, bytes.NewBufferString("retry")); err == nil {
+		t.Fatal("retry bypassed changed policy")
+	}
+	if control.registered != 2 || control.reconciled != 1 || relay.calls != 1 {
+		t.Fatalf("registered=%d reconciled=%d relay=%d", control.registered, control.reconciled, relay.calls)
 	}
 }
 

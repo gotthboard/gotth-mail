@@ -201,6 +201,7 @@ func TestConfigureDatabaseFromEnvMigratesAndWiresDurableServices(t *testing.T) {
 func TestConfigurePostfixHelperRequiresCompleteDurableConfiguration(t *testing.T) {
 	t.Setenv("GOTTH_MAIL_POSTFIX_HELPER_URL", "http://postfix:10026")
 	t.Setenv("GOTTH_MAIL_POSTFIX_HELPER_TOKEN", "0123456789abcdef0123456789abcdef")
+	t.Setenv("GOTTH_MAIL_POSTFIX_RELEASE_TOKEN", "abcdef0123456789abcdef0123456789")
 	if err := configurePostfixHelperFromEnv(&api.Server{}); err == nil {
 		t.Fatal("Postfix helper accepted missing database wiring")
 	}
@@ -212,6 +213,9 @@ func TestConfigurePostfixHelperRequiresCompleteDurableConfiguration(t *testing.T
 	}
 	if server.Daemon.OutboundReconciler == nil {
 		t.Fatal("Postfix queue reconciler was not wired")
+	}
+	if server.Daemon.OutboundRelease == nil {
+		t.Fatal("Postfix queue release service was not wired")
 	}
 }
 

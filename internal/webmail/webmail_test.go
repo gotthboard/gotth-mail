@@ -64,11 +64,13 @@ func (f *fakeIMAP) Quota(context.Context) (int64, int64, error) { return 1, 10, 
 type fakeSMTP struct {
 	submitted bool
 	body      []byte
+	envelope  Envelope
 }
 
 func (f *fakeSMTP) Submit(ctx context.Context, e Envelope, b []byte) error {
 	f.submitted = true
 	f.body = b
+	f.envelope = e
 	return nil
 }
 
@@ -79,6 +81,19 @@ type fakeResolver struct{}
 type fakeOutboundPolicy struct {
 	decision outboundpolicy.Decision
 	err      error
+}
+
+type recipientPolicy struct {
+	seen   []string
+	reject string
+}
+
+func (p *recipientPolicy) Decide(_ context.Context, _ string, request outboundpolicy.EnforcementRequest) (outboundpolicy.Decision, error) {
+	p.seen = append(p.seen, request.Recipient)
+	if request.Recipient == p.reject {
+		return outboundpolicy.Decision{Action: outboundpolicy.ActionReject, Reason: outboundpolicy.ReasonRecipientForbidden}, nil
+	}
+	return outboundpolicy.Decision{Action: outboundpolicy.ActionOK, Reason: outboundpolicy.ReasonUnrestricted}, nil
 }
 
 func (f fakeOutboundPolicy) Decide(context.Context, string, outboundpolicy.EnforcementRequest) (outboundpolicy.Decision, error) {
@@ -189,6 +204,36 @@ func TestComposeDraftPolicyRejectsAtomicallyBeforeSigningOrSMTP(t *testing.T) {
 	result, err := s.Submit(context.Background(), draft.ID)
 	if err == nil || result.State != "failed" || smtp.submitted {
 		t.Fatalf("result=%+v err=%v smtp=%v", result, err, smtp.submitted)
+	}
+}
+
+func TestComposeDraftChecksToCcBccAtomicallyAndHidesBCCHeader(t *testing.T) {
+	smtp := &fakeSMTP{}
+	policy := &recipientPolicy{reject: "hidden@outside.test"}
+	s := &Sender{SMTP: smtp, Signer: fakeSigner{}, Resolver: fakeResolver{}, Policy: policy, Drafts: map[string]Draft{}}
+	draft := s.SaveDraft(Draft{
+		From: "u@example.test", To: "to@example.test", Cc: []string{"cc@example.test"}, Bcc: []string{"hidden@outside.test"},
+		Subject: "s", Body: "body", SigningFingerprint: "fp",
+	})
+	if result, err := s.Submit(context.Background(), draft.ID); err == nil || result.State != "failed" || smtp.submitted {
+		t.Fatalf("result=%#v err=%v smtp=%v", result, err, smtp.submitted)
+	}
+	if got := strings.Join(policy.seen, ","); got != "to@example.test,cc@example.test,hidden@outside.test" {
+		t.Fatalf("policy recipients=%q", got)
+	}
+	policy.reject = ""
+	policy.seen = nil
+	draft.State = "draft"
+	s.Drafts[draft.ID] = draft
+	if _, err := s.Submit(context.Background(), draft.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(smtp.envelope.To, ","); got != "to@example.test,cc@example.test,hidden@outside.test" {
+		t.Fatalf("envelope recipients=%q", got)
+	}
+	message := string(smtp.body)
+	if !strings.Contains(message, "Cc: cc@example.test\r\n") || strings.Contains(message, "hidden@outside.test") || strings.Contains(strings.ToLower(message), "bcc:") {
+		t.Fatalf("BCC leaked or Cc missing:\n%s", message)
 	}
 }
 func TestSecurityPolicy(t *testing.T) {

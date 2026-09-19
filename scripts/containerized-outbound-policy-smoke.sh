@@ -40,6 +40,14 @@ done
 
 compose exec -T postfix postconf -h enable_long_queue_ids | grep -qx yes
 compose exec -T postfix postconf -h default_transport | grep -qx 'gotth_policy:'
+if compose exec -T postfix postconf -h import_environment | grep -q 'GOTTH_MAIL_POSTFIX_RELEASE_TOKEN'; then
+  echo 'release credential leaked into Postfix import_environment' >&2
+  exit 1
+fi
+if compose exec -T postfix postconf -h export_environment | grep -q 'GOTTH_MAIL_POSTFIX_RELEASE_TOKEN'; then
+  echo 'release credential leaked into Postfix export_environment' >&2
+  exit 1
+fi
 
 external_response=$(compose exec -T postfix sh -c "printf 'request=smtpd_access_policy\nprotocol_state=RCPT\ninstance=smoke-1\nsasl_username=smoke@example.test\nsender=smoke@example.test\nrecipient=outside@example.net\n\n' | nc gotth-mail 10025")
 printf '%s\n' "$external_response" | grep -q '^action=550 5.7.1 '
@@ -47,7 +55,7 @@ printf '%s\n' "$external_response" | grep -q '^action=550 5.7.1 '
 same_domain_response=$(compose exec -T postfix sh -c "printf 'request=smtpd_access_policy\nprotocol_state=RCPT\ninstance=smoke-2\nsasl_username=smoke@example.test\nsender=smoke@example.test\nrecipient=postmaster@example.test\n\n' | nc gotth-mail 10025")
 printf '%s\n' "$same_domain_response" | grep -qx 'action=DUNNO'
 
-compose exec -T postfix sh -c "printf 'From: smoke@example.test\nTo: outside@example.net\nSubject: outbound policy hold smoke\n\npolicy smoke\n' | /usr/sbin/sendmail -f smoke@example.test outside@example.net"
+compose exec -T postfix sh -c "printf 'From: sender@remote.test\nTo: forward@example.test\nSubject: inbound forward policy hold smoke\n\npolicy smoke\n' | /usr/sbin/sendmail -f sender@remote.test forward@example.test"
 
 attempt=0
 queue_id=""
@@ -75,4 +83,56 @@ compose exec -T gotth-mail wget -qO- \
 
 compose exec -T database psql -U gotth_mail -d gotth_mail -Atc "SELECT count(*) FROM audit_events WHERE resource_type='postfix_queue' AND resource_id='$queue_id' AND action='queue.policy_hold.applied' AND result='success'" | grep -qx 1
 
-printf 'containerized outbound policy smoke passed; queue %s held and rechecked\n' "$queue_id"
+if compose exec -T gotth-mail wget -qO- \
+  --header='Content-Type: application/json' \
+  --header='Authorization: Bearer reference-postfix-helper-token-32bytes' \
+  --post-data="{\"queue_id\":\"$queue_id\"}" \
+  http://127.0.0.1:8080/internal/v1/postfix/queue/release-preview >/dev/null 2>&1; then
+  echo 'delivery helper credential was accepted by release preview' >&2
+  exit 1
+fi
+
+compose exec -T database psql -U gotth_mail -d gotth_mail -v ON_ERROR_STOP=1 -c \
+  "UPDATE domains SET outbound_scope='unrestricted',outbound_policy_revision=outbound_policy_revision+1,updated_at=CURRENT_TIMESTAMP WHERE name='example.test'" >/dev/null
+
+preview=$(compose exec -T gotth-mail wget -qO- \
+  --header='Content-Type: application/json' \
+  --header='Authorization: Bearer reference-postfix-release-token-32byte' \
+  --header='X-Correlation-ID: outbound-policy-smoke-release-preview' \
+  --post-data="{\"queue_id\":\"$queue_id\"}" \
+  http://127.0.0.1:8080/internal/v1/postfix/queue/release-preview)
+printf '%s\n' "$preview" | jq -e --arg queue_id "$queue_id" \
+  '.decision == "ok" and .reason == "outbound_queue_release_previewed" and .queue_id == $queue_id and .queue_state == "held" and (.confirmation | test("^[0-9a-f]{64}$"))' >/dev/null
+confirmation=$(printf '%s\n' "$preview" | jq -r '.confirmation')
+
+compose exec -T gotth-mail wget -qO- \
+  --header='Content-Type: application/json' \
+  --header='Authorization: Bearer reference-postfix-release-token-32byte' \
+  --header='X-Correlation-ID: outbound-policy-smoke-release' \
+  --post-data="{\"queue_id\":\"$queue_id\",\"confirmation\":\"$confirmation\"}" \
+  http://127.0.0.1:8080/internal/v1/postfix/queue/release \
+  | jq -e --arg queue_id "$queue_id" '.decision == "ok" and .reason == "outbound_queue_released" and .queue_id == $queue_id and .queue_state == "released"' >/dev/null
+
+release_state=$(compose exec -T database psql -U gotth_mail -d gotth_mail -Atc "SELECT hold_state FROM outbound_queue_messages WHERE queue_id='$queue_id'")
+test "$release_state" = "released"
+if compose exec -T postfix postqueue -j | jq -e --arg queue_id "$queue_id" 'select(.queue_id == $queue_id and .queue_name == "hold")' >/dev/null; then
+  echo 'released queue message remained in the Postfix hold queue' >&2
+  exit 1
+fi
+compose exec -T database psql -U gotth_mail -d gotth_mail -Atc "SELECT count(*) FROM audit_events WHERE resource_type='postfix_queue' AND resource_id='$queue_id' AND action='queue.policy_hold.release_start' AND result='success'" | grep -qx 1
+compose exec -T database psql -U gotth_mail -d gotth_mail -Atc "SELECT count(*) FROM audit_events WHERE resource_type='postfix_queue' AND resource_id='$queue_id' AND action='queue.policy_hold.released' AND result='success'" | grep -qx 1
+
+compose exec -T postfix sh -c "rm -f /tmp/gotth-mail-outbound-sink.accepted; socat TCP-LISTEN:9,bind=127.0.0.1,reuseaddr,fork EXEC:'sh /reference/postfix/smtp-sink.sh' >/tmp/gotth-mail-outbound-sink.log 2>&1 &"
+compose exec -T postfix sh -c "printf 'From: smoke@example.test\nTo: admitted@example.net\nSubject: outbound policy admitted relay smoke\n\npolicy smoke\n' | /usr/sbin/sendmail -f smoke@example.test admitted@example.net"
+attempt=0
+until compose exec -T postfix test -f /tmp/gotth-mail-outbound-sink.accepted; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 60 ]; then
+    compose logs gotth-mail postfix
+    compose exec -T postfix cat /tmp/gotth-mail-outbound-sink.log || true
+    exit 1
+  fi
+  sleep 1
+done
+
+printf 'containerized outbound policy smoke passed; inbound forward queue %s held, rechecked, explicitly released, and unrestricted final relay accepted\n' "$queue_id"

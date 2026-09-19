@@ -177,6 +177,24 @@ func (b PostfixBoundary) Hold(ctx context.Context, queueID string) error {
 	return nil
 }
 
+// Release invokes only the documented whole-message `postsuper -H queue_id`
+// operation with one previously validated long queue ID.
+// Complexity: time O(o), Omega(1), tight Theta(o); auxiliary space O(o),
+// Omega(1), where bounded o is helper output; process latency is additive.
+func (b PostfixBoundary) Release(ctx context.Context, queueID string) error {
+	if !validLongQueueID(queueID) || !validPostfixPath(b.PostsuperPath, "postsuper") {
+		return errors.New("invalid Postfix release request")
+	}
+	limit, err := b.outputLimit()
+	if err != nil {
+		return err
+	}
+	if _, err := b.runner().Run(ctx, b.PostsuperPath, []string{"-H", queueID}, limit); err != nil {
+		return errors.New("Postfix release helper failed")
+	}
+	return nil
+}
+
 // QueueArrivalFingerprint binds the Postfix instance, long ID, arrival time,
 // message size, canonical envelope sender, and canonical recipient set.
 // Complexity: time O(r log r+b), Omega(r), tight Theta(r log r+b); auxiliary

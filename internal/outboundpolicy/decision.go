@@ -49,7 +49,7 @@ type SystemSenderStore struct {
 // O(s log N), auxiliary space O(s*m+r+b), where bounded s is sources, m domain
 // length, r recipients, b their bytes, and N is authoritative object rows.
 func (s EnforcementService) Decide(ctx context.Context, correlationID string, req EnforcementRequest) (Decision, error) {
-	if s.DB == nil || strings.TrimSpace(correlationID) == "" {
+	if s.DB == nil || !validPolicyCorrelationID(correlationID) {
 		return unavailableDecision(errors.New("outbound enforcement service is unavailable"))
 	}
 	if req.Stage == StageSubmission {
@@ -62,7 +62,7 @@ func (s EnforcementService) Decide(ctx context.Context, correlationID string, re
 			return unavailableDecision(err)
 		}
 		decision := Evaluate(Request{Stage: StageSubmission, Recipient: req.Recipient, Governing: governing})
-		return decision, nil
+		return s.recordSubmissionDecision(ctx, correlationID, req.Recipient, decision)
 	}
 	if req.Stage != StageTransport || req.AuthenticatedMailbox != "" || req.SystemSenderID != "" || req.EnvelopeSender != "" || len(req.ExpansionSources) != 0 {
 		return unavailableDecision(errors.New("invalid outbound enforcement stage request"))
@@ -104,7 +104,7 @@ func (s EnforcementService) Decide(ctx context.Context, correlationID string, re
 // O(h*a log N+s log N); auxiliary space O(a*t+r+s*m), with expansion and
 // source variables defined by expandOriginal and resolvePolicySources.
 func (s EnforcementService) DecideSMTPRecipient(ctx context.Context, correlationID, authenticatedMailbox, envelopeSender, recipient string) (Decision, error) {
-	if s.DB == nil || strings.TrimSpace(correlationID) == "" {
+	if s.DB == nil || !validPolicyCorrelationID(correlationID) {
 		return unavailableDecision(errors.New("outbound enforcement service is unavailable"))
 	}
 	authority, err := s.submissionSources(ctx, EnforcementRequest{
@@ -133,7 +133,7 @@ func (s EnforcementService) DecideSMTPRecipient(ctx context.Context, correlation
 		}
 		if decision.Action == ActionReject {
 			decision.Revisions = result.Revisions
-			return decision, nil
+			return s.recordSubmissionDecision(ctx, correlationID, finalRecipient, decision)
 		}
 		if decision.Action != ActionOK {
 			return unavailableDecision(errors.New("invalid submission expansion policy result"))
@@ -146,6 +146,52 @@ func (s EnforcementService) DecideSMTPRecipient(ctx context.Context, correlation
 		result.Revisions = nil
 	}
 	return result, nil
+}
+
+// recordSubmissionDecision durably audits rejection/deferral without storing
+// a full address, message body, credential, or signing material. Audit failure
+// converts the decision to an unavailable deferral.
+// Complexity: time O(n+r), Omega(n); auxiliary space O(n+r), where n is the
+// bounded recipient domain and r policy revisions; one audit insert is additive.
+func (s EnforcementService) recordSubmissionDecision(ctx context.Context, correlationID, recipient string, decision Decision) (Decision, error) {
+	if decision.Action == ActionOK {
+		return decision, nil
+	}
+	domain, err := recipientDomain(recipient)
+	if err != nil {
+		return unavailableDecision(err)
+	}
+	result := "failure"
+	if decision.Action == ActionReject {
+		result = "denied"
+	}
+	event := audit.Event{
+		Actor:         audit.ActorRef{Type: "service", ID: "outbound-policy"},
+		Action:        "outbound.policy." + string(decision.Action),
+		Resource:      audit.ResourceRef{Type: "outbound_submission", ID: "submission"},
+		AfterRedacted: map[string]any{"recipient_domain": domain, "reason": decision.Reason, "revisions": decision.Revisions},
+		CorrelationID: correlationID,
+		Result:        result,
+	}
+	if err := (audit.SQLWriter{DB: s.DB}).Write(ctx, event); err != nil {
+		return unavailableDecision(err)
+	}
+	return decision, nil
+}
+
+// validPolicyCorrelationID bounds the audit and request-correlation surface.
+// Complexity: time O(n), Omega(1); auxiliary space O(1), where n is at most
+// 256 bytes.
+func validPolicyCorrelationID(value string) bool {
+	if value == "" || len(value) > 256 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // submissionSources authenticates one mailbox or durable system sender,

@@ -49,6 +49,15 @@ type Response struct {
 	RetryAfterSec   int               `json:"retry_after_sec,omitempty"`
 	Transport       string            `json:"transport,omitempty"`
 	PolicyRevisions map[string]uint64 `json:"policy_revisions,omitempty"`
+	QueueID         string            `json:"queue_id,omitempty"`
+	QueueState      string            `json:"queue_state,omitempty"`
+	Confirmation    string            `json:"confirmation,omitempty"`
+	LastErrorCode   string            `json:"last_error_code,omitempty"`
+	RecipientCount  int               `json:"recipient_count,omitempty"`
+	SourceCount     int               `json:"source_count,omitempty"`
+	Attempts        uint64            `json:"attempts,omitempty"`
+	PostfixHeld     bool              `json:"postfix_held,omitempty"`
+	Consistent      bool              `json:"consistent,omitempty"`
 }
 
 type Domain struct {
@@ -81,19 +90,22 @@ type RateLimit struct {
 }
 
 type Service struct {
-	Unavailable          bool
-	Domains              map[string]Domain
-	Mailboxes            map[string]Mailbox
-	Aliases              map[string]Alias
-	RateLimits           map[string]RateLimit
-	AppPasswordVerifiers map[string][]string
-	Audit                audit.Writer
-	OutboundPolicy       *outboundpolicy.EnforcementService
-	OutboundAdmission    *outboundpolicy.QueueAdmissionService
-	OutboundReconciler   *outboundpolicy.QueueReconciler
-	postfixHelperToken   [32]byte
-	postfixHelperEnabled bool
-	stateMu              *sync.RWMutex
+	Unavailable           bool
+	Domains               map[string]Domain
+	Mailboxes             map[string]Mailbox
+	Aliases               map[string]Alias
+	RateLimits            map[string]RateLimit
+	AppPasswordVerifiers  map[string][]string
+	Audit                 audit.Writer
+	OutboundPolicy        *outboundpolicy.EnforcementService
+	OutboundAdmission     *outboundpolicy.QueueAdmissionService
+	OutboundReconciler    *outboundpolicy.QueueReconciler
+	OutboundRelease       *outboundpolicy.QueueReleaseService
+	postfixHelperToken    [32]byte
+	postfixHelperEnabled  bool
+	postfixReleaseToken   [32]byte
+	postfixReleaseEnabled bool
+	stateMu               *sync.RWMutex
 }
 
 // ConfigurePostfixHelperToken stores only a fixed-length digest for the
@@ -104,8 +116,29 @@ func (s *Service) ConfigurePostfixHelperToken(token string) error {
 	if len(token) < 32 || len(token) > 4096 || strings.TrimSpace(token) != token {
 		return errors.New("invalid Postfix helper token")
 	}
-	s.postfixHelperToken = sha256.Sum256([]byte(token))
+	digest := sha256.Sum256([]byte(token))
+	if s.postfixReleaseEnabled && hmac.Equal(digest[:], s.postfixReleaseToken[:]) {
+		return errors.New("Postfix helper token must differ from release token")
+	}
+	s.postfixHelperToken = digest
 	s.postfixHelperEnabled = true
+	return nil
+}
+
+// ConfigurePostfixReleaseToken stores the distinct credential digest for
+// previewed and confirmed release operations.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(1), where
+// n is the bounded secret length.
+func (s *Service) ConfigurePostfixReleaseToken(token string) error {
+	if len(token) < 32 || len(token) > 4096 || strings.TrimSpace(token) != token {
+		return errors.New("invalid Postfix release token")
+	}
+	digest := sha256.Sum256([]byte(token))
+	if s.postfixHelperEnabled && hmac.Equal(digest[:], s.postfixHelperToken[:]) {
+		return errors.New("Postfix release token must differ from helper token")
+	}
+	s.postfixReleaseToken = digest
+	s.postfixReleaseEnabled = true
 	return nil
 }
 
@@ -275,6 +308,71 @@ func (s Service) PostfixQueueReconcile(ctx context.Context, correlationID, queue
 		reason = "outbound_queue_hold_applied"
 	}
 	return resp(correlationID, OK, reason)
+}
+
+// PostfixQueueReleasePreview returns a redacted confirmation bound to current
+// queue identity and policy state; it does not mutate Postfix or SQL state.
+// Complexity: local time and space O(1); delegated costs are defined by
+// outboundpolicy.QueueReleaseService.Preview.
+func (s Service) PostfixQueueReleasePreview(ctx context.Context, correlationID, queueID string) Response {
+	if s.OutboundRelease == nil {
+		return resp(correlationID, Defer, string(outboundpolicy.ReasonUnavailable))
+	}
+	plan, err := s.OutboundRelease.Preview(ctx, queueID)
+	if err != nil {
+		return resp(correlationID, Reject, "outbound_queue_release_not_permitted")
+	}
+	result := resp(correlationID, OK, "outbound_queue_release_previewed")
+	result.QueueID = plan.QueueID
+	result.QueueState = string(plan.HoldState)
+	result.Confirmation = plan.ConfirmationHash
+	result.PolicyRevisions = plan.PolicyRevisions
+	return result
+}
+
+// PostfixQueueRelease performs one separately confirmed whole-message release.
+// Complexity: local time and space O(1); delegated costs are defined by
+// outboundpolicy.QueueReleaseService.Release.
+func (s Service) PostfixQueueRelease(ctx context.Context, correlationID, queueID, confirmation string) Response {
+	if s.OutboundRelease == nil {
+		return resp(correlationID, Defer, string(outboundpolicy.ReasonUnavailable))
+	}
+	result, err := s.OutboundRelease.Release(ctx, audit.ActorRef{Type: "service", ID: "postfix-helper"}, correlationID, queueID, confirmation)
+	if err != nil {
+		return resp(correlationID, Defer, "outbound_queue_release_failed")
+	}
+	reason := "outbound_queue_already_released"
+	if result.Changed {
+		reason = "outbound_queue_released"
+	}
+	response := resp(correlationID, OK, reason)
+	response.QueueID = result.Record.QueueID
+	response.QueueState = string(result.Record.HoldState)
+	return response
+}
+
+// PostfixQueueDiagnostic reports redacted durable/live hold consistency.
+// Complexity: local time and space O(1); delegated costs are defined by
+// outboundpolicy.QueueReleaseService.Diagnose.
+func (s Service) PostfixQueueDiagnostic(ctx context.Context, correlationID, queueID string) Response {
+	if s.OutboundRelease == nil {
+		return resp(correlationID, Defer, string(outboundpolicy.ReasonUnavailable))
+	}
+	diagnostic, err := s.OutboundRelease.Diagnose(ctx, queueID)
+	if err != nil {
+		return resp(correlationID, Defer, "outbound_queue_diagnostic_mismatch")
+	}
+	response := resp(correlationID, OK, "outbound_queue_diagnostic_consistent")
+	response.QueueID = diagnostic.QueueID
+	response.QueueState = string(diagnostic.HoldState)
+	response.PolicyRevisions = diagnostic.PolicyRevisions
+	response.LastErrorCode = diagnostic.LastErrorCode
+	response.RecipientCount = diagnostic.RecipientCount
+	response.SourceCount = diagnostic.SourceCount
+	response.Attempts = diagnostic.ReconciliationAttempts
+	response.PostfixHeld = diagnostic.PostfixHeld
+	response.Consistent = diagnostic.Consistent
+	return response
 }
 
 func (s Service) PostfixDomain(correlationID, domain string) Response {

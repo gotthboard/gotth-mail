@@ -108,6 +108,39 @@ func TestEnforcementServiceFailsClosedOnMissingAuthority(t *testing.T) {
 	}
 }
 
+func TestEnforcementServiceAuditsRejectionWithoutFullAddress(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	insertDecisionFixtures(t, db)
+	decision, err := (EnforcementService{DB: db}).Decide(context.Background(), "corr-audit-reject", EnforcementRequest{
+		Stage: StageSubmission, AuthenticatedMailbox: "user@example.test", EnvelopeSender: "user@example.test", Recipient: "private-recipient@outside.example",
+	})
+	if err != nil || decision.Action != ActionReject {
+		t.Fatalf("decision=%#v err=%v", decision, err)
+	}
+	var action, after string
+	if err := db.QueryRow(`SELECT action,after_redacted_json FROM audit_events WHERE correlation_id='corr-audit-reject'`).Scan(&action, &after); err != nil {
+		t.Fatal(err)
+	}
+	if action != "outbound.policy.reject" || strings.Contains(after, "private-recipient") || !strings.Contains(after, "outside.example") {
+		t.Fatalf("action=%q after=%s", action, after)
+	}
+}
+
+func TestEnforcementServiceTreatsAliasForwardListAndCatchAllAsGoverningSources(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	insertDecisionFixtures(t, db)
+	service := EnforcementService{DB: db}
+	for _, kind := range []SourceKind{SourceAlias, SourceForward, SourceList, SourceCatchAll} {
+		decision, err := service.Decide(context.Background(), "corr-source-"+string(kind), EnforcementRequest{
+			Stage: StageSubmission, AuthenticatedMailbox: "user@example.test", EnvelopeSender: "user@example.test", Recipient: "local@example.test",
+			ExpansionSources: []QueueSource{{Kind: kind, ObjectID: "00000000-0000-4000-8000-000000000924"}},
+		})
+		if err != nil || decision.Action != ActionReject || decision.Reason != ReasonCrossDomainConflict {
+			t.Fatalf("kind=%s decision=%#v err=%v", kind, decision, err)
+		}
+	}
+}
+
 func insertDecisionFixtures(t *testing.T, db interface {
 	Exec(string, ...any) (sql.Result, error)
 }) {

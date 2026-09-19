@@ -9,6 +9,7 @@ import (
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
@@ -97,6 +98,56 @@ func TestSQLIsolatedRestoreEngineVerifiesThroughRestoredDatabase(t *testing.T) {
 	}
 	if mailboxCount != 1 {
 		t.Fatalf("mailboxCount=%d", mailboxCount)
+	}
+}
+
+func TestSQLIsolatedRestorePreservesOutboundPolicyAuthorityAndQueueState(t *testing.T) {
+	sourceDB := testpg.DB(t, store.MigrateSQL)
+	if _, err := sourceDB.Exec(`INSERT INTO domains(id,name,enabled,outbound_scope,outbound_policy_revision,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000901','example.test',true,'same_domain_only',7,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sourceDB.Exec(`INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000902','00000000-0000-4000-8000-000000000901','user',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	queue := outboundpolicy.QueueStore{DB: sourceDB}
+	registration := outboundpolicy.QueueRegistration{
+		QueueID:            "HJKLMNPQRSTVz2345",
+		ArrivalFingerprint: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		EnvelopeSender:     "user@example.test",
+		Recipients:         []string{"outside@example.net"},
+		Sources:            []outboundpolicy.QueueSource{{Kind: outboundpolicy.SourceAuthenticatedMailbox, ObjectID: "00000000-0000-4000-8000-000000000902"}},
+	}
+	if _, _, err := queue.Register(context.Background(), registration); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.RequireHold(context.Background(), audit.ActorRef{Type: "service", ID: "backup-test"}, "backup-hold", registration.QueueID, outboundpolicy.Decision{Action: outboundpolicy.ActionDefer, Reason: outboundpolicy.ReasonPolicyHold, Revisions: map[string]uint64{"example.test": 7}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sourceDB.Exec(`UPDATE outbound_queue_messages SET hold_state='held' WHERE queue_id=$1`, registration.QueueID); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := CaptureBackupArtifactPolicy(context.Background(), sourceDB, BackupArtifact{
+		SchemaVersion: "schema_migrations",
+		ConfigSetID:   "cfg-policy",
+		Domains:       map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}},
+		Mailboxes:     map[string]daemon.Mailbox{"user@example.test": {Address: "user@example.test", Enabled: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreDB := testpg.DB(t, nil)
+	backup := VerifyBackupWithRestore(context.Background(), MemoryBackupStorage{Artifacts: map[string]BackupArtifact{"policy": artifact}}, "policy", SQLIsolatedRestoreEngine{DB: restoreDB, Ref: "policy-restore"})
+	if backup.Status != "verified" || backup.IsolatedRestoreRef != "policy-restore" {
+		t.Fatalf("backup=%#v", backup)
+	}
+	var scope string
+	var revision uint64
+	if err := restoreDB.QueryRow(`SELECT outbound_scope,outbound_policy_revision FROM domains WHERE name='example.test'`).Scan(&scope, &revision); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := (outboundpolicy.QueueStore{DB: restoreDB}).Load(context.Background(), registration.QueueID)
+	if err != nil || scope != "same_domain_only" || revision != 7 || restored.HoldState != outboundpolicy.HoldApplied || len(restored.Sources) != 1 || restored.Sources[0].ObjectID != registration.Sources[0].ObjectID {
+		t.Fatalf("scope=%q revision=%d queue=%#v err=%v", scope, revision, restored, err)
 	}
 }
 

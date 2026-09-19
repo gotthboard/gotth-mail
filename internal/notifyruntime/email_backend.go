@@ -125,11 +125,12 @@ func (b SignedEmailBackend) SendAlert(ctx context.Context, alert notification.Al
 		Stage: outboundpolicy.StageSubmission, SystemSenderID: evidence.SenderIdentityID,
 		EnvelopeSender: from, Recipient: to,
 	})
-	if policyErr != nil || policyDecision.Action == outboundpolicy.ActionDefer {
+	automatic, automaticErr := outboundpolicy.ClassifyAutomaticDecision(outboundpolicy.AutomaticNotification, policyDecision, policyErr)
+	if automaticErr != nil || automatic.Disposition == outboundpolicy.AutomaticRetry {
 		evidence.VerificationResult = ReasonOutboundPolicyDown
 		return deliveryFailure(notification.StatusFailedRetryable, ReasonOutboundPolicyDown, evidence)
 	}
-	if policyDecision.Action != outboundpolicy.ActionOK {
+	if automatic.Disposition == outboundpolicy.AutomaticPolicyBlocked {
 		evidence.VerificationResult = "policy_blocked"
 		return deliveryFailure(notification.StatusFailedPermanent, ReasonOutboundPolicyBlocked, evidence)
 	}

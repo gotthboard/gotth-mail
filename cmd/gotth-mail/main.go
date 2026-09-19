@@ -209,6 +209,7 @@ func seedReferenceDatabase(ctx context.Context, db *sql.DB) error {
 		`INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d02','00000000-0000-4000-8000-000000000d01','smoke',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (domain_id,local_part) DO NOTHING`,
 		`INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d03','00000000-0000-4000-8000-000000000d01','postmaster',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (domain_id,local_part) DO NOTHING`,
 		`INSERT INTO aliases(id,domain_id,local_part,targets_json,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d04','00000000-0000-4000-8000-000000000d01','alias','["smoke@example.test"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (domain_id,local_part) DO NOTHING`,
+		`INSERT INTO aliases(id,domain_id,local_part,targets_json,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000d05','00000000-0000-4000-8000-000000000d01','forward','["outside@example.net"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (domain_id,local_part) DO NOTHING`,
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -228,13 +229,17 @@ func configurePostfixHelperFromEnv(server *api.Server) error {
 	if err != nil {
 		return err
 	}
-	if helperURL == "" && token == "" {
+	releaseToken, err := secretFromEnvOrFile("GOTTH_MAIL_POSTFIX_RELEASE_TOKEN", "GOTTH_MAIL_POSTFIX_RELEASE_TOKEN_FILE")
+	if err != nil {
+		return err
+	}
+	if helperURL == "" && token == "" && releaseToken == "" {
 		return nil
 	}
-	if helperURL == "" || token == "" || server.AuditDB == nil || server.Daemon.OutboundAdmission == nil {
-		return fmt.Errorf("GOTTH_MAIL_DATABASE_URL, GOTTH_MAIL_POSTFIX_HELPER_URL, and one Postfix helper token source are required together")
+	if helperURL == "" || token == "" || releaseToken == "" || token == releaseToken || server.AuditDB == nil || server.Daemon.OutboundAdmission == nil {
+		return fmt.Errorf("GOTTH_MAIL_DATABASE_URL, GOTTH_MAIL_POSTFIX_HELPER_URL, and distinct helper and release token sources are required together")
 	}
-	boundary, err := outboundpolicy.NewRemotePostfixBoundary(helperURL, token)
+	boundary, err := outboundpolicy.NewRemotePostfixBoundaryWithRelease(helperURL, token, releaseToken)
 	if err != nil {
 		return err
 	}
@@ -243,7 +248,14 @@ func configurePostfixHelperFromEnv(server *api.Server) error {
 		Inspector: boundary,
 		Holder:    boundary,
 	}
-	return server.Daemon.ConfigurePostfixHelperToken(token)
+	server.Daemon.OutboundRelease = &outboundpolicy.QueueReleaseService{
+		Store:    outboundpolicy.QueueStore{DB: server.AuditDB},
+		Boundary: boundary,
+	}
+	if err := server.Daemon.ConfigurePostfixHelperToken(token); err != nil {
+		return err
+	}
+	return server.Daemon.ConfigurePostfixReleaseToken(releaseToken)
 }
 
 func secretFromEnvOrFile(valueName, fileName string) (string, error) {
@@ -404,7 +416,10 @@ func referenceServer() api.Server {
 				"smoke@example.test":      {Address: "smoke@example.test", Enabled: true, Home: "/mail/example.test/smoke", UID: 5000, GID: 5000, QuotaBytes: 1073741824, Verifier: verifier},
 				"postmaster@example.test": {Address: "postmaster@example.test", Enabled: true, Home: "/mail/example.test/postmaster", UID: 5000, GID: 5000, QuotaBytes: 1073741824, Verifier: verifier},
 			},
-			Aliases: map[string]daemon.Alias{"alias@example.test": {Address: "alias@example.test", Enabled: true, Targets: []string{"smoke@example.test"}}},
+			Aliases: map[string]daemon.Alias{
+				"alias@example.test":   {Address: "alias@example.test", Enabled: true, Targets: []string{"smoke@example.test"}},
+				"forward@example.test": {Address: "forward@example.test", Enabled: true, Targets: []string{"outside@example.net"}},
+			},
 		},
 		Plugins:   plugin.FirstMechanismPlugins("dev-plugin-token"),
 		DNSChecks: []diag.DNSRecordCheck{{Family: "MX", Name: "example.test", Status: diag.Present, Remediation: "ok"}},

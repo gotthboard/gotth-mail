@@ -39,6 +39,8 @@ func TestSQLDraftStorePersistsReplyForwardAndAttachmentsAcrossReload(t *testing.
 		ForwardOf:          "imap-17",
 		SigningFingerprint: "fp",
 		State:              "draft",
+		Cc:                 []string{"cc@example.test"},
+		Bcc:                []string{"hidden@example.test"},
 		Attachments: []Attachment{{
 			Filename:    "report.txt",
 			ContentType: "text/plain",
@@ -55,6 +57,9 @@ func TestSQLDraftStorePersistsReplyForwardAndAttachmentsAcrossReload(t *testing.
 	}
 	if got.ReplyTo != d.ReplyTo || got.ForwardOf != d.ForwardOf {
 		t.Fatalf("linkage lost: %#v", got)
+	}
+	if len(got.Cc) != 1 || got.Cc[0] != "cc@example.test" || len(got.Bcc) != 1 || got.Bcc[0] != "hidden@example.test" {
+		t.Fatalf("CC/BCC lost: %#v/%#v", got.Cc, got.Bcc)
 	}
 	if len(got.Attachments) != 1 || got.Attachments[0].Filename != "report.txt" || got.Attachments[0].ContentType != "text/plain" || string(got.Attachments[0].Content) != "hello world!" || got.Attachments[0].Size != 12 {
 		t.Fatalf("attachments lost: %#v", got.Attachments)

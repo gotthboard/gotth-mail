@@ -55,6 +55,10 @@ func runHelper() error {
 	if err != nil {
 		return err
 	}
+	releaseToken, err := releaseToken()
+	if err != nil {
+		return err
+	}
 	instance := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_INSTANCE"))
 	if instance == "" {
 		return errors.New("GOTTH_MAIL_POSTFIX_INSTANCE is required")
@@ -65,7 +69,7 @@ func runHelper() error {
 		InstanceID:     instance,
 		MaxOutputBytes: 8 << 20,
 	}
-	helper, err := postfixgate.NewHelper(boundary, boundary, token)
+	helper, err := postfixgate.NewHelper(boundary, boundary, boundary, token, releaseToken)
 	if err != nil {
 		return err
 	}
@@ -156,29 +160,43 @@ func (s *stringList) Set(value string) error {
 // Complexity: time and auxiliary space O(n), Omega(1), where n is capped at
 // 4097 bytes; file mode performs one bounded read.
 func helperToken() (string, error) {
-	direct := os.Getenv("GOTTH_MAIL_POSTFIX_HELPER_TOKEN")
-	path := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE"))
+	return configuredGateSecret("GOTTH_MAIL_POSTFIX_HELPER_TOKEN", "GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE", "Postfix helper token")
+}
+
+// releaseToken reads the independent credential unavailable to pipe services.
+// Complexity: time and auxiliary space O(n), Omega(1), where n is capped at
+// 4097 bytes; file mode performs one bounded read.
+func releaseToken() (string, error) {
+	return configuredGateSecret("GOTTH_MAIL_POSTFIX_RELEASE_TOKEN", "GOTTH_MAIL_POSTFIX_RELEASE_TOKEN_FILE", "Postfix release token")
+}
+
+// configuredGateSecret reads one bounded direct or file-backed credential.
+// Complexity: time and auxiliary space O(n), Omega(1), where n is capped at
+// 4097 bytes; file mode performs one bounded read.
+func configuredGateSecret(valueName, fileName, label string) (string, error) {
+	direct := os.Getenv(valueName)
+	path := strings.TrimSpace(os.Getenv(fileName))
 	if direct != "" && path != "" {
-		return "", errors.New("Postfix helper token sources are mutually exclusive")
+		return "", errors.New(label + " sources are mutually exclusive")
 	}
 	if path == "" {
 		if len(direct) < 32 || len(direct) > 4096 {
-			return "", errors.New("invalid Postfix helper token")
+			return "", errors.New("invalid " + label)
 		}
 		return direct, nil
 	}
 	handle, err := os.Open(path)
 	if err != nil {
-		return "", errors.New("Postfix helper token file unavailable")
+		return "", errors.New(label + " file unavailable")
 	}
 	defer handle.Close()
 	data, err := io.ReadAll(io.LimitReader(handle, 4097))
 	if err != nil || len(data) > 4096 {
-		return "", errors.New("invalid Postfix helper token file")
+		return "", errors.New("invalid " + label + " file")
 	}
 	token := strings.TrimRight(string(data), "\r\n")
 	if len(token) < 32 || len(token) > 4096 {
-		return "", errors.New("invalid Postfix helper token")
+		return "", errors.New("invalid " + label)
 	}
 	return token, nil
 }

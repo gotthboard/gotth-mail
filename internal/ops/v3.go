@@ -18,6 +18,7 @@ import (
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 )
 
@@ -148,12 +149,14 @@ type BackupArtifact struct {
 	Domains                    map[string]daemon.Domain
 	Mailboxes                  map[string]daemon.Mailbox
 	Aliases                    map[string]daemon.Alias
+	OutboundPolicy             *outboundpolicy.BackupState
 	ConfigSetID, SchemaVersion string
 }
 
 type RestoredBackup struct {
-	Ref     string
-	Service daemon.Service
+	Ref            string
+	Service        daemon.Service
+	PolicyVerified bool
 }
 
 type IsolatedRestoreEngine interface {
@@ -184,6 +187,13 @@ func (e SQLIsolatedRestoreEngine) RestoreBackup(ctx context.Context, art BackupA
 	if err := restoreArtifactToSQL(ctx, e.DB, art); err != nil {
 		return RestoredBackup{}, err
 	}
+	policyVerified := art.OutboundPolicy == nil
+	if art.OutboundPolicy != nil {
+		if err := outboundpolicy.VerifyBackupState(ctx, e.DB, *art.OutboundPolicy); err != nil {
+			return RestoredBackup{}, err
+		}
+		policyVerified = true
+	}
 	svc, err := loadDaemonServiceFromSQL(ctx, e.DB)
 	if err != nil {
 		return RestoredBackup{}, err
@@ -192,7 +202,20 @@ func (e SQLIsolatedRestoreEngine) RestoreBackup(ctx context.Context, art BackupA
 	if ref == "" {
 		ref = "sql-isolated-restore"
 	}
-	return RestoredBackup{Ref: ref, Service: svc}, nil
+	return RestoredBackup{Ref: ref, Service: svc, PolicyVerified: policyVerified}, nil
+}
+
+// CaptureBackupArtifactPolicy adds the SQL-authoritative outbound policy,
+// object IDs, system senders, and queue state to a backup artifact.
+// Complexity: local time and space O(1); delegated costs are defined by
+// outboundpolicy.CaptureBackupState.
+func CaptureBackupArtifactPolicy(ctx context.Context, db *sql.DB, artifact BackupArtifact) (BackupArtifact, error) {
+	state, err := outboundpolicy.CaptureBackupState(ctx, db)
+	if err != nil {
+		return BackupArtifact{}, err
+	}
+	artifact.OutboundPolicy = &state
+	return artifact, nil
 }
 
 type BackupStorage interface {
@@ -221,6 +244,12 @@ func restoreArtifactToSQL(ctx context.Context, db *sql.DB, art BackupArtifact) e
 		return err
 	}
 	now := time.Now().UTC()
+	if art.OutboundPolicy != nil {
+		if err := outboundpolicy.RestoreBackupState(ctx, tx, *art.OutboundPolicy, now); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	domainIDs := map[string]string{}
 	ensureDomain := func(domain string, enabled bool) (string, error) {
 		domain = strings.ToLower(strings.TrimSpace(domain))
@@ -387,6 +416,13 @@ func VerifyBackupWithRestore(ctx context.Context, storage BackupStorage, ref str
 		b.SchemaVersion = art.SchemaVersion
 		b.ConfigSetID = art.ConfigSetID
 		b.FailureReport = FailureReport{Step: "isolated_restore", SafeError: err.Error(), RemediationHint: "restore into isolated empty database/container and rerun migrations", RetryMayHelp: true}
+		return b
+	}
+	if art.OutboundPolicy != nil && !restored.PolicyVerified {
+		b.Status = "failed"
+		b.SchemaVersion = art.SchemaVersion
+		b.ConfigSetID = art.ConfigSetID
+		b.FailureReport = FailureReport{Step: "outbound_policy_restore", SafeError: "outbound policy and queue state were not verified", RemediationHint: "restore the artifact into an isolated migrated PostgreSQL database", RetryMayHelp: true}
 		return b
 	}
 	for addr := range art.Mailboxes {

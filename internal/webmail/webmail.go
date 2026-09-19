@@ -15,6 +15,7 @@ import (
 	"net/textproto"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -154,6 +155,7 @@ func (c Client) Search(ctx context.Context, user, folder, query, cursor string, 
 
 type Draft struct {
 	ID, From, To, Subject, Body string
+	Cc, Bcc                     []string
 	Attachments                 []Attachment
 	State                       string
 	ReplyTo, ForwardOf          string
@@ -178,6 +180,10 @@ type Sender struct {
 
 type OutboundPolicyEvaluator interface {
 	Decide(context.Context, string, outboundpolicy.EnforcementRequest) (outboundpolicy.Decision, error)
+}
+
+type ExpandedOutboundPolicyEvaluator interface {
+	DecideSMTPRecipient(context.Context, string, string, string, string) (outboundpolicy.Decision, error)
 }
 
 type memoryDraftStore struct{ drafts *map[string]Draft }
@@ -220,7 +226,15 @@ func (s SQLDraftStore) PutDraft(ctx context.Context, d Draft) error {
 	if err != nil {
 		return err
 	}
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO webmail_drafts(id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, reply_to, forward_of, attachments_json, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (id) DO UPDATE SET to_addr=EXCLUDED.to_addr, subject=EXCLUDED.subject, body_text=EXCLUDED.body_text, signing_fingerprint=EXCLUDED.signing_fingerprint, state=EXCLUDED.state, reply_to=EXCLUDED.reply_to, forward_of=EXCLUDED.forward_of, attachments_json=EXCLUDED.attachments_json, updated_at=CURRENT_TIMESTAMP WHERE webmail_drafts.mailbox=EXCLUDED.mailbox`, d.ID, strings.ToLower(d.From), d.To, d.Subject, d.Body, d.SigningFingerprint, state, d.ReplyTo, d.ForwardOf, string(attachments))
+	cc, err := json.Marshal(d.Cc)
+	if err != nil {
+		return err
+	}
+	bcc, err := json.Marshal(d.Bcc)
+	if err != nil {
+		return err
+	}
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO webmail_drafts(id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, reply_to, forward_of, attachments_json, cc_json, bcc_json, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (id) DO UPDATE SET to_addr=EXCLUDED.to_addr, subject=EXCLUDED.subject, body_text=EXCLUDED.body_text, signing_fingerprint=EXCLUDED.signing_fingerprint, state=EXCLUDED.state, reply_to=EXCLUDED.reply_to, forward_of=EXCLUDED.forward_of, attachments_json=EXCLUDED.attachments_json, cc_json=EXCLUDED.cc_json, bcc_json=EXCLUDED.bcc_json, updated_at=CURRENT_TIMESTAMP WHERE webmail_drafts.mailbox=EXCLUDED.mailbox`, d.ID, strings.ToLower(d.From), d.To, d.Subject, d.Body, d.SigningFingerprint, state, d.ReplyTo, d.ForwardOf, string(attachments), string(cc), string(bcc))
 	if err != nil {
 		return err
 	}
@@ -234,8 +248,8 @@ func (s SQLDraftStore) Draft(ctx context.Context, id string) (Draft, bool, error
 		return Draft{}, false, errors.New("webmail draft db required")
 	}
 	var d Draft
-	var attachments string
-	err := s.DB.QueryRowContext(ctx, `SELECT id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, reply_to, forward_of, attachments_json FROM webmail_drafts WHERE id=$1`, id).Scan(&d.ID, &d.From, &d.To, &d.Subject, &d.Body, &d.SigningFingerprint, &d.State, &d.ReplyTo, &d.ForwardOf, &attachments)
+	var attachments, cc, bcc string
+	err := s.DB.QueryRowContext(ctx, `SELECT id, mailbox, to_addr, subject, body_text, signing_fingerprint, state, reply_to, forward_of, attachments_json, cc_json, bcc_json FROM webmail_drafts WHERE id=$1`, id).Scan(&d.ID, &d.From, &d.To, &d.Subject, &d.Body, &d.SigningFingerprint, &d.State, &d.ReplyTo, &d.ForwardOf, &attachments, &cc, &bcc)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Draft{}, false, nil
 	}
@@ -246,6 +260,12 @@ func (s SQLDraftStore) Draft(ctx context.Context, id string) (Draft, bool, error
 		if err := json.Unmarshal([]byte(attachments), &d.Attachments); err != nil {
 			return Draft{}, false, err
 		}
+	}
+	if err := json.Unmarshal([]byte(cc), &d.Cc); err != nil {
+		return Draft{}, false, err
+	}
+	if err := json.Unmarshal([]byte(bcc), &d.Bcc); err != nil {
+		return Draft{}, false, err
 	}
 	return d, true, nil
 }
@@ -306,9 +326,9 @@ func (s *Sender) DraftContext(ctx context.Context, id string) (Draft, bool, erro
 
 // Submit applies atomic outbound policy before signing or SMTP, then preserves
 // the existing exact-sender and delivery-acceptance boundaries.
-// Complexity: time O(m+a), Omega(m), tight Theta(m+a); auxiliary space O(m+a),
-// Omega(m), where m is bounded MIME bytes and a is attachment bytes; policy,
-// signing, draft-store, audit, and SMTP I/O costs are additive.
+// Complexity: time O(r*(p+n)+m+a), Omega(r+m); auxiliary space O(r*n+m+a),
+// where r is bounded recipients, p policy latency, n address bytes, m MIME
+// bytes, and a attachment bytes; signing, store, audit, and SMTP are additive.
 func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 	d, ok, err := s.DraftContext(ctx, id)
 	if err != nil {
@@ -329,20 +349,30 @@ func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 	if s.Policy == nil {
 		return Draft{}, errors.New("outbound policy evaluator required")
 	}
-	if _, err := mail.ParseAddress(d.To); err != nil {
+	recipients, err := draftRecipients(d)
+	if err != nil {
 		return Draft{}, errors.New("invalid recipient")
 	}
-	policyDecision, policyErr := s.Policy.Decide(ctx, "webmail-policy:"+d.ID, outboundpolicy.EnforcementRequest{
-		Stage:                outboundpolicy.StageSubmission,
-		AuthenticatedMailbox: d.From,
-		EnvelopeSender:       d.From,
-		Recipient:            d.To,
-	})
-	if policyErr != nil || policyDecision.Action != outboundpolicy.ActionOK {
-		s.audit(ctx, d, "failure", "outbound_policy_"+string(policyDecision.Reason), SignatureStatus{})
-		d.State = "failed"
-		_ = s.putDraft(ctx, d)
-		return d, errors.New("outbound policy rejected submission")
+	for i, recipient := range recipients {
+		correlationID := "webmail-policy:" + d.ID + ":" + safeRecipientOrdinal(i)
+		var policyDecision outboundpolicy.Decision
+		var policyErr error
+		if expanded, ok := s.Policy.(ExpandedOutboundPolicyEvaluator); ok {
+			policyDecision, policyErr = expanded.DecideSMTPRecipient(ctx, correlationID, d.From, d.From, recipient)
+		} else {
+			policyDecision, policyErr = s.Policy.Decide(ctx, correlationID, outboundpolicy.EnforcementRequest{
+				Stage:                outboundpolicy.StageSubmission,
+				AuthenticatedMailbox: d.From,
+				EnvelopeSender:       d.From,
+				Recipient:            recipient,
+			})
+		}
+		if policyErr != nil || policyDecision.Action != outboundpolicy.ActionOK {
+			s.audit(ctx, d, "failure", "outbound_policy_"+string(policyDecision.Reason), SignatureStatus{})
+			d.State = "failed"
+			_ = s.putDraft(ctx, d)
+			return d, errors.New("outbound policy rejected submission")
+		}
 	}
 	if d.SigningFingerprint == "" {
 		s.audit(ctx, d, "failure", "openpgp signing identity required", SignatureStatus{})
@@ -390,7 +420,7 @@ func (s *Sender) Submit(ctx context.Context, id string) (Draft, error) {
 		_ = s.putDraft(ctx, d)
 		return d, err
 	}
-	if err := s.SMTP.Submit(ctx, Envelope{From: d.From, To: []string{d.To}}, signed); err != nil {
+	if err := s.SMTP.Submit(ctx, Envelope{From: d.From, To: recipients}, signed); err != nil {
 		s.audit(ctx, d, "failure", err.Error(), status)
 		d.State = "failed"
 		_ = s.putDraft(ctx, d)
@@ -415,15 +445,25 @@ func BuildMIME(d Draft) ([]byte, error) {
 	if err := validMIMEText(d.Body); err != nil {
 		return nil, err
 	}
+	if _, err := draftRecipients(d); err != nil {
+		return nil, errors.New("invalid recipient")
+	}
 	from, err := mail.ParseAddress(d.From)
 	if err != nil {
 		return nil, errors.New("invalid from")
 	}
-	to, err := mail.ParseAddress(d.To)
+	to, err := exactEnvelopeAddress(d.To)
 	if err != nil {
 		return nil, errors.New("invalid recipient")
 	}
-	if !asciiAddress(from.Address) || !asciiAddress(to.Address) {
+	cc := make([]string, len(d.Cc))
+	for i, raw := range d.Cc {
+		cc[i], err = exactEnvelopeAddress(raw)
+		if err != nil {
+			return nil, errors.New("invalid cc recipient")
+		}
+	}
+	if !asciiAddress(from.Address) || !asciiAddress(to) {
 		return nil, errors.New("SMTPUTF8 addresses are not supported")
 	}
 	messageID, err := messageID(d.MessageID, from.Address)
@@ -464,7 +504,10 @@ func BuildMIME(d Draft) ([]byte, error) {
 	}
 	var b strings.Builder
 	b.WriteString("From: " + from.String() + "\r\n")
-	b.WriteString("To: " + to.String() + "\r\n")
+	b.WriteString("To: " + to + "\r\n")
+	if len(cc) > 0 {
+		b.WriteString("Cc: " + strings.Join(cc, ", ") + "\r\n")
+	}
 	b.WriteString("Date: " + date.Format(time.RFC1123Z) + "\r\n")
 	b.WriteString("Message-ID: " + messageID + "\r\n")
 	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", d.Subject) + "\r\n")
@@ -472,6 +515,53 @@ func BuildMIME(d Draft) ([]byte, error) {
 	b.WriteString("Content-Type: multipart/mixed; boundary=\"" + mw.Boundary() + "\"\r\n\r\n")
 	b.WriteString(body.String())
 	return []byte(b.String()), nil
+}
+
+// draftRecipients returns a deduplicated ordered envelope set covering To,
+// CC, and BCC while keeping BCC out of MIME headers.
+// Complexity: time O(r*n), Omega(r); auxiliary space O(r*n), where r is capped
+// at 1000 and n is bounded address length.
+func draftRecipients(d Draft) ([]string, error) {
+	if len(d.Cc)+len(d.Bcc)+1 > 1000 {
+		return nil, errors.New("recipient limit exceeded")
+	}
+	raw := make([]string, 0, 1+len(d.Cc)+len(d.Bcc))
+	raw = append(raw, d.To)
+	raw = append(raw, d.Cc...)
+	raw = append(raw, d.Bcc...)
+	seen := make(map[string]bool, len(raw))
+	recipients := make([]string, 0, len(raw))
+	for _, value := range raw {
+		address, err := exactEnvelopeAddress(value)
+		if err != nil || !asciiAddress(address) {
+			return nil, errors.New("invalid envelope recipient")
+		}
+		key := strings.ToLower(address)
+		if !seen[key] {
+			seen[key] = true
+			recipients = append(recipients, address)
+		}
+	}
+	return recipients, nil
+}
+
+// exactEnvelopeAddress rejects display names and trimming ambiguity.
+// Complexity: time and auxiliary space O(n), Omega(1), where n is bounded.
+func exactEnvelopeAddress(value string) (string, error) {
+	if value == "" || strings.TrimSpace(value) != value || len(value) > 254 {
+		return "", errors.New("invalid envelope address")
+	}
+	parsed, err := mail.ParseAddress(value)
+	if err != nil || parsed.Name != "" || parsed.Address != value || !asciiAddress(parsed.Address) {
+		return "", errors.New("invalid envelope address")
+	}
+	return parsed.Address, nil
+}
+
+// safeRecipientOrdinal produces a bounded non-address correlation suffix.
+// Complexity: time and auxiliary space O(1).
+func safeRecipientOrdinal(index int) string {
+	return strconv.Itoa(index)
 }
 
 func messageID(v, from string) (string, error) {

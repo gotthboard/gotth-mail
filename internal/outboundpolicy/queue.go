@@ -37,6 +37,8 @@ const (
 	HoldReconciling         HoldState = "reconciling"
 	HoldApplied             HoldState = "held"
 	HoldReconciliationError HoldState = "reconciliation_error"
+	HoldReleaseReconciling  HoldState = "release_reconciling"
+	HoldReleaseError        HoldState = "release_error"
 	HoldReleased            HoldState = "released"
 )
 
@@ -470,7 +472,7 @@ func sameQueueIdentity(left, right QueueRecord) bool {
 // Omega(1), tight Theta(1).
 func validHoldState(state HoldState) bool {
 	switch state {
-	case HoldPending, HoldRequired, HoldReconciling, HoldApplied, HoldReconciliationError, HoldReleased:
+	case HoldPending, HoldRequired, HoldReconciling, HoldApplied, HoldReconciliationError, HoldReleaseReconciling, HoldReleaseError, HoldReleased:
 		return true
 	default:
 		return false

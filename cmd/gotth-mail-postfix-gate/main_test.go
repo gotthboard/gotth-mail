@@ -27,6 +27,14 @@ func TestHelperTokenRequiresOneBoundedSource(t *testing.T) {
 	}
 }
 
+func TestReleaseTokenUsesIndependentConfiguration(t *testing.T) {
+	t.Setenv("GOTTH_MAIL_POSTFIX_RELEASE_TOKEN", "abcdef0123456789abcdef0123456789")
+	token, err := releaseToken()
+	if err != nil || token != "abcdef0123456789abcdef0123456789" {
+		t.Fatalf("token=%q err=%v", token, err)
+	}
+}
+
 func TestRunDeliveryRejectsMalformedArgumentsBeforeIO(t *testing.T) {
 	t.Setenv("GOTTH_MAIL_POSTFIX_HELPER_TOKEN", "0123456789abcdef0123456789abcdef")
 	if err := runDelivery([]string{"--queue-id", "bad", "--recipient", "one@example.net"}, strings.NewReader("message")); err == nil {

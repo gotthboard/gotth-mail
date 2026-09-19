@@ -94,7 +94,7 @@ func (s QueueStore) RequireHold(ctx context.Context, actor audit.ActorRef, corre
 	if !validQueuePolicyState(state, priorReason.Valid, priorValue, prior) {
 		return errors.New("stored outbound queue policy state is invalid")
 	}
-	if priorReason.Valid && Reason(priorReason.String) == decision.Reason && revisionMapsEqual(prior, revisions) && state != HoldPending && state != HoldReleased {
+	if priorReason.Valid && Reason(priorReason.String) == decision.Reason && revisionMapsEqual(prior, revisions) && (state == HoldRequired || state == HoldReconciling || state == HoldApplied || state == HoldReconciliationError) {
 		return nil
 	}
 	now := s.now()

@@ -85,6 +85,7 @@ type expansionAlias struct {
 	ID      string
 	Address string
 	Targets []string
+	Kind    SourceKind
 }
 
 // resolveExpansionDeliveries proves every original-to-final pair against the
@@ -200,7 +201,25 @@ func loadExpansionAliases(ctx context.Context, db *sql.DB, originals []string) (
 		for address := range batchSet {
 			batch = append(batch, address)
 		}
-		rows, err := db.QueryContext(ctx, `WITH input(address) AS (SELECT unnest($1::text[])) SELECT a.id::text,a.local_part,d.name,a.targets_json FROM input i JOIN domains d ON d.name=split_part(i.address,'@',2) JOIN aliases a ON a.domain_id=d.id AND lower(a.local_part)=lower(split_part(i.address,'@',1)) WHERE a.enabled=true AND d.enabled=true ORDER BY a.id`, pq.Array(batch))
+		rows, err := db.QueryContext(ctx, `WITH input(address) AS (SELECT unnest($1::text[]))
+SELECT a.id::text,i.address,a.local_part,d.name,a.targets_json
+FROM input i
+JOIN domains d ON d.name=split_part(i.address,'@',2)
+JOIN aliases a ON a.domain_id=d.id
+ AND (
+   lower(a.local_part)=lower(split_part(i.address,'@',1))
+   OR (
+     a.local_part='*'
+     AND NOT EXISTS (
+       SELECT 1 FROM aliases exact
+       WHERE exact.domain_id=d.id
+         AND exact.enabled=true
+         AND lower(exact.local_part)=lower(split_part(i.address,'@',1))
+     )
+   )
+ )
+WHERE a.enabled=true AND d.enabled=true
+ORDER BY i.address,a.id`, pq.Array(batch))
 		if err != nil {
 			return nil, err
 		}
@@ -241,12 +260,12 @@ type expansionAliasScanner interface {
 // b their bytes.
 func scanExpansionAlias(row expansionAliasScanner) (expansionAlias, error) {
 	var alias expansionAlias
-	var local, domain, encoded string
-	if err := row.Scan(&alias.ID, &local, &domain, &encoded); err != nil {
+	var inputAddress, local, domain, encoded string
+	if err := row.Scan(&alias.ID, &inputAddress, &local, &domain, &encoded); err != nil {
 		return expansionAlias{}, err
 	}
-	address, _, err := normalizeQueueRecipient(local + "@" + domain)
-	if err != nil || address != strings.ToLower(local)+"@"+domain || !validQueueObjectID(alias.ID) {
+	address, _, err := normalizeQueueRecipient(inputAddress)
+	if err != nil || address != inputAddress || !validQueueObjectID(alias.ID) || (local != "*" && address != strings.ToLower(local)+"@"+domain) {
 		return expansionAlias{}, errors.New("stored outbound alias is invalid")
 	}
 	var targets []string
@@ -262,7 +281,30 @@ func scanExpansionAlias(row expansionAliasScanner) (expansionAlias, error) {
 		}
 		alias.Targets = append(alias.Targets, canonical)
 	}
+	alias.Kind = classifyExpansionSource(local, domain, alias.Targets)
 	return alias, nil
+}
+
+// classifyExpansionSource derives the policy provenance class from the
+// existing alias mechanism: wildcard catch-all, one-to-many list, external
+// forward, or ordinary local alias. The classification changes no delivery
+// behavior; it preserves the authoritative object kind in queue provenance.
+// Complexity: time O(t*n), Omega(1); auxiliary space O(1), where t is the
+// bounded target count and n is a bounded address length.
+func classifyExpansionSource(local, domain string, targets []string) SourceKind {
+	if local == "*" {
+		return SourceCatchAll
+	}
+	if len(targets) > 1 {
+		return SourceList
+	}
+	if len(targets) == 1 {
+		_, targetDomain, err := normalizeQueueRecipient(targets[0])
+		if err == nil && targetDomain != domain {
+			return SourceForward
+		}
+	}
+	return SourceAlias
 }
 
 // walkExpansionGraph collects every reachable leaf and alias source. Any
@@ -289,7 +331,7 @@ func walkExpansionGraph(aliases map[string]expansionAlias, current string, activ
 	}
 	active[current] = true
 	defer delete(active, current)
-	source := QueueSource{Kind: SourceAlias, ObjectID: alias.ID}
+	source := QueueSource{Kind: alias.Kind, ObjectID: alias.ID}
 	sources[string(source.Kind)+"\x00"+source.ObjectID] = source
 	if len(sources) > maxQueueSources {
 		return errors.New("outbound alias source limit exceeded")

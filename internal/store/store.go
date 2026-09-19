@@ -328,6 +328,26 @@ CREATE TABLE outbound_queue_sources (
 CREATE INDEX outbound_queue_sources_object_idx
     ON outbound_queue_sources (source_kind, object_id, queue_id);`
 
+const outboundQueueReleaseMigrationVersion = "0010_outbound_queue_release"
+const outboundQueueReleaseMigrationSQL = `ALTER TABLE outbound_queue_messages
+    DROP CONSTRAINT outbound_queue_messages_hold_state_check,
+    ADD CONSTRAINT outbound_queue_messages_hold_state_check
+        CHECK (hold_state IN (
+            'pending',
+            'hold_required',
+            'reconciling',
+            'held',
+            'reconciliation_error',
+            'release_reconciling',
+            'release_error',
+            'released'
+        ));`
+
+const webmailCCBCCMigrationVersion = "0011_webmail_cc_bcc"
+const webmailCCBCCMigrationSQL = `ALTER TABLE webmail_drafts
+    ADD COLUMN cc_json text NOT NULL DEFAULT '[]',
+    ADD COLUMN bcc_json text NOT NULL DEFAULT '[]';`
+
 var upgradeMigrations = []Migration{
 	newMigration(notificationDeliveryEvidenceMigrationVersion, notificationDeliveryEvidenceMigrationSQL),
 	newMigration(oidcProtectedAttemptsMigrationVersion, oidcProtectedAttemptsMigrationSQL),
@@ -337,6 +357,8 @@ var upgradeMigrations = []Migration{
 	newMigration(scimGroupMembersMigrationVersion, scimGroupMembersMigrationSQL),
 	newMigration(outboundPolicyMigrationVersion, outboundPolicyMigrationSQL),
 	newMigration(outboundQueueMigrationVersion, outboundQueueMigrationSQL),
+	newMigration(outboundQueueReleaseMigrationVersion, outboundQueueReleaseMigrationSQL),
+	newMigration(webmailCCBCCMigrationVersion, webmailCCBCCMigrationSQL),
 }
 
 func newMigration(version, sql string) Migration {

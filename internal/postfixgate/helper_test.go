@@ -9,18 +9,27 @@ import (
 	"testing"
 )
 
-type fakeHolder struct{ calls int }
+type fakeHolder struct {
+	holdCalls    int
+	releaseCalls int
+}
 
 func (f *fakeHolder) Hold(context.Context, string) error {
-	f.calls++
+	f.holdCalls++
 	return nil
 }
 
-func TestHelperAuthenticatesAndExposesOnlyInspectAndHold(t *testing.T) {
+func (f *fakeHolder) Release(context.Context, string) error {
+	f.releaseCalls++
+	return nil
+}
+
+func TestHelperAuthenticatesAndExposesOnlyInspectHoldAndRelease(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
+	const releaseToken = "abcdef0123456789abcdef0123456789"
 	metadata := gateMetadata()
 	holder := &fakeHolder{}
-	helper, err := NewHelper(fakeInspector{metadata: metadata}, holder, token)
+	helper, err := NewHelper(fakeInspector{metadata: metadata}, holder, holder, token, releaseToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,15 +43,30 @@ func TestHelperAuthenticatesAndExposesOnlyInspectAndHold(t *testing.T) {
 			t.Fatalf("%s status=%d body=%s", path, response.Code, response.Body.String())
 		}
 	}
-	if holder.calls != 1 {
-		t.Fatalf("hold calls=%d", holder.calls)
-	}
-	request := httptest.NewRequest(http.MethodPost, "/v1/queue/hold", bytes.NewBufferString(`{"queue_id":"BCDFGHJKLMNPz6789"}`))
-	request.Header.Set("Authorization", "Bearer wrong-wrong-wrong-wrong-wrong-wrong")
+	body, _ := json.Marshal(map[string]string{"queue_id": metadata.QueueID})
+	request := httptest.NewRequest(http.MethodPost, "/v1/queue/release", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+token)
 	response := httptest.NewRecorder()
 	helper.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized || holder.calls != 1 {
-		t.Fatalf("status=%d hold calls=%d", response.Code, holder.calls)
+	if response.Code != http.StatusUnauthorized || holder.releaseCalls != 0 {
+		t.Fatalf("ordinary helper token released queue: status=%d calls=%d", response.Code, holder.releaseCalls)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/v1/queue/release", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+releaseToken)
+	response = httptest.NewRecorder()
+	helper.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || holder.releaseCalls != 1 {
+		t.Fatalf("release token status=%d calls=%d", response.Code, holder.releaseCalls)
+	}
+	if holder.holdCalls != 1 || holder.releaseCalls != 1 {
+		t.Fatalf("hold calls=%d release calls=%d", holder.holdCalls, holder.releaseCalls)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/v1/queue/hold", bytes.NewBufferString(`{"queue_id":"BCDFGHJKLMNPz6789"}`))
+	request.Header.Set("Authorization", "Bearer wrong-wrong-wrong-wrong-wrong-wrong")
+	response = httptest.NewRecorder()
+	helper.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || holder.holdCalls != 1 || holder.releaseCalls != 1 {
+		t.Fatalf("status=%d hold calls=%d release calls=%d", response.Code, holder.holdCalls, holder.releaseCalls)
 	}
 	request = httptest.NewRequest(http.MethodPost, "/v1/queue/delete", bytes.NewBufferString(`{}`))
 	request.Header.Set("Authorization", "Bearer "+token)

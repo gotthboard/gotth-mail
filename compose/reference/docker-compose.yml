@@ -9,6 +9,7 @@ services:
       GOTTH_MAIL_DATABASE_URL: postgres://gotth_mail:gotth-mail-dev-only@database:5432/gotth_mail?sslmode=disable
       GOTTH_MAIL_POSTFIX_HELPER_URL: http://postfix:10026
       GOTTH_MAIL_POSTFIX_HELPER_TOKEN: ${GOTTH_MAIL_POSTFIX_HELPER_TOKEN:-reference-postfix-helper-token-32bytes}
+      GOTTH_MAIL_POSTFIX_RELEASE_TOKEN: ${GOTTH_MAIL_POSTFIX_RELEASE_TOKEN:-reference-postfix-release-token-32byte}
       GOTTH_MAIL_NOTIFICATION_EMAIL_FROM: ${GOTTH_MAIL_NOTIFICATION_EMAIL_FROM:-}
     ports:
       - "8080:8080"
@@ -101,6 +102,7 @@ services:
     environment:
       GOTTH_MAIL_CORE_URL: http://gotth-mail:8080
       GOTTH_MAIL_POSTFIX_HELPER_TOKEN: ${GOTTH_MAIL_POSTFIX_HELPER_TOKEN:-reference-postfix-helper-token-32bytes}
+      GOTTH_MAIL_POSTFIX_RELEASE_TOKEN: ${GOTTH_MAIL_POSTFIX_RELEASE_TOKEN:-reference-postfix-release-token-32byte}
       GOTTH_MAIL_POSTFIX_INSTANCE: mail.example.test
       GOTTH_MAIL_OUTBOUND_RELAY_ADDR: ${GOTTH_MAIL_OUTBOUND_RELAY_ADDR:-127.0.0.1:9}
     command:
@@ -118,8 +120,10 @@ services:
         curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gotth-mail:8080/internal/v1/postfix/mailboxes/postmaster@example.test | jq -e '.decision == "ok"' >/dev/null
         alias_targets=$$(curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gotth-mail:8080/internal/v1/postfix/aliases/alias@example.test | jq -r 'select(.decision == "ok") | .targets | join(",")')
         test "$$alias_targets" = "smoke@example.test"
+        forward_targets=$$(curl -fsS -H 'X-Correlation-ID: postfix-mapgen' http://gotth-mail:8080/internal/v1/postfix/aliases/forward@example.test | jq -r 'select(.decision == "ok") | .targets | join(",")')
+        test "$$forward_targets" = "outside@example.net"
         printf 'smoke@example.test example.test/smoke/\npostmaster@example.test example.test/postmaster/\n' > /etc/postfix/virtual_mailboxes
-        printf 'alias@example.test %s\n' "$$alias_targets" > /etc/postfix/virtual_aliases
+        printf 'alias@example.test %s\nforward@example.test %s\n' "$$alias_targets" "$$forward_targets" > /etc/postfix/virtual_aliases
         postmap lmdb:/etc/postfix/virtual_mailboxes
         postmap lmdb:/etc/postfix/virtual_aliases
         postfix check

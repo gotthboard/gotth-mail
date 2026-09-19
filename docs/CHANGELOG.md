@@ -21,9 +21,72 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 08:45 CDT — Wire Postfix submission and final transport enforcement
+### 2026-09-19 09:28 CDT — Complete outbound release, recovery, and hostile-path enforcement
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- outbound policy release, backup/restore, automatic-mail, and expansion logic
+- daemon and Postfix helper authorization boundaries
+- webmail draft persistence and To/CC/BCC submission enforcement
+- database migrations `0010` and `0011`
+- reference Compose/Postfix configuration and outbound-policy smoke
+- same-domain feature evidence and changelog
+
+Explanation:
+
+Added explicit release preview and confirmed release for policy-held Postfix
+messages. The confirmation binds immutable queue identity and every current
+governing scope/revision; release serializes on the queue, audits intent before
+`postsuper -H`, verifies live metadata afterward, records visible retry errors,
+and is idempotent after a verified release. Release uses an independent bearer
+credential that is unavailable to Postfix pipe services. The ordinary delivery
+helper credential cannot preview or invoke release, and the release credential
+cannot register or reconcile delivery work.
+
+Extended backup artifacts and isolated SQL restore to preserve and verify
+domain policy, immutable mailbox/alias/system-sender identities, and durable
+queue provenance and hold state. Webmail drafts now persist CC and BCC; submit
+resolves To/CC/BCC atomically before signing or SMTP, includes BCC only in the
+SMTP envelope, and never emits a Bcc header. Rejected submissions now write a
+bounded address-free audit event. Automatic notification, autoresponder, DSN,
+and bounce outcomes share one closed policy disposition and never generate a
+second bounce.
+
+Expansion provenance now distinguishes ordinary aliases, one-to-many lists,
+external forwards, and wildcard catch-alls from the authoritative alias graph.
+Exact aliases take precedence over catch-alls. The real container smoke now
+accepts an inbound local forward, holds its forbidden external expansion,
+changes policy, previews and explicitly releases it, and then proves an
+unrestricted message crosses the final gate into a real SMTP capture socket.
+
+Verification:
+
+- focused local tests passed for daemon, Postfix gate, outbound policy, and
+  both runtime commands
+- focused development-host PostgreSQL suites passed for outbound policy,
+  notification runtime, Postfix gate, webmail, operations, migrations, API,
+  daemon, and runtime commands
+- container smoke proved credential separation, absence of the release secret
+  from Postfix import/export environments, inbound-forward hold, idempotent
+  recheck, audited confirmed release, and allowed final SMTP relay
+- migration parity, isolated restore, retry/replay, mixed-recipient, stale
+  confirmation, release-helper failure, and BCC non-disclosure tests passed
+- `git diff --check`
+
+Risks / non-goals:
+
+- no live queue was changed; all Postfix release and relay evidence used an
+  isolated disposable reference Compose project
+- final repository-wide race/vet/build gates and the two-pass cold admission
+  review remain before the feature is marked done
+- no deployment, DNS, production credential, tag, published release,
+  product-main merge, or external message occurred
+
+### 2026-09-19 08:45 CDT — Wire Postfix submission and final transport enforcement
+
+Commit: `a0ac228`
 
 Affected files:
 

@@ -5,5 +5,5 @@ COPY . .
 RUN go build -o /out/gotth-mail-postfix-gate ./cmd/gotth-mail-postfix-gate
 
 FROM alpine:3.22
-RUN apk add --no-cache postfix busybox-extras curl jq
+RUN apk add --no-cache postfix busybox-extras curl jq socat
 COPY --from=build /out/gotth-mail-postfix-gate /usr/local/bin/gotth-mail-postfix-gate

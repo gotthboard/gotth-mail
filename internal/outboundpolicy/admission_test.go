@@ -33,11 +33,50 @@ func TestQueueAdmissionResolvesAuthenticatedAndChainedAliasSources(t *testing.T)
 		{Kind: SourceAuthenticatedMailbox, ObjectID: "00000000-0000-4000-8000-000000000b02"},
 		{Kind: SourceEnvelopeSender, ObjectID: "00000000-0000-4000-8000-000000000b02"},
 		{Kind: SourceAlias, ObjectID: "00000000-0000-4000-8000-000000000b03"},
-		{Kind: SourceAlias, ObjectID: "00000000-0000-4000-8000-000000000b04"},
+		{Kind: SourceForward, ObjectID: "00000000-0000-4000-8000-000000000b04"},
 	} {
 		if !hasQueueSource(record.Sources, want) {
 			t.Fatalf("missing source %#v in %#v", want, record.Sources)
 		}
+	}
+}
+
+func TestExpansionClassifiesListAndCatchAllSources(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	seedAdmissionState(t, db)
+	if _, err := db.Exec(`INSERT INTO aliases(id,domain_id,local_part,targets_json,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000b05','00000000-0000-4000-8000-000000000b01','members','["user@example.test","outside@example.net"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),('00000000-0000-4000-8000-000000000b06','00000000-0000-4000-8000-000000000b01','*','["outside@example.net"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		original  string
+		recipient string
+		want      QueueSource
+	}{
+		{"list", "members@example.test", "outside@example.net", QueueSource{Kind: SourceList, ObjectID: "00000000-0000-4000-8000-000000000b05"}},
+		{"catch all", "missing@example.test", "outside@example.net", QueueSource{Kind: SourceCatchAll, ObjectID: "00000000-0000-4000-8000-000000000b06"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sources, err := resolveExpansionDeliveries(context.Background(), db, []QueueDelivery{{OriginalRecipient: tc.original, Recipient: tc.recipient}})
+			if err != nil || !hasQueueSource(sources, tc.want) {
+				t.Fatalf("sources=%#v err=%v", sources, err)
+			}
+		})
+	}
+}
+
+func TestExactAliasTakesPrecedenceOverCatchAll(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	seedAdmissionState(t, db)
+	if _, err := db.Exec(`INSERT INTO aliases(id,domain_id,local_part,targets_json,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000b06','00000000-0000-4000-8000-000000000b01','*','["fallback@example.net"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	recipients, sources, err := expandOriginal(context.Background(), db, "first@example.test")
+	if err != nil || len(recipients) != 1 || recipients[0] != "outside@example.net" {
+		t.Fatalf("recipients=%#v sources=%#v err=%v", recipients, sources, err)
+	}
+	if hasQueueSource(sources, QueueSource{Kind: SourceCatchAll, ObjectID: "00000000-0000-4000-8000-000000000b06"}) {
+		t.Fatalf("catch-all shadowed exact alias: %#v", sources)
 	}
 }
 

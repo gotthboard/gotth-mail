@@ -48,6 +48,12 @@ func TestPostfixBoundaryInspectsStructuredQueueAndHoldsExactID(t *testing.T) {
 	if runner.path != "/usr/sbin/postsuper" || len(runner.args) != 2 || runner.args[0] != "-h" || runner.args[1] != metadata.QueueID {
 		t.Fatalf("postsuper invocation=%q %q", runner.path, runner.args)
 	}
+	if err := boundary.Release(context.Background(), metadata.QueueID); err != nil {
+		t.Fatal(err)
+	}
+	if runner.path != "/usr/sbin/postsuper" || len(runner.args) != 2 || runner.args[0] != "-H" || runner.args[1] != metadata.QueueID {
+		t.Fatalf("postsuper release invocation=%q %q", runner.path, runner.args)
+	}
 }
 
 func TestPostfixBoundaryFailsClosedOnChangingDuplicateOrUnsafeInput(t *testing.T) {
@@ -61,6 +67,9 @@ func TestPostfixBoundaryFailsClosedOnChangingDuplicateOrUnsafeInput(t *testing.T
 	for _, queueID := range []string{"ALL", "-", "../../ALL", "ABCDEF1234567890"} {
 		if err := boundary.Hold(context.Background(), queueID); err == nil {
 			t.Fatalf("unsafe queue ID %q accepted", queueID)
+		}
+		if err := boundary.Release(context.Background(), queueID); err == nil {
+			t.Fatalf("unsafe queue ID %q released", queueID)
 		}
 	}
 }

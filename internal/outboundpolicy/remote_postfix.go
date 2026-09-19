@@ -15,9 +15,10 @@ import (
 const maxPostfixHelperResponseBytes = 64 << 10
 
 type RemotePostfixBoundary struct {
-	BaseURL string
-	Token   string
-	Client  *http.Client
+	BaseURL      string
+	Token        string
+	ReleaseToken string
+	Client       *http.Client
 }
 
 // NewRemotePostfixBoundary validates the fixed helper origin and a nontrivial
@@ -25,14 +26,37 @@ type RemotePostfixBoundary struct {
 // Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(n),
 // Omega(1), where n is bounded configuration text.
 func NewRemotePostfixBoundary(rawURL, token string) (*RemotePostfixBoundary, error) {
+	return newRemotePostfixBoundary(rawURL, token, "")
+}
+
+// NewRemotePostfixBoundaryWithRelease adds a distinct release credential that
+// must not be exported into Postfix pipe(8) service environments.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(n), where
+// n is bounded configuration text.
+func NewRemotePostfixBoundaryWithRelease(rawURL, token, releaseToken string) (*RemotePostfixBoundary, error) {
+	if !validPostfixHelperToken(releaseToken) || releaseToken == token {
+		return nil, errors.New("invalid Postfix release token")
+	}
+	return newRemotePostfixBoundary(rawURL, token, releaseToken)
+}
+
+// newRemotePostfixBoundary validates shared helper configuration.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(n).
+func newRemotePostfixBoundary(rawURL, token, releaseToken string) (*RemotePostfixBoundary, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" {
 		return nil, errors.New("invalid Postfix helper URL")
 	}
-	if len(token) < 32 || len(token) > 4096 || strings.TrimSpace(token) != token {
+	if !validPostfixHelperToken(token) {
 		return nil, errors.New("invalid Postfix helper token")
 	}
-	return &RemotePostfixBoundary{BaseURL: strings.TrimRight(parsed.String(), "/"), Token: token, Client: &http.Client{Timeout: 10 * time.Second}}, nil
+	return &RemotePostfixBoundary{BaseURL: strings.TrimRight(parsed.String(), "/"), Token: token, ReleaseToken: releaseToken, Client: &http.Client{Timeout: 10 * time.Second}}, nil
+}
+
+// validPostfixHelperToken enforces the shared secret bound.
+// Complexity: time O(n), Omega(1); auxiliary space O(1).
+func validPostfixHelperToken(token string) bool {
+	return len(token) >= 32 && len(token) <= 4096 && strings.TrimSpace(token) == token
 }
 
 // Inspect retrieves one canonical queue observation from the privileged
@@ -65,10 +89,18 @@ func (b *RemotePostfixBoundary) Hold(ctx context.Context, queueID string) error 
 	return b.call(ctx, "/v1/queue/hold", queueID, nil)
 }
 
+// Release asks the helper to execute its single documented whole-message
+// release operation for one validated long queue ID.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(n),
+// Omega(1), where n is the bounded response body; one round trip is additive.
+func (b *RemotePostfixBoundary) Release(ctx context.Context, queueID string) error {
+	return b.call(ctx, "/v1/queue/release", queueID, nil)
+}
+
 // call performs one bounded authenticated JSON request to a fixed endpoint.
 // Complexity: time and space O(n), Omega(1), with a 64 KiB response ceiling.
 func (b *RemotePostfixBoundary) call(ctx context.Context, path, queueID string, out any) error {
-	if b == nil || b.Client == nil || !validLongQueueID(queueID) || (path != "/v1/queue/inspect" && path != "/v1/queue/hold") {
+	if b == nil || b.Client == nil || !validLongQueueID(queueID) || (path != "/v1/queue/inspect" && path != "/v1/queue/hold" && path != "/v1/queue/release") {
 		return errors.New("invalid Postfix helper request")
 	}
 	payload, _ := json.Marshal(map[string]string{"queue_id": queueID})
@@ -77,7 +109,14 @@ func (b *RemotePostfixBoundary) call(ctx context.Context, path, queueID string, 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+b.Token)
+	token := b.Token
+	if path == "/v1/queue/release" {
+		token = b.ReleaseToken
+		if !validPostfixHelperToken(token) {
+			return errors.New("Postfix release credential unavailable")
+		}
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	response, err := b.Client.Do(req)
 	if err != nil {
 		return errors.New("Postfix helper unavailable")
@@ -92,7 +131,7 @@ func (b *RemotePostfixBoundary) call(ctx context.Context, path, queueID string, 
 	}
 	if out == nil {
 		if len(bytes.TrimSpace(body)) != 0 {
-			return errors.New("Postfix helper hold response was not empty")
+			return errors.New("Postfix helper mutation response was not empty")
 		}
 		return nil
 	}

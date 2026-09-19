@@ -80,17 +80,25 @@ func TestHTTPDaemonMethodAndMalformedJSON(t *testing.T) {
 }
 
 func TestHTTPPrivilegedPostfixQueueRoutesRequireConfiguredToken(t *testing.T) {
+	helperToken := "0123456789abcdef0123456789abcdef"
+	releaseToken := "abcdef0123456789abcdef0123456789"
 	service := fixture()
 	mux := http.NewServeMux()
 	service.Register(mux)
 	request := httptest.NewRequest(http.MethodPost, "/internal/v1/postfix/queue/register", bytes.NewBufferString(`{}`))
-	request.Header.Set("Authorization", "Bearer 0123456789abcdef0123456789abcdef")
+	request.Header.Set("Authorization", "Bearer "+helperToken)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unconfigured helper status=%d", response.Code)
 	}
-	if err := service.ConfigurePostfixHelperToken("0123456789abcdef0123456789abcdef"); err != nil {
+	if err := service.ConfigurePostfixHelperToken(helperToken); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ConfigurePostfixReleaseToken(helperToken); err == nil {
+		t.Fatal("helper credential accepted as release credential")
+	}
+	if err := service.ConfigurePostfixReleaseToken(releaseToken); err != nil {
 		t.Fatal(err)
 	}
 	mux = http.NewServeMux()
@@ -101,5 +109,40 @@ func TestHTTPPrivilegedPostfixQueueRoutesRequireConfiguredToken(t *testing.T) {
 	mux.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong helper token status=%d", response.Code)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		path  string
+		token string
+		want  int
+	}{
+		{"helper cannot preview release", "/internal/v1/postfix/queue/release-preview", helperToken, http.StatusUnauthorized},
+		{"helper cannot release", "/internal/v1/postfix/queue/release", helperToken, http.StatusUnauthorized},
+		{"release cannot register", "/internal/v1/postfix/queue/register", releaseToken, http.StatusUnauthorized},
+		{"release can reach preview", "/internal/v1/postfix/queue/release-preview", releaseToken, http.StatusOK},
+		{"release can reach release", "/internal/v1/postfix/queue/release", releaseToken, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"queue_id":"4hn9gk6LMXzdWRs","confirmation":"confirmation"}`
+			request := httptest.NewRequest(http.MethodPost, tc.path, bytes.NewBufferString(body))
+			request.Header.Set("Authorization", "Bearer "+tc.token)
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, request)
+			if response.Code != tc.want {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestPostfixQueueCredentialSeparationIsOrderIndependent(t *testing.T) {
+	service := fixture()
+	shared := "0123456789abcdef0123456789abcdef"
+	if err := service.ConfigurePostfixReleaseToken(shared); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ConfigurePostfixHelperToken(shared); err == nil {
+		t.Fatal("release credential accepted as helper credential")
 	}
 }

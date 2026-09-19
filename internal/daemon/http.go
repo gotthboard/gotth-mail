@@ -84,6 +84,40 @@ func (s Service) Register(mux *http.ServeMux) {
 			write(w, s.PostfixQueueReconcile(r.Context(), correlationHeader(r), req.QueueID))
 		}
 	})
+	mux.HandleFunc("/internal/v1/postfix/queue/release-preview", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, http.MethodPost) || !s.authorizePostfixRelease(w, r) {
+			return
+		}
+		var req struct {
+			QueueID string `json:"queue_id"`
+		}
+		if decodeStrict(w, r, &req) {
+			write(w, s.PostfixQueueReleasePreview(r.Context(), correlationHeader(r), req.QueueID))
+		}
+	})
+	mux.HandleFunc("/internal/v1/postfix/queue/release", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, http.MethodPost) || !s.authorizePostfixRelease(w, r) {
+			return
+		}
+		var req struct {
+			QueueID      string `json:"queue_id"`
+			Confirmation string `json:"confirmation"`
+		}
+		if decodeStrict(w, r, &req) {
+			write(w, s.PostfixQueueRelease(r.Context(), correlationHeader(r), req.QueueID, req.Confirmation))
+		}
+	})
+	mux.HandleFunc("/internal/v1/postfix/queue/diagnostic", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, http.MethodPost) || !s.authorizePostfixHelper(w, r) {
+			return
+		}
+		var req struct {
+			QueueID string `json:"queue_id"`
+		}
+		if decodeStrict(w, r, &req) {
+			write(w, s.PostfixQueueDiagnostic(r.Context(), correlationHeader(r), req.QueueID))
+		}
+	})
 	mux.HandleFunc("/internal/v1/postfix/rate-limit/", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, http.MethodGet) {
 			return
@@ -167,14 +201,28 @@ func (s Service) Register(mux *http.ServeMux) {
 // Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(1), where
 // n is the bounded header length.
 func (s Service) authorizePostfixHelper(w http.ResponseWriter, r *http.Request) bool {
+	return authorizePostfixToken(w, r, s.postfixHelperEnabled, s.postfixHelperToken)
+}
+
+// authorizePostfixRelease verifies the independently held release credential.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(1), where
+// n is the bounded header length.
+func (s Service) authorizePostfixRelease(w http.ResponseWriter, r *http.Request) bool {
+	return authorizePostfixToken(w, r, s.postfixReleaseEnabled, s.postfixReleaseToken)
+}
+
+// authorizePostfixToken compares one bounded bearer against a configured
+// fixed-length digest without operation-class fallback.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(1).
+func authorizePostfixToken(w http.ResponseWriter, r *http.Request, enabled bool, tokenHash [32]byte) bool {
 	const prefix = "Bearer "
 	header := r.Header.Get("Authorization")
-	if !s.postfixHelperEnabled || !strings.HasPrefix(header, prefix) || len(header) > len(prefix)+4096 {
+	if !enabled || !strings.HasPrefix(header, prefix) || len(header) > len(prefix)+4096 {
 		w.WriteHeader(http.StatusUnauthorized)
 		return false
 	}
 	digest := sha256.Sum256([]byte(strings.TrimPrefix(header, prefix)))
-	if subtle.ConstantTimeCompare(digest[:], s.postfixHelperToken[:]) != 1 {
+	if subtle.ConstantTimeCompare(digest[:], tokenHash[:]) != 1 {
 		w.WriteHeader(http.StatusUnauthorized)
 		return false
 	}

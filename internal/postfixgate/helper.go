@@ -15,23 +15,30 @@ type QueueHolder interface {
 	Hold(context.Context, string) error
 }
 
+type QueueReleaser interface {
+	Release(context.Context, string) error
+}
+
 type Helper struct {
-	Inspector QueueInspector
-	Holder    QueueHolder
-	TokenHash [32]byte
+	Inspector        QueueInspector
+	Holder           QueueHolder
+	Releaser         QueueReleaser
+	TokenHash        [32]byte
+	ReleaseTokenHash [32]byte
 }
 
 // NewHelper stores only the fixed-length helper-token digest.
 // Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(1), where
 // n is the bounded secret length.
-func NewHelper(inspector QueueInspector, holder QueueHolder, token string) (Helper, error) {
-	if inspector == nil || holder == nil || len(token) < 32 || len(token) > 4096 || strings.TrimSpace(token) != token {
+func NewHelper(inspector QueueInspector, holder QueueHolder, releaser QueueReleaser, token, releaseToken string) (Helper, error) {
+	if inspector == nil || holder == nil || releaser == nil || len(token) < 32 || len(token) > 4096 || strings.TrimSpace(token) != token || len(releaseToken) < 32 || len(releaseToken) > 4096 || strings.TrimSpace(releaseToken) != releaseToken || token == releaseToken {
 		return Helper{}, errors.New("invalid Postfix helper configuration")
 	}
-	return Helper{Inspector: inspector, Holder: holder, TokenHash: sha256.Sum256([]byte(token))}, nil
+	return Helper{Inspector: inspector, Holder: holder, Releaser: releaser, TokenHash: sha256.Sum256([]byte(token)), ReleaseTokenHash: sha256.Sum256([]byte(releaseToken))}, nil
 }
 
-// Handler exposes only inspect and hold for one validated queue ID.
+// Handler exposes inspect/hold under the delivery credential and release under
+// a distinct credential unavailable to Postfix pipe(8) services.
 // Complexity: local time and space O(n), Omega(1), with an 8 KiB request bound;
 // Postfix command costs are delegated to the injected narrow boundary.
 func (h Helper) Handler() http.Handler {
@@ -60,6 +67,17 @@ func (h Helper) Handler() http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+	mux.HandleFunc("/v1/queue/release", func(w http.ResponseWriter, r *http.Request) {
+		queueID, ok := h.requestWithHash(w, r, h.ReleaseTokenHash)
+		if !ok {
+			return
+		}
+		if err := h.Releaser.Release(r.Context(), queueID); err != nil {
+			http.Error(w, "queue release failed", http.StatusConflict)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	return mux
 }
 
@@ -67,6 +85,14 @@ func (h Helper) Handler() http.Handler {
 // Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(n), where
 // n is capped at 8 KiB.
 func (h Helper) request(w http.ResponseWriter, r *http.Request) (string, bool) {
+	return h.requestWithHash(w, r, h.TokenHash)
+}
+
+// requestWithHash authenticates and strictly decodes one queue selector using
+// the credential assigned to that operation class.
+// Complexity: time O(n), Omega(1), tight Theta(n); auxiliary space O(n), where
+// n is capped at 8 KiB.
+func (h Helper) requestWithHash(w http.ResponseWriter, r *http.Request, tokenHash [32]byte) (string, bool) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return "", false
@@ -78,7 +104,7 @@ func (h Helper) request(w http.ResponseWriter, r *http.Request) (string, bool) {
 		return "", false
 	}
 	digest := sha256.Sum256([]byte(strings.TrimPrefix(header, prefix)))
-	if subtle.ConstantTimeCompare(digest[:], h.TokenHash[:]) != 1 {
+	if subtle.ConstantTimeCompare(digest[:], tokenHash[:]) != 1 {
 		w.WriteHeader(http.StatusUnauthorized)
 		return "", false
 	}
