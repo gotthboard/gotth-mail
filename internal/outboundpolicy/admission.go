@@ -57,11 +57,6 @@ func (s QueueAdmissionService) Admit(ctx context.Context, req QueueAdmissionRequ
 			return QueueRecord{}, false, err
 		}
 		sources = append(sources, authority...)
-	} else if req.Metadata.EnvelopeSender != "<>" {
-		_, id, err := mailboxObjectByAddress(ctx, s.DB, req.Metadata.EnvelopeSender)
-		if err == nil {
-			sources = append(sources, QueueSource{Kind: SourceEnvelopeSender, ObjectID: id})
-		}
 	}
 	expansion, err := resolveExpansionDeliveries(ctx, s.DB, req.Deliveries)
 	if err != nil {

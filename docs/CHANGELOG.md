@@ -21,9 +21,39 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 10:17 CDT — Expose policy administration and verify restored mailbox state
+### 2026-09-19 10:29 CDT — Reject spoofed inbound envelope authority
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- outbound queue admission and hostile-path tests
+- same-domain hostile-path evidence and changelog
+
+Explanation:
+
+Closed a repaired-tree cold-review finding. Queue admission no longer turns an
+unauthenticated inbound `MAIL FROM` that happens to equal a hosted mailbox into
+an authoritative local envelope-sender source. Only authenticated mailbox or
+durable system-sender bindings can contribute sender authority; inbound
+forwarding is governed by the authoritative expansion objects that actually
+caused it. This prevents a spoofed local reverse path from injecting an
+unintended governing domain and holding legitimate forwarded mail.
+
+Verification:
+
+- new PostgreSQL coverage proves a spoofed hosted mailbox reverse path adds no
+  envelope-sender provenance while chained alias/forward sources remain intact
+- focused development-host normal and race suites passed for outbound policy
+
+Risks / non-goals:
+
+- no live queue, domain policy, deployment, production credential, tag,
+  release, or external service changed
+
+### 2026-09-19 10:17 CDT — Expose policy administration and verify restored mailbox state
+
+Commit: `86fb764`
 
 Affected files:
 

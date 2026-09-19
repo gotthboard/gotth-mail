@@ -114,6 +114,27 @@ func TestQueueAdmissionResolvesInboundForwardWithoutTrustingEnvelopeSender(t *te
 	}
 }
 
+func TestQueueAdmissionDoesNotTrustSpoofedLocalInboundEnvelopeSender(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	seedAdmissionState(t, db)
+	metadata := QueueMetadata{
+		QueueID:            "CDFGHJKLMNPRz2345",
+		ArrivalFingerprint: "abababababababababababababababababababababababababababababababab",
+		EnvelopeSender:     "user@example.test",
+		Recipients:         []string{"outside@example.net"},
+	}
+	record, _, err := (QueueAdmissionService{DB: db}).Admit(context.Background(), QueueAdmissionRequest{
+		Metadata:   metadata,
+		Deliveries: []QueueDelivery{{OriginalRecipient: "first@example.test", Recipient: "outside@example.net"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Sources) != 2 || hasQueueSource(record.Sources, QueueSource{Kind: SourceEnvelopeSender, ObjectID: "00000000-0000-4000-8000-000000000b02"}) {
+		t.Fatalf("spoofed envelope sender became authority: %#v", record.Sources)
+	}
+}
+
 func TestQueueAdmissionRejectsUnprovenExpansionAndMissingAuthority(t *testing.T) {
 	db := testpg.DB(t, store.MigrateSQL)
 	seedAdmissionState(t, db)

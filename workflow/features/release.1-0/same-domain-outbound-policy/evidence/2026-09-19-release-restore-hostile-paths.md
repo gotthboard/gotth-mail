@@ -116,6 +116,15 @@ preview digest and a valid correlation ID. Restore verification compares the
 captured verifier and quota. Focused API/outbound-policy/operations normal and
 race suites passed, including new authorization and corruption tests.
 
+The repaired-tree pass found that unauthenticated inbound queue admission
+treated a reverse path matching a hosted mailbox as authoritative local sender
+provenance. That trusted spoofable envelope text and could inject an unintended
+governing domain into a legitimate forward. Admission now derives sender
+authority only from an authenticated mailbox or durable system-sender binding;
+unauthenticated inbound mail is governed solely by the local expansion objects
+that created the outbound delivery. Focused normal and race suites passed with
+a spoofed-local-sender regression test.
+
 ## Remaining admission work
 
 - repository-wide serial, race, vet, command-build, Compose-render, and workflow
