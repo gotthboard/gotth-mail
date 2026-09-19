@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-19 — Notification workflow source traceability
+
+- Corrected the completed Telegram notification feature's canonical
+  `source_path` from the nonexistent notification protobuf directory to the
+  implemented `proto/gotth/mail/plugin/v1` contract directory.
+
 ## 2026-09-19 — Telegram actorless update boundary
 
 - Corrected the Telegram audit contract for authenticated update envelopes that

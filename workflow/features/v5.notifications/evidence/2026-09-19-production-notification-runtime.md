@@ -96,6 +96,11 @@ decoding failures remain outside actor admission and fail closed. A regression
 test proves the actorless audit path rather than pretending an update ID is a
 user identity.
 
+The final traceability review also found that the completed Telegram feature's
+canonical manifest entry pointed at a nonexistent protobuf directory. The
+source path now names `proto/gotth/mail/plugin/v1`, where the implemented and
+generated notification service contract actually lives.
+
 ## Verification
 
 - `GOMAXPROCS=4 go test -count=1 -p=2 ./...`
