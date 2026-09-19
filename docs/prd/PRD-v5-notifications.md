@@ -34,13 +34,20 @@ Read-only commands must still authenticate the Telegram actor and audit the requ
 
 ### v5.3 Approval workflows
 
-Only after policy/audit paths are proven:
+Candidate approval classes, enabled only after each underlying core mutation
+has its own bounded policy, preview/confirmation, failure-recovery, and audit
+contract:
 
-- approve config apply
-- approve DKIM rotation
-- approve queue flush/retry
-- approve rollback
-- approve break-glass use
+- config apply (deferred)
+- DKIM rotation (deferred)
+- queue flush/retry (enabled in this alpha)
+- rollback (deferred)
+- break-glass use (deferred)
+
+The notification layer does not manufacture mutation mechanisms. This alpha
+enables only live Postfix queue flush/retry. Config apply, DKIM rotation,
+rollback, and break-glass approval remain rejected until their core workflows
+are separately specified, implemented, and proven.
 
 Rules:
 
@@ -85,7 +92,7 @@ After Telegram proves the seam:
 - Operational alerts are delivered through Telegram without exposing secrets.
 - Read-only Telegram commands return bounded summaries.
 - Every Telegram request is mapped to an identity and audited.
-- Approval workflows, when enabled, use core authorization/confirmation/mutation/audit paths and reject stale, replayed, mismatched, or expired approvals.
+- The enabled queue approval workflow uses core authorization/confirmation/mutation/audit paths and rejects stale, replayed, mismatched, or expired approvals; unimplemented approval classes remain rejected.
 
 ## Mandatory OpenPGP signing for email notifications
 

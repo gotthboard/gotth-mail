@@ -99,13 +99,18 @@ The SQL core provides this mapping store, and the configured read-only command d
 
 ## Approval workflow
 
-Supported approvals:
+Candidate approvals:
 
-- config apply
-- DKIM rotation
-- queue flush/retry
-- rollback
-- break-glass use
+- config apply (deferred)
+- DKIM rotation (deferred)
+- queue flush/retry (enabled in this alpha)
+- rollback (deferred)
+- break-glass use (deferred)
+
+The configured alpha implementation admits only `queue:flush` and
+`queue:retry`. All other actions fail before prompt creation or approval claim.
+They require separate core mutation contracts and must not be added through a
+generic callback-to-function or chat-to-shell registry.
 
 Configured SQL deployments store prompt bindings in `notification_approvals`; confirmation accepts only the exact original transport actor, mapped actor, action, resource, request hash, and unexpired prompt ID. Mismatched, replayed, and expired confirmations fail closed before any mutation path can run.
 
@@ -168,6 +173,7 @@ Required tests:
 - chat membership alone does not authorize commands or approvals
 - approval workflows use core authorization/confirmation/mutation/audit paths
 - stale/replayed/mismatched/expired/changed-hash/bad-binding approvals are rejected
+- config-apply, DKIM-rotation, rollback, break-glass, and arbitrary approval actions remain rejected
 - Telegram plugin never mutates state directly
 - no broad remote shell over chat
 - `git diff --check`

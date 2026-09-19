@@ -92,6 +92,16 @@ accepts only the typed not-found result as completed, and preserves the
 original error when the ID remains or the snapshot cannot prove absence. The
 implementation no longer claims undocumented blanket repeatability.
 
+An independent product-contract pass found that the v5 PRD and design still
+called config apply, DKIM rotation, rollback, and break-glass supported even
+though the admitted runtime intentionally exposes only queue flush/retry and
+the repository has no safe underlying mutation contract for several of those
+actions. The documents now distinguish candidate later workflows from the
+alpha action set. Queue flush/retry remain enabled; every other approval class
+must fail closed until its own core policy, confirmation, recovery, and audit
+mechanism exists. No fake chat-driven rollback or generic mutation registry
+was added to make the checklist look complete.
+
 Verification:
 
 - full serial Go suite and focused race suite

@@ -51,15 +51,22 @@ Read-only commands still authenticate the Telegram actor, map actor to identity,
 
 ## Approval workflow architecture
 
-Approval workflows may be enabled only after policy/audit paths are proven.
+Approval workflows may be enabled only after the underlying core mutation and
+its policy/audit/failure-recovery paths are proven. Notification transport is
+not a mutation registry.
 
-Supported approval prompts:
+Candidate approval prompts:
 
-- config apply
-- DKIM rotation
-- queue flush/retry
-- rollback
-- break-glass use
+- config apply (deferred)
+- DKIM rotation (deferred)
+- queue flush/retry (enabled in this alpha)
+- rollback (deferred)
+- break-glass use (deferred)
+
+The admitted alpha action set is deliberately limited to queue flush/retry.
+Every other candidate stays rejected until a separately specified core
+workflow exists; the notification layer cannot substitute chat confirmation
+for a real rollback or break-glass contract.
 
 Rules:
 
@@ -106,6 +113,7 @@ These remain notification backends, not authorities.
 - every Telegram request maps to identity and audit event
 - approval workflows use core authorization/confirmation/mutation/audit paths
 - approval workflows reject stale/replayed/mismatched/expired approvals
+- actions outside the admitted queue flush/retry set are rejected before claim
 
 ## Mandatory OpenPGP signing for email notifications
 
