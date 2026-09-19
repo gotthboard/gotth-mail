@@ -21,9 +21,46 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-19 09:28 CDT — Complete outbound release, recovery, and hostile-path enforcement
+### 2026-09-19 09:35 CDT — Serialize policy authority across queue release
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/outboundpolicy/decision.go`
+- `internal/outboundpolicy/release.go`
+- `internal/outboundpolicy/release_test.go`
+- release/restore hostile-path evidence and changelog
+
+Explanation:
+
+Closed a release-time authorization race found during cold review. A confirmed
+release previously recomputed current policy before invoking Postfix, but a
+concurrent domain, mailbox, alias, or system-sender mutation could commit after
+that check and before `postsuper -H`. Release now holds PostgreSQL share locks
+on every policy-authority table from the final confirmation recheck through
+Postfix release, live metadata verification, and durable completion. Ordinary
+policy and identity mutations therefore wait; concurrent releases may still
+proceed because their locks are compatible.
+
+Verification:
+
+- a PostgreSQL concurrency test pauses inside the external release boundary,
+  proves a domain policy update cannot commit, resumes release, and proves the
+  verified release completes
+- focused development-host normal and race suites passed for outbound policy
+- `git diff --check`
+
+Risks / non-goals:
+
+- release is rare and deliberately prioritizes authorization correctness over
+  concurrent policy-administration throughput
+- no live queue, deployment, production credential, tag, release, or external
+  service changed
+
+### 2026-09-19 09:28 CDT — Complete outbound release, recovery, and hostile-path enforcement
+
+Commit: `be5108a`
 
 Affected files:
 

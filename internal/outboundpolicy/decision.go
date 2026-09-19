@@ -242,8 +242,8 @@ func (s EnforcementService) submissionSources(ctx context.Context, req Enforceme
 // current source/domain enablement, scope, and revision in one SQL query.
 // Complexity: process time O(s*m), Omega(s), tight Theta(s*m); database time
 // O(s log N); auxiliary space O(s*m), Omega(s), with Decide variables.
-func resolvePolicySources(ctx context.Context, db *sql.DB, sources []QueueSource) ([]GoverningDomain, error) {
-	if db == nil || len(sources) == 0 || len(sources) > maxQueueSources {
+func resolvePolicySources(ctx context.Context, queryer policyQueryer, sources []QueueSource) ([]GoverningDomain, error) {
+	if queryer == nil || len(sources) == 0 || len(sources) > maxQueueSources {
 		return nil, errors.New("invalid outbound policy sources")
 	}
 	kinds := make([]string, len(sources))
@@ -255,7 +255,7 @@ func resolvePolicySources(ctx context.Context, db *sql.DB, sources []QueueSource
 		kinds[i] = string(source.Kind)
 		ids[i] = source.ObjectID
 	}
-	rows, err := db.QueryContext(ctx, `WITH input AS (
+	rows, err := queryer.QueryContext(ctx, `WITH input AS (
     SELECT source_kind,object_id,ord
     FROM unnest($1::text[],$2::text[]) WITH ORDINALITY AS u(source_kind,object_id,ord)
 )

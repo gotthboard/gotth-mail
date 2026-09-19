@@ -100,7 +100,7 @@ func (s QueueReleaseService) Preview(ctx context.Context, queueID string) (Queue
 	if err != nil {
 		return QueueReleasePlan{}, err
 	}
-	return s.previewRecord(ctx, record)
+	return s.previewRecord(ctx, s.Store.DB, record)
 }
 
 // Release serializes one confirmed release, rechecks current policy under the
@@ -139,7 +139,15 @@ func (s QueueReleaseService) Release(ctx context.Context, actor audit.ActorRef, 
 	if err != nil {
 		return QueueReleaseResult{}, err
 	}
-	plan, err := s.previewRecord(ctx, record)
+	policyTx, err := s.Store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return QueueReleaseResult{}, err
+	}
+	defer policyTx.Rollback()
+	if _, err := policyTx.ExecContext(ctx, `LOCK TABLE domains,mailboxes,aliases,outbound_system_senders IN SHARE MODE`); err != nil {
+		return QueueReleaseResult{}, err
+	}
+	plan, err := s.previewRecord(ctx, policyTx, record)
 	if err != nil {
 		return QueueReleaseResult{}, err
 	}
@@ -186,11 +194,11 @@ func (s QueueReleaseService) Release(ctx context.Context, actor audit.ActorRef, 
 // against one current authoritative governing snapshot.
 // Complexity: time O(r*s*m+s log s+b), Omega(r+s); auxiliary space O(s*m+b),
 // with Preview variables.
-func (s QueueReleaseService) previewRecord(ctx context.Context, record QueueRecord) (QueueReleasePlan, error) {
+func (s QueueReleaseService) previewRecord(ctx context.Context, queryer policyQueryer, record QueueRecord) (QueueReleasePlan, error) {
 	if record.HoldState != HoldApplied && record.HoldState != HoldReleaseError && record.HoldState != HoldReleaseReconciling && record.HoldState != HoldReleased {
 		return QueueReleasePlan{}, errors.New("outbound queue message is not releasable")
 	}
-	governing, err := resolvePolicySources(ctx, s.Store.DB, record.Sources)
+	governing, err := resolvePolicySources(ctx, queryer, record.Sources)
 	if err != nil {
 		return QueueReleasePlan{}, err
 	}

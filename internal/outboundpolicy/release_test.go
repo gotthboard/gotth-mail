@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/store"
@@ -88,6 +89,66 @@ func TestQueueReleaseRejectsStaleConfirmationAndRecordsHelperFailure(t *testing.
 	result, err := service.Release(context.Background(), actor, "release-failure", releaseQueueID, plan.ConfirmationHash)
 	if err == nil || result.Record.HoldState != HoldReleaseError || boundary.metadata.Held != true {
 		t.Fatalf("result=%#v held=%v err=%v", result, boundary.metadata.Held, err)
+	}
+}
+
+type blockingReleaseBoundary struct {
+	metadata QueueMetadata
+	entered  chan struct{}
+	proceed  chan struct{}
+}
+
+func (b *blockingReleaseBoundary) Inspect(context.Context, string) (QueueMetadata, error) {
+	return b.metadata, nil
+}
+
+func (b *blockingReleaseBoundary) Release(ctx context.Context, _ string) error {
+	close(b.entered)
+	select {
+	case <-b.proceed:
+		b.metadata.Held = false
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestQueueReleaseSerializesPolicyAuthorityMutationAcrossPostfixRelease(t *testing.T) {
+	db, queue, held, actor := heldReleaseFixture(t)
+	if _, err := db.Exec(`UPDATE domains SET outbound_scope='unrestricted',outbound_policy_revision=3,updated_at=CURRENT_TIMESTAMP WHERE name='example.test'`); err != nil {
+		t.Fatal(err)
+	}
+	boundary := &blockingReleaseBoundary{metadata: held.metadata, entered: make(chan struct{}), proceed: make(chan struct{})}
+	service := QueueReleaseService{Store: queue, Boundary: boundary}
+	plan, err := service.Preview(context.Background(), releaseQueueID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, releaseErr := service.Release(context.Background(), actor, "release-policy-lock", releaseQueueID, plan.ConfirmationHash)
+		done <- releaseErr
+	}()
+	select {
+	case <-boundary.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("release helper was not reached")
+	}
+	updateCtx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	_, updateErr := db.ExecContext(updateCtx, `UPDATE domains SET outbound_policy_revision=4,updated_at=CURRENT_TIMESTAMP WHERE name='example.test'`)
+	cancel()
+	if updateErr == nil {
+		close(boundary.proceed)
+		t.Fatal("policy mutation crossed an in-flight Postfix release")
+	}
+	close(boundary.proceed)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("release did not complete after policy mutation was canceled")
 	}
 }
 

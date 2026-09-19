@@ -79,6 +79,16 @@ removed the entire Compose project and its volumes.
 - shell syntax checks for the smoke and SMTP sink;
 - local focused tests and `git diff --check`.
 
+## Cold-review repair
+
+The first cold pass found a real time-of-check/time-of-use race between the
+final policy recheck and `postsuper -H`. Release now holds PostgreSQL share
+locks on the complete policy-authority table set across the external release
+and post-release verification. A development-host concurrency test pauses at
+the helper boundary, proves a domain policy update times out instead of
+crossing the release, resumes the helper, and observes successful completion.
+Both the focused normal and race suites passed after the repair.
+
 ## Remaining admission work
 
 - repository-wide serial, race, vet, command-build, Compose-render, and workflow
