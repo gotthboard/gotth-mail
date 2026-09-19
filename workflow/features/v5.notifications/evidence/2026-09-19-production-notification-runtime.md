@@ -1,6 +1,6 @@
 # Production notification runtime admission — 2026-09-19
 
-Candidate repair commits: `3f34aa5`, `78ce26e`
+Candidate repair commits: `3f34aa5`, `78ce26e`, `23075c5`
 
 ## Admitted behavior
 
@@ -68,6 +68,14 @@ approvals can expire; command, rejection, and mutation paths require audit;
 unsupported updates produce bounded denied events; creation records the real
 initiator and prompted actor separately; and a missing sink returns gRPC
 `Unavailable`.
+
+The next fresh pass found one production-boundary gap: local `postqueue -i`
+reconciliation did not cover a successful helper execution whose HTTP 204
+response was lost. Commit `23075c5` performs the same exact-ID observation at
+the remote client boundary. Only typed not-found proves completion; a present
+ID or an unavailable/invalid observation retains the original mutation error.
+The regression suite simulates a lost helper response and separately proves
+that a still-present queue ID cannot hide a failed retry.
 
 ## Verification
 
