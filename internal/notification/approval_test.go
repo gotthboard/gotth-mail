@@ -53,14 +53,18 @@ func TestSQLApprovalStoreAcceptsExactBindingOnce(t *testing.T) {
 	}
 	confirmation := confirmationFixture(now)
 	confirmation.BindingToken = created.BindingToken
-	approved, err := store.Confirm(context.Background(), confirmation)
+	approved, err := store.Claim(context.Background(), confirmation, 2*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := store.Complete(context.Background(), approved.ID, confirmation.Now); err != nil {
+		t.Fatal(err)
+	}
+	approved, _, _ = store.Get(context.Background(), approved.ID)
 	if approved.Result != "approved" || approved.UsedAt == nil {
 		t.Fatalf("not marked approved: %#v", approved)
 	}
-	if _, err := store.Confirm(context.Background(), confirmation); err == nil || !strings.Contains(err.Error(), "replay") {
+	if _, err := store.Claim(context.Background(), confirmation, 2*time.Minute); err == nil || !strings.Contains(err.Error(), "replay") {
 		t.Fatalf("replay accepted: %v", err)
 	}
 	if len(aud.Events) != 3 || aud.Events[0].Action != "notification.approval.create" || aud.Events[1].Result != "success" || aud.Events[2].Result != "denied" {
@@ -79,7 +83,7 @@ func TestSQLApprovalStoreRejectsMismatchAndExpiry(t *testing.T) {
 	mismatch := confirmationFixture(now)
 	mismatch.BindingToken = created.BindingToken
 	mismatch.RequestHash = "sha256:changed"
-	if _, err := store.Confirm(context.Background(), mismatch); err == nil || !strings.Contains(err.Error(), "mismatch") {
+	if _, err := store.Claim(context.Background(), mismatch, 2*time.Minute); err == nil || !strings.Contains(err.Error(), "mismatch") {
 		t.Fatalf("mismatch accepted: %v", err)
 	}
 	got, ok, err := store.Get(context.Background(), "approval-1")
@@ -88,7 +92,7 @@ func TestSQLApprovalStoreRejectsMismatchAndExpiry(t *testing.T) {
 	}
 	legitimate := confirmationFixture(now)
 	legitimate.BindingToken = created.BindingToken
-	if _, err := store.Confirm(context.Background(), legitimate); err != nil {
+	if _, err := store.Claim(context.Background(), legitimate, 2*time.Minute); err != nil {
 		t.Fatalf("legitimate confirmation failed after mismatch: %v", err)
 	}
 
@@ -102,7 +106,7 @@ func TestSQLApprovalStoreRejectsMismatchAndExpiry(t *testing.T) {
 	c.ID = "approval-2"
 	c.BindingToken = expiredCreated.BindingToken
 	c.Now = expired.ExpiresAt
-	if _, err := store.Confirm(context.Background(), c); err == nil || !strings.Contains(err.Error(), "expired") {
+	if _, err := store.Claim(context.Background(), c, 2*time.Minute); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("expired approval accepted: %v", err)
 	}
 	got, ok, err = store.Get(context.Background(), "approval-2")

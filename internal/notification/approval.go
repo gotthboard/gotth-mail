@@ -31,6 +31,59 @@ type ActorMapping struct {
 
 type SQLActorMapper struct{ DB *sql.DB }
 
+func (s SQLActorMapper) ReplaceTelegram(ctx context.Context, mappings []ActorMapping, now time.Time) error {
+	if s.DB == nil {
+		return errors.New("notification actor mapping db required")
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	seen := map[string]bool{}
+	for _, m := range mappings {
+		m.TransportActor.Transport = cleanToken(m.TransportActor.Transport, 40)
+		m.TransportActor.ExternalID = strings.TrimSpace(m.TransportActor.ExternalID)
+		m.Actor.Type = cleanToken(m.Actor.Type, 40)
+		m.Actor.ID = strings.TrimSpace(m.Actor.ID)
+		if m.TransportActor.Transport != "telegram" || m.TransportActor.ExternalID == "" || m.Actor.Type == "" || m.Actor.ID == "" || seen[m.TransportActor.ExternalID] {
+			return errors.New("invalid Telegram actor mapping set")
+		}
+		seen[m.TransportActor.ExternalID] = true
+		scopes, err := json.Marshal(m.Actor.Scopes)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO notification_actor_mappings(transport, external_actor_id, actor_type, actor_id, scopes_json, created_at, updated_at) VALUES ('telegram',$1,$2,$3,$4,$5,$5) ON CONFLICT (transport, external_actor_id) DO UPDATE SET actor_type=EXCLUDED.actor_type, actor_id=EXCLUDED.actor_id, scopes_json=EXCLUDED.scopes_json, updated_at=EXCLUDED.updated_at`, m.TransportActor.ExternalID, m.Actor.Type, m.Actor.ID, string(scopes), now.UTC()); err != nil {
+			return err
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT external_actor_id FROM notification_actor_mappings WHERE transport='telegram'`)
+	if err != nil {
+		return err
+	}
+	var stale []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		if !seen[id] {
+			stale = append(stale, id)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, id := range stale {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM notification_actor_mappings WHERE transport='telegram' AND external_actor_id=$1`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s SQLActorMapper) Put(ctx context.Context, m ActorMapping, now time.Time) error {
 	if s.DB == nil {
 		return errors.New("notification actor mapping db required")
@@ -76,19 +129,21 @@ func (s SQLActorMapper) Map(ctx context.Context, ta TransportActor) (authz.Actor
 }
 
 type ApprovalRequest struct {
-	ID             string
-	TransportActor TransportActor
-	Actor          authz.Actor
-	Action         authz.Action
-	Resource       authz.Resource
-	RequestHash    string
-	BindingHash    string
-	BindingToken   string `json:"-"`
-	CorrelationID  string
-	ExpiresAt      time.Time
-	CreatedAt      time.Time
-	UsedAt         *time.Time
-	Result         string
+	ID                 string
+	TransportActor     TransportActor
+	Actor              authz.Actor
+	Action             authz.Action
+	Resource           authz.Resource
+	RequestHash        string
+	BindingHash        string
+	BindingToken       string `json:"-"`
+	CorrelationID      string
+	ExpiresAt          time.Time
+	CreatedAt          time.Time
+	UsedAt             *time.Time
+	ExecutionStartedAt *time.Time
+	ExecutionAttempts  int
+	Result             string
 }
 
 type ApprovalConfirmation struct {
@@ -145,10 +200,14 @@ func (s SQLApprovalStore) Create(ctx context.Context, r ApprovalRequest, now tim
 	if err != nil {
 		return ApprovalRequest{}, err
 	}
-	return r, s.audit(ctx, r, "notification.approval.create", "success", nil)
+	_ = s.audit(ctx, r, "notification.approval.create", "success", nil)
+	return r, nil
 }
 
-func (s SQLApprovalStore) Confirm(ctx context.Context, c ApprovalConfirmation) (ApprovalRequest, error) {
+// Claim atomically reserves a verified approval for execution. A stale claim
+// may be recovered because the admitted queue mutations are idempotent
+// scheduling operations (`postqueue -f` and `postqueue -i`).
+func (s SQLApprovalStore) Claim(ctx context.Context, c ApprovalConfirmation, lease time.Duration) (ApprovalRequest, error) {
 	if s.DB == nil {
 		return ApprovalRequest{}, errors.New("notification approval db required")
 	}
@@ -169,8 +228,11 @@ func (s SQLApprovalStore) Confirm(ctx context.Context, c ApprovalConfirmation) (
 		_ = s.audit(ctx, attempt, "notification.approval.confirm", "denied", errors.New(msg))
 		return ApprovalRequest{}, errors.New(msg)
 	}
-	if r.UsedAt != nil || r.Result != "pending" {
+	if r.UsedAt != nil || (r.Result != "pending" && r.Result != "executing") {
 		return fail("approval replay rejected", false)
+	}
+	if r.Result == "executing" && (r.ExecutionStartedAt == nil || c.Now.Sub(*r.ExecutionStartedAt) < lease) {
+		return fail("approval execution already in progress", false)
 	}
 	if c.Now.IsZero() || c.Now.Before(r.CreatedAt) {
 		return fail("invalid approval confirmation time", false)
@@ -181,7 +243,8 @@ func (s SQLApprovalStore) Confirm(ctx context.Context, c ApprovalConfirmation) (
 	if cleanToken(c.TransportActor.Transport, 40) != r.TransportActor.Transport || strings.TrimSpace(c.TransportActor.ExternalID) != r.TransportActor.ExternalID || cleanToken(c.Actor.Type, 40) != r.Actor.Type || strings.TrimSpace(c.Actor.ID) != r.Actor.ID || c.Action != r.Action || c.Resource.Type != r.Resource.Type || c.Resource.ID != r.Resource.ID || cleanToken(c.RequestHash, 128) != r.RequestHash || !validBindingToken(c.BindingToken) || subtle.ConstantTimeCompare([]byte(hashBindingToken(c.BindingToken)), []byte(r.BindingHash)) != 1 {
 		return fail("approval binding mismatch", false)
 	}
-	res, err := s.DB.ExecContext(ctx, `UPDATE notification_approvals SET used_at=$2, result='approved', updated_at=$2 WHERE id=$1 AND used_at IS NULL AND result='pending'`, r.ID, c.Now.UTC())
+	staleBefore := c.Now.Add(-lease).UTC()
+	res, err := s.DB.ExecContext(ctx, `UPDATE notification_approvals SET result='executing', execution_started_at=$2, execution_attempts=execution_attempts+1, execution_error_code=NULL, updated_at=$2 WHERE id=$1 AND used_at IS NULL AND (result='pending' OR (result='executing' AND execution_started_at < $3))`, r.ID, c.Now.UTC(), staleBefore)
 	if err != nil {
 		return ApprovalRequest{}, err
 	}
@@ -192,9 +255,50 @@ func (s SQLApprovalStore) Confirm(ctx context.Context, c ApprovalConfirmation) (
 	if n != 1 {
 		return fail("approval replay rejected", false)
 	}
-	r.UsedAt = &[]time.Time{c.Now.UTC()}[0]
-	r.Result = "approved"
-	return r, s.audit(ctx, r, "notification.approval.confirm", "success", nil)
+	r.ExecutionStartedAt = &[]time.Time{c.Now.UTC()}[0]
+	r.ExecutionAttempts++
+	r.Result = "executing"
+	_ = s.audit(ctx, r, "notification.approval.confirm", "success", nil)
+	return r, nil
+}
+
+func (s SQLApprovalStore) Complete(ctx context.Context, id string, now time.Time) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var r ApprovalRequest
+	err = tx.QueryRowContext(ctx, `UPDATE notification_approvals SET used_at=$2, result='approved', execution_error_code=NULL, updated_at=$2 WHERE id=$1 AND used_at IS NULL AND result='executing' RETURNING actor_type, actor_id, action, resource_type, resource_id, correlation_id`, id, now.UTC()).Scan(&r.Actor.Type, &r.Actor.ID, &r.Action, &r.Resource.Type, &r.Resource.ID, &r.CorrelationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("approval execution completion rejected")
+	}
+	if err != nil {
+		return err
+	}
+	if err := audit.WriteSQL(ctx, tx, audit.Event{Actor: audit.ActorRef{Type: r.Actor.Type, ID: r.Actor.ID}, Action: "notification.approval.execute", Resource: audit.ResourceRef{Type: r.Resource.Type, ID: r.Resource.ID}, CorrelationID: r.CorrelationID, Result: "success", AfterRedacted: map[string]any{"approval_id": id, "approved_action": string(r.Action)}}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s SQLApprovalStore) Retry(ctx context.Context, id string, now time.Time, code string) error {
+	code = cleanToken(code, 80)
+	if code == "" {
+		code = "execution_failed"
+	}
+	res, err := s.DB.ExecContext(ctx, `UPDATE notification_approvals SET result='pending', execution_started_at=NULL, execution_error_code=$3, updated_at=$2 WHERE id=$1 AND used_at IS NULL AND result='executing'`, id, now.UTC(), code)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return errors.New("approval execution retry rejected")
+	}
+	return nil
 }
 
 func (s SQLApprovalStore) Get(ctx context.Context, id string) (ApprovalRequest, bool, error) {
@@ -203,7 +307,8 @@ func (s SQLApprovalStore) Get(ctx context.Context, id string) (ApprovalRequest, 
 	}
 	var r ApprovalRequest
 	var used sql.NullTime
-	err := s.DB.QueryRowContext(ctx, `SELECT id, transport, external_actor_id, actor_type, actor_id, action, resource_type, resource_id, request_hash, confirmation_binding_hash, correlation_id, expires_at, used_at, result, created_at FROM notification_approvals WHERE id=$1`, id).Scan(&r.ID, &r.TransportActor.Transport, &r.TransportActor.ExternalID, &r.Actor.Type, &r.Actor.ID, &r.Action, &r.Resource.Type, &r.Resource.ID, &r.RequestHash, &r.BindingHash, &r.CorrelationID, &r.ExpiresAt, &used, &r.Result, &r.CreatedAt)
+	var started sql.NullTime
+	err := s.DB.QueryRowContext(ctx, `SELECT id, transport, external_actor_id, actor_type, actor_id, action, resource_type, resource_id, request_hash, confirmation_binding_hash, correlation_id, expires_at, used_at, execution_started_at, execution_attempts, result, created_at FROM notification_approvals WHERE id=$1`, id).Scan(&r.ID, &r.TransportActor.Transport, &r.TransportActor.ExternalID, &r.Actor.Type, &r.Actor.ID, &r.Action, &r.Resource.Type, &r.Resource.ID, &r.RequestHash, &r.BindingHash, &r.CorrelationID, &r.ExpiresAt, &used, &started, &r.ExecutionAttempts, &r.Result, &r.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ApprovalRequest{}, false, nil
 	}
@@ -212,6 +317,9 @@ func (s SQLApprovalStore) Get(ctx context.Context, id string) (ApprovalRequest, 
 	}
 	if used.Valid {
 		r.UsedAt = &used.Time
+	}
+	if started.Valid {
+		r.ExecutionStartedAt = &started.Time
 	}
 	return r, true, nil
 }

@@ -10,7 +10,7 @@ import (
 
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
-	"forgejo/gotthboard/gotth-mail/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 )
 
@@ -38,7 +38,7 @@ type ApprovalService struct {
 	Authorizer authz.Authorizer
 	Store      ApprovalCreator
 	Prompter   PromptSender
-	Queue      *ops.Queue
+	Queue      QueueController
 	Now        func() time.Time
 }
 
@@ -67,7 +67,7 @@ func (s ApprovalService) RequestTelegramApproval(ctx context.Context, input Tele
 		return notification.ApprovalRequest{}, errors.New("approval action unauthorized")
 	}
 	now := s.now()
-	requestHash, err := queueApprovalRequestHash(input.Action, input.Resource, s.Queue)
+	requestHash, err := queueApprovalRequestHash(ctx, input.Action, input.Resource, s.Queue)
 	if err != nil {
 		return notification.ApprovalRequest{}, err
 	}
@@ -87,16 +87,29 @@ func (s ApprovalService) RequestTelegramApproval(ctx context.Context, input Tele
 	return created, nil
 }
 
-func queueApprovalRequestHash(action authz.Action, resource authz.Resource, queue *ops.Queue) (string, error) {
+type QueueController interface {
+	Snapshot(context.Context, string) (outboundpolicy.QueueSnapshot, error)
+	Flush(context.Context) error
+	Retry(context.Context, string) error
+}
+
+func queueApprovalRequestHash(ctx context.Context, action authz.Action, resource authz.Resource, queue QueueController) (string, error) {
 	if queue == nil {
 		return "", errors.New("queue runtime required")
 	}
+	selector := ""
+	if action == "queue:retry" {
+		selector = resource.ID
+	}
+	snapshot, err := queue.Snapshot(ctx, selector)
+	if err != nil {
+		return "", err
+	}
 	payload, err := json.Marshal(struct {
-		Action   authz.Action   `json:"action"`
-		Resource authz.Resource `json:"resource"`
-		Active   int            `json:"active"`
-		Deferred []string       `json:"deferred"`
-	}{Action: action, Resource: resource, Active: queue.Summary.Active, Deferred: append([]string(nil), queue.Summary.Deferred...)})
+		Action   authz.Action                 `json:"action"`
+		Resource authz.Resource               `json:"resource"`
+		Snapshot outboundpolicy.QueueSnapshot `json:"snapshot"`
+	}{Action: action, Resource: resource, Snapshot: snapshot})
 	if err != nil {
 		return "", err
 	}

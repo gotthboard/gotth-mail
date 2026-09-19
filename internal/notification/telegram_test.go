@@ -69,8 +69,11 @@ func TestTelegramReceiverConfirmsApprovalThroughSQLStoreOnce(t *testing.T) {
 		if err != nil || !found {
 			return errors.New("approval request not found")
 		}
-		_, err = approvals.Confirm(ctx, ApprovalConfirmation{ID: id, TransportActor: transportActor, Actor: mapped, Action: req.Action, Resource: req.Resource, RequestHash: req.RequestHash, BindingToken: token, Now: now.Add(10 * time.Second)})
-		return err
+		claimed, err := approvals.Claim(ctx, ApprovalConfirmation{ID: id, TransportActor: transportActor, Actor: mapped, Action: req.Action, Resource: req.Resource, RequestHash: req.RequestHash, BindingToken: token, Now: now.Add(10 * time.Second)}, 2*time.Minute)
+		if err != nil {
+			return err
+		}
+		return approvals.Complete(ctx, claimed.ID, now.Add(10*time.Second))
 	}}
 	callback := "gm:a:approval-1:" + created.BindingToken
 	reply, err := recv.Process(context.Background(), telegramUpdate{CallbackQuery: &telegramCallbackQuery{ID: "cb-1", From: telegramUser{ID: 99}, Message: &telegramMessage{Chat: telegramChat{ID: 42}}, Data: callback}})
@@ -139,7 +142,27 @@ func TestTelegramReceiverHTTPHandlerRequiresWebhookSecret(t *testing.T) {
 	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", "webhook-secret")
 	rr = httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
-	if rr.Code != http.StatusForbidden || strings.Contains(strings.ToLower(rr.Body.String()), "unsupported") {
+	if rr.Code != http.StatusOK || strings.Contains(strings.ToLower(rr.Body.String()), "unsupported") {
 		t.Fatalf("authenticated error leaked detail status=%d body=%q", rr.Code, rr.Body.String())
+	}
+}
+
+func TestTelegramReceiverDeduplicatesAcceptedUpdate(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	calls := 0
+	recv := TelegramReceiver{Updates: SQLTelegramUpdateStore{DB: db}, ExecuteApproval: func(context.Context, string, string, TransportActor) error { calls++; return nil }}
+	handler := recv.HandlerWithSecret("webhook-secret")
+	body := `{"update_id":123,"callback_query":{"id":"cb","from":{"id":99},"message":{"message_id":1,"from":{"id":99},"chat":{"id":42},"text":""},"data":"gm:a:approval-1:abcdefghijklmnopqrstuv"}}`
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/telegram", bytes.NewBufferString(body))
+		req.Header.Set("X-Telegram-Bot-Api-Secret-Token", "webhook-secret")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "approval accepted") {
+			t.Fatalf("attempt=%d status=%d body=%q", i, rr.Code, rr.Body.String())
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("approval executed %d times", calls)
 	}
 }

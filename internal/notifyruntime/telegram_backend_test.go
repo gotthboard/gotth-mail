@@ -59,13 +59,18 @@ func TestTelegramBackendDeliversBoundApprovalPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt := plugin.NotificationPrompt{ID: "00000000-0000-4000-8000-000000000001", CorrelationID: "corr-1", Transport: "telegram", ExternalActorID: "chat:-10055:user:99", ActorType: "api_token", ActorID: "ops", Action: "queue:flush", ResourceType: "queue", ResourceID: "default", RequestHash: "sha256:abc", ExpiresAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339), Title: "Approve queue flush", Summary: "Flush deferred queue", ConfirmationToken: testBindingToken}
+	prompt := plugin.NotificationPrompt{ID: "00000000-0000-4000-8000-000000000001", CorrelationID: "corr-1", Transport: "telegram", ExternalActorID: "chat:-10055:user:99", ActorType: "api_token", ActorID: "ops", Action: "queue:flush", ResourceType: "queue", ResourceID: "default", RequestHash: "sha256:" + strings.Repeat("a", 64), ExpiresAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339), Title: "Approve queue flush", Summary: "Flush deferred queue", ConfirmationToken: testBindingToken}
 	result, err := backend.SendPrompt(context.Background(), prompt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !result.Accepted || got.ChatID != "-10055" || got.ReplyMarkup == nil {
 		t.Fatalf("result=%#v payload=%#v", result, got)
+	}
+	for _, required := range []string{"request=" + prompt.ID, "correlation=" + prompt.CorrelationID, "actor=api_token:ops", "request_hash=" + prompt.RequestHash} {
+		if !strings.Contains(got.Text, required) {
+			t.Fatalf("prompt missing %q: %q", required, got.Text)
+		}
 	}
 	callback := got.ReplyMarkup.InlineKeyboard[0][0].CallbackData
 	if callback != "gm:a:"+prompt.ID+":"+testBindingToken || len(callback) > 64 {

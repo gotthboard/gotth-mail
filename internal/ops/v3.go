@@ -1462,6 +1462,20 @@ func (s SQLBackupVerificationStore) Latest(ctx context.Context, artifactRef stri
 	return b, true, nil
 }
 
+func (s SQLBackupVerificationStore) LatestAny(ctx context.Context) (Backup, bool, error) {
+	row := s.DB.QueryRowContext(ctx, `SELECT v.id, v.status, a.artifact_ref, a.schema_version, a.config_set_id, v.isolated_restore_ref, coalesce(v.failure_report_json,'{}'), coalesce(v.verified_at, timestamp '0001-01-01'), v.created_at FROM backup_verifications v JOIN backup_artifacts a ON a.id=v.artifact_id ORDER BY v.created_at DESC, v.id DESC LIMIT 1`)
+	var b Backup
+	var failure string
+	if err := row.Scan(&b.ID, &b.Status, &b.ArtifactRef, &b.SchemaVersion, &b.ConfigSetID, &b.IsolatedRestoreRef, &failure, &b.VerifiedAt, &b.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Backup{}, false, nil
+		}
+		return Backup{}, false, err
+	}
+	_ = json.Unmarshal([]byte(failure), &b.FailureReport)
+	return b, true, nil
+}
+
 func storageSchemaVersion(ctx context.Context, storage BackupStorage, ref string) string {
 	a, err := storage.ReadBackup(ctx, ref)
 	if err != nil {

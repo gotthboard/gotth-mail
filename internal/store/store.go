@@ -367,6 +367,24 @@ ALTER TABLE notification_approvals
     ADD CONSTRAINT notification_approvals_binding_hash_required
         CHECK (confirmation_binding_hash ~ '^[0-9a-f]{64}$');`
 
+const notificationApprovalExecutionMigrationVersion = "0014_notification_approval_execution"
+const notificationApprovalExecutionMigrationSQL = `ALTER TABLE notification_approvals
+    ADD COLUMN execution_started_at timestamp NULL,
+    ADD COLUMN execution_attempts integer NOT NULL DEFAULT 0,
+    ADD COLUMN execution_error_code text NULL,
+    ADD CONSTRAINT notification_approvals_execution_attempts_nonnegative CHECK (execution_attempts >= 0),
+    ADD CONSTRAINT notification_approvals_execution_error_code_safe CHECK (
+        execution_error_code IS NULL OR execution_error_code ~ '^[a-z0-9_]{1,80}$'
+    );`
+
+const notificationTelegramUpdatesMigrationVersion = "0015_notification_telegram_updates"
+const notificationTelegramUpdatesMigrationSQL = `CREATE TABLE notification_telegram_updates (
+    update_id bigint PRIMARY KEY,
+    reply_json text NOT NULL,
+    denied boolean NOT NULL,
+    processed_at timestamp NOT NULL
+);`
+
 var upgradeMigrations = []Migration{
 	newMigration(notificationDeliveryEvidenceMigrationVersion, notificationDeliveryEvidenceMigrationSQL),
 	newMigration(oidcProtectedAttemptsMigrationVersion, oidcProtectedAttemptsMigrationSQL),
@@ -380,6 +398,8 @@ var upgradeMigrations = []Migration{
 	newMigration(webmailCCBCCMigrationVersion, webmailCCBCCMigrationSQL),
 	newMigration(webmailDeliveryUncertainMigrationVersion, webmailDeliveryUncertainMigrationSQL),
 	newMigration(notificationApprovalBindingMigrationVersion, notificationApprovalBindingMigrationSQL),
+	newMigration(notificationApprovalExecutionMigrationVersion, notificationApprovalExecutionMigrationSQL),
+	newMigration(notificationTelegramUpdatesMigrationVersion, notificationTelegramUpdatesMigrationSQL),
 }
 
 func newMigration(version, sql string) Migration {

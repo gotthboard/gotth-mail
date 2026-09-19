@@ -25,6 +25,17 @@ v0 foundation implementation now exists. New features still start with missing e
 | Webmail | IMAP/SMTP integration, MIME/XSS/CSP, attachment safety | v4 now covers session-bound same-mailbox authorization and CSRF, protected per-mailbox IMAP/SMTP/OpenPGP runtime material, stable UID list/read/flag/move/delete, bounded header-only list fetches, folder unread counts, quota, safe attachment download, SQL-owned summary/detail/edit drafts with edit-versus-submit exclusion, exact-sender sign-and-verify before SMTP, ambiguous DATA acceptance, hostile MIME bounds, conservative text rendering, strict CSP/Trusted Types, and the interactive three-pane desktop/mobile client. Focused normal/race tests, real Chromium interaction, containerized UI, and real reference Postfix/Dovecot/Rspamd/GnuPG runtime smokes pass. | Live deployment still requires operator-provided credential/key custody and the separate live Authentik callback/provisioning boundary; repository verification does not fabricate either. |
 | Notifications | plugin gRPC, Telegram redaction, actor mapping, approval binding | local v5 alert-core tests in `internal/notification` cover valid-UTF-8 bounded alert payloads, whole-field JSON/multiword/Unicode-whitespace credential redaction, real OpenPGP private-key/Bearer/API-key redaction, pre-bound secret-bearing identifier rejection, full pre-truncation detail-key checks with collision-safe redaction, allowlisted delivery reasons, field-specific evidence admission before memory/SQL/gRPC use, and fixed-text/detail-free alert and prompt gRPC sink failures; delivery tests cover structured exact-sender evidence, pending/final status recording, complete migration-ledger validation with unknown/future rejection, immutable baseline/file-runtime parity, hostile-`search_path` public-schema pinning, and existing/fresh-schema SQL evidence persistence; `internal/notifyruntime` covers real bounded summaries, narrow approved queue mutations, per-delivery key-file/lifecycle revalidation, unsupported-key permanent rejection before SMTP, deterministic seven-bit alert MIME, no-unsigned-fallback admission, failure taxonomy, direct 451/550/DATA-drop classification, and a real socket test for accepted DATA followed by failed QUIT; `internal/webmail` adversarial tests cover canonical single-block/single-packet detached signatures, exact SHA-256 packet/micalg agreement, exact raw MIME-entity signature verification, unsigned extra-header injection, and duplicate security/authoritative-header rejection; `cmd/gotth-mail-plugin` covers a standalone real child plugin process over authenticated TCP gRPC through the real signer/verifier and a no-8BITMIME/no-SMTPUTF8 capture relay to post-transport exact-sender verification and typed evidence; `internal/api` covers configured SQL delivery-status reads; the opt-in signed-email Compose service is contract/config validated, while `scripts/containerized-notification-plugin-smoke.sh` starts the Telegram Compose plugin and runs the standalone signed-email child-process integration inside the containerized test-runner | the v5 root's v3 prerequisite, declared Telegram/app-password dependencies, control-plane signed-email routing/selection and recorder composition, live Telegram API delivery, network-injected 451/550/DATA-drop SMTP failure tests, immediate post-dial cancellation closure, per-user/role/delegation identity selection, message-context authorization, recorded public-key discovery, complete rotation/deletion/recovery policy, encrypted-key unlock/HSM/KMS custody, and production rotation automation remain pending; the implemented standalone system-identity adapter has no unsigned fallback |
 
+Notification correction (2026-09-19): the production Telegram Bot API backend,
+control-plane Telegram/signed-email selection, deadline-bounded authenticated
+gRPC, SQL recorder composition, authenticated webhook replies, store-generated
+one-time approval bindings, queue-state hashing, and queue-only approval
+execution are now covered. This supersedes the stale notification-row gaps for
+"live Telegram API delivery" implementation and "control-plane composition."
+Only live operator-owned Telegram/webhook proof, production signing-key
+custody, per-user/delegated identities, discovery, and rotation automation
+remain outside repository admission. Evidence:
+`workflow/features/v5.notifications/evidence/2026-09-19-production-notification-runtime.md`.
+
 ## Accepted exceptions
 
 None.
@@ -38,9 +49,9 @@ consumer adapters. Admit the exact stable Group-to-role projection and add
 identity-aware restart/backup/restore proof.
 Then implement the owner-prioritized per-domain same-domain-only outbound policy
 and its hostile-path matrix before other new feature work or alpha integration.
-Then complete the notifications workstream's declared
-dependencies, core routing/selection and recorder composition, and remaining
-per-user/profile/deployment scope before moving those features to `done`.
+The notification implementation children are done. Complete the remaining
+root dependencies and live operator-owned deployment proofs without treating
+credentials or external registrations as repository fixtures.
 
 
 ## v2-v4 admission repair coverage note — 2026-07-18

@@ -16,6 +16,7 @@ type TelegramReceiver struct {
 	Commands        CommandService
 	ExecuteApproval func(context.Context, string, string, TransportActor) error
 	Now             func() time.Time
+	Updates         TelegramUpdateStore
 }
 
 type TelegramReply struct {
@@ -59,14 +60,24 @@ func (r TelegramReceiver) handler(secret string) http.Handler {
 			http.Error(w, "invalid telegram update", http.StatusBadRequest)
 			return
 		}
-		reply, err := r.Process(req.Context(), update)
-		if err != nil {
-			http.Error(w, "telegram update denied", http.StatusForbidden)
+		process := func() (TelegramReply, error) { return r.Process(req.Context(), update) }
+		var reply TelegramReply
+		var err error
+		if r.Updates != nil {
+			reply, err = r.Updates.Process(req.Context(), update.UpdateID, process)
+		} else {
+			reply, err = process()
+		}
+		if reply.ChatID != "" {
+			reply.Method = "sendMessage"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if reply.ChatID == "" {
+			_, _ = w.Write([]byte("{}\n"))
 			return
 		}
-		reply.Method = "sendMessage"
-		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(reply)
+		_ = err
 	})
 }
 

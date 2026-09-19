@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/admin"
 	"forgejo/gotthboard/gotth-mail/internal/api"
@@ -62,6 +64,7 @@ func main() {
 	}
 	if notificationBackend != nil {
 		defer notificationBackend.Close()
+		dispatchCurrentDeployment(context.Background(), &server)
 	}
 	if policyAddr := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_POLICY_LISTEN")); policyAddr != "" {
 		go servePostfixPolicy(policyAddr, server.Daemon)
@@ -78,6 +81,22 @@ func main() {
 		addr = ":8080"
 	}
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+func dispatchCurrentDeployment(ctx context.Context, server *api.Server) {
+	if server == nil || server.NotificationService == nil || server.NotificationRecorder == nil || server.AuditDB == nil {
+		return
+	}
+	items, err := (ops.SQLSnapshotStore{DB: server.AuditDB}).List(ctx)
+	if err != nil || len(items) == 0 {
+		return
+	}
+	snapshot := items[0]
+	id := "deployment-" + snapshot.ID
+	if _, found, err := server.NotificationRecorder.Get(ctx, id); err != nil || found {
+		return
+	}
+	_, _ = server.NotificationService.SendAlert(ctx, notification.Alert{ID: id, Class: "deployment.status.changed", Severity: notification.SeverityInfo, Title: "Deployment state recorded", Summary: "A new deployment snapshot is active", CorrelationID: id, Resource: notification.ResourceRef{Type: "snapshot", ID: snapshot.ID}})
 }
 
 // configureWebmailFromEnv installs the production mailbox-specific IMAP,
@@ -172,12 +191,15 @@ func configureNotificationsFromEnv(server *api.Server) (*notifyruntime.GRPCNotif
 	}
 	server.Plugins.Plugins[name] = registration
 	mapper := notification.SQLActorMapper{DB: server.AuditDB}
+	if err := configureTelegramActorMappings(mapper); err != nil {
+		_ = backend.Close()
+		return nil, err
+	}
 	approvals := notification.SQLApprovalStore{DB: server.AuditDB, Audit: audit.SQLWriter{DB: server.AuditDB}}
 	if name == plugin.FirstNotifyName {
-		if server.Queue == nil {
-			server.Queue = &ops.Queue{}
+		if server.NotificationQueue != nil {
+			server.ApprovalService = &notifyruntime.ApprovalService{Mapper: mapper, Authorizer: server.Authz, Store: approvals, Prompter: backend, Queue: server.NotificationQueue}
 		}
-		server.ApprovalService = &notifyruntime.ApprovalService{Mapper: mapper, Authorizer: server.Authz, Store: approvals, Prompter: backend, Queue: server.Queue}
 	}
 	if webhookSecret != "" {
 		if name != plugin.FirstNotifyName {
@@ -188,9 +210,25 @@ func configureNotificationsFromEnv(server *api.Server) (*notifyruntime.GRPCNotif
 			_ = backend.Close()
 			return nil, fmt.Errorf("valid Telegram webhook secret required")
 		}
-		executor := notifyruntime.ApprovalExecutor{Mapper: mapper, Approvals: approvals, Authorizer: server.Authz, Queue: server.Queue, Audit: audit.SQLWriter{DB: server.AuditDB}}
-		provider := notifyruntime.RuntimeCommandProvider{Queue: server.Queue, Daemon: &server.Daemon, Plugins: server.Plugins}
+		executor := notifyruntime.ApprovalExecutor{Mapper: mapper, Approvals: approvals, Authorizer: server.Authz, Queue: server.NotificationQueue, Audit: audit.SQLWriter{DB: server.AuditDB}}
+		provider := notifyruntime.RuntimeCommandProvider{
+			Queue: server.NotificationQueue, Daemon: &server.Daemon, Plugins: server.Plugins,
+			DoctorLookup: func(ctx context.Context) (ops.DoctorReport, error) {
+				return ops.Doctor(ctx, ops.DoctorInput{ConfigOK: true, DatabaseOK: server.AuditDB != nil, AuthentikOK: server.Identity != nil, WebmailOK: server.WebmailClient != nil, Daemon: server.Daemon, DNSChecks: server.DNSChecks, CertCheck: server.CertCheck, PluginRegistry: server.Plugins, PluginToken: token, CorrelationID: "telegram-command"}), nil
+			},
+			BackupLookup: func(ctx context.Context) (ops.Backup, bool, error) {
+				return (ops.SQLBackupVerificationStore{DB: server.AuditDB}).LatestAny(ctx)
+			},
+			SnapshotLookup: func(ctx context.Context) (ops.SnapshotView, bool, error) {
+				items, err := (ops.SQLSnapshotStore{DB: server.AuditDB}).List(ctx)
+				if err != nil || len(items) == 0 {
+					return ops.SnapshotView{}, false, err
+				}
+				return items[0], true, nil
+			},
+		}
 		receiver := notification.TelegramReceiver{
+			Updates:  notification.SQLTelegramUpdateStore{DB: server.AuditDB},
 			Commands: notification.CommandService{Mapper: mapper, Authorizer: server.Authz, Provider: provider, Audit: audit.SQLWriter{DB: server.AuditDB}},
 			ExecuteApproval: func(ctx context.Context, id, bindingToken string, actor notification.TransportActor) error {
 				_, err := executor.ExecuteTelegramApproval(ctx, id, bindingToken, actor)
@@ -200,6 +238,45 @@ func configureNotificationsFromEnv(server *api.Server) (*notifyruntime.GRPCNotif
 		server.NotificationReceiver = receiver.HandlerWithSecret(webhookSecret)
 	}
 	return backend, nil
+}
+
+func configureTelegramActorMappings(mapper notification.SQLActorMapper) error {
+	path := strings.TrimSpace(os.Getenv("GOTTH_MAIL_TELEGRAM_ACTOR_MAPPINGS_FILE"))
+	if path == "" {
+		return nil
+	}
+	handle, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open Telegram actor mappings: %w", err)
+	}
+	defer handle.Close()
+	info, err := handle.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("Telegram actor mappings file must be a private regular file")
+	}
+	decoder := json.NewDecoder(io.LimitReader(handle, 64<<10))
+	decoder.DisallowUnknownFields()
+	var configured []struct {
+		ExternalID string   `json:"external_id"`
+		ActorType  string   `json:"actor_type"`
+		ActorID    string   `json:"actor_id"`
+		Scopes     []string `json:"scopes"`
+	}
+	if err := decoder.Decode(&configured); err != nil {
+		return fmt.Errorf("decode Telegram actor mappings: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return fmt.Errorf("invalid trailing Telegram actor mapping data")
+	}
+	if len(configured) == 0 || len(configured) > 256 {
+		return fmt.Errorf("Telegram actor mappings must contain 1..256 entries")
+	}
+	mappings := make([]notification.ActorMapping, len(configured))
+	for i, item := range configured {
+		mappings[i] = notification.ActorMapping{TransportActor: notification.TransportActor{Transport: "telegram", ExternalID: item.ExternalID}, Actor: authz.Actor{Type: item.ActorType, ID: item.ActorID, Scopes: item.Scopes}}
+	}
+	return mapper.ReplaceTelegram(context.Background(), mappings, time.Now().UTC())
 }
 
 func configureSCIMFromEnv(server *api.Server) error {
@@ -381,6 +458,7 @@ func configurePostfixHelperFromEnv(server *api.Server) error {
 		Store:    outboundpolicy.QueueStore{DB: server.AuditDB},
 		Boundary: boundary,
 	}
+	server.NotificationQueue = boundary
 	if err := server.Daemon.ConfigurePostfixHelperToken(token); err != nil {
 		return err
 	}

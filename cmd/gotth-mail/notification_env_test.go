@@ -11,11 +11,20 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/api"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/testpg"
 	"google.golang.org/grpc"
 )
+
+type envTestQueue struct{}
+
+func (envTestQueue) Snapshot(context.Context, string) (outboundpolicy.QueueSnapshot, error) {
+	return outboundpolicy.QueueSnapshot{Digest: strings.Repeat("a", 64)}, nil
+}
+func (envTestQueue) Flush(context.Context) error         { return nil }
+func (envTestQueue) Retry(context.Context, string) error { return nil }
 
 func TestConfigureNotificationsWiresGRPCSQLAndAuthenticatedReceiver(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
@@ -38,7 +47,7 @@ func TestConfigureNotificationsWiresGRPCSQLAndAuthenticatedReceiver(t *testing.T
 	t.Setenv("GOTTH_MAIL_NOTIFICATION_PLUGIN_SERVICE_TOKEN", token)
 	t.Setenv("GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET", "0123456789abcdef-webhook")
 	db := testpg.DB(t, store.MigrateSQL)
-	server := api.Server{AuditDB: db, Authz: authz.StaticAuthorizer{}}
+	server := api.Server{AuditDB: db, Authz: authz.StaticAuthorizer{}, NotificationQueue: envTestQueue{}}
 	backend, err := configureNotificationsFromEnv(&server)
 	if err != nil {
 		t.Fatal(err)

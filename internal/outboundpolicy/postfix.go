@@ -37,6 +37,16 @@ type PostfixBoundary struct {
 	MaxOutputBytes int
 }
 
+// QueueSnapshot is the bounded live state used by operator summaries and
+// approval bindings. Digest covers the canonical queue objects, not prose.
+type QueueSnapshot struct {
+	Active   int    `json:"active"`
+	Deferred int    `json:"deferred"`
+	Held     int    `json:"held"`
+	Total    int    `json:"total"`
+	Digest   string `json:"digest"`
+}
+
 type postqueueRecipient struct {
 	Address string `json:"address"`
 }
@@ -48,6 +58,100 @@ type postqueueEntry struct {
 	MessageSize int64                `json:"message_size"`
 	Sender      string               `json:"sender"`
 	Recipients  []postqueueRecipient `json:"recipients"`
+}
+
+// Snapshot reads Postfix's documented JSON queue listing and returns one
+// deterministic bounded observation. A non-empty queueID restricts the
+// observation to that exact long queue ID.
+func (b PostfixBoundary) Snapshot(ctx context.Context, queueID string) (QueueSnapshot, error) {
+	if queueID != "" && !validLongQueueID(queueID) {
+		return QueueSnapshot{}, errors.New("invalid Postfix queue selector")
+	}
+	if !validPostfixPath(b.PostqueuePath, "postqueue") {
+		return QueueSnapshot{}, errors.New("invalid Postfix queue snapshot request")
+	}
+	instance, err := NormalizeDomain(b.InstanceID)
+	if err != nil {
+		return QueueSnapshot{}, errors.New("invalid Postfix instance identity")
+	}
+	limit, err := b.outputLimit()
+	if err != nil {
+		return QueueSnapshot{}, err
+	}
+	output, err := b.runner().Run(ctx, b.PostqueuePath, []string{"-j"}, limit)
+	if err != nil || len(output) > limit {
+		return QueueSnapshot{}, errors.New("Postfix queue snapshot failed")
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	scanner.Buffer(make([]byte, 64<<10), maxPostqueueJSONLineBytes)
+	entries := make([]string, 0)
+	result := QueueSnapshot{}
+	for scanner.Scan() {
+		if len(bytes.TrimSpace(scanner.Bytes())) == 0 {
+			continue
+		}
+		var entry postqueueEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil || !validLongQueueID(entry.QueueID) {
+			return QueueSnapshot{}, errors.New("invalid Postfix JSON queue output")
+		}
+		if queueID != "" && entry.QueueID != queueID {
+			continue
+		}
+		switch entry.QueueName {
+		case "active", "incoming":
+			result.Active++
+		case "deferred":
+			result.Deferred++
+		case "hold":
+			result.Held++
+		default:
+			return QueueSnapshot{}, errors.New("unsupported Postfix queue state")
+		}
+		metadata, err := queueMetadataFromEntry(instance, entry)
+		if err != nil {
+			return QueueSnapshot{}, err
+		}
+		entries = append(entries, entry.QueueName+"\x00"+metadata.QueueID+"\x00"+metadata.ArrivalFingerprint)
+	}
+	if err := scanner.Err(); err != nil {
+		return QueueSnapshot{}, errors.New("Postfix queue snapshot output exceeded line limit")
+	}
+	if queueID != "" && len(entries) == 0 {
+		return QueueSnapshot{}, errors.New("Postfix queue ID not found")
+	}
+	sort.Strings(entries)
+	result.Total = len(entries)
+	result.Digest = digestStrings(append([]string{"gotth-mail/postfix-snapshot/v1"}, entries...))
+	return result, nil
+}
+
+// Flush asks qmgr to attempt delivery of all queued mail. postqueue(1)
+// documents this exact operation as `postqueue -f`.
+func (b PostfixBoundary) Flush(ctx context.Context) error {
+	return b.runPostqueueMutation(ctx, []string{"-f"})
+}
+
+// Retry schedules immediate delivery of one exact deferred queue ID. This is
+// postqueue(1) `-i`, not postsuper requeueing, so retry is safely repeatable.
+func (b PostfixBoundary) Retry(ctx context.Context, queueID string) error {
+	if !validLongQueueID(queueID) {
+		return errors.New("invalid Postfix retry request")
+	}
+	return b.runPostqueueMutation(ctx, []string{"-i", queueID})
+}
+
+func (b PostfixBoundary) runPostqueueMutation(ctx context.Context, args []string) error {
+	if !validPostfixPath(b.PostqueuePath, "postqueue") {
+		return errors.New("invalid Postfix queue mutation request")
+	}
+	limit, err := b.outputLimit()
+	if err != nil {
+		return err
+	}
+	if _, err := b.runner().Run(ctx, b.PostqueuePath, args, limit); err != nil {
+		return errors.New("Postfix queue mutation failed")
+	}
+	return nil
 }
 
 type boundedCommandOutput struct {

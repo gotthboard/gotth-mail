@@ -16,14 +16,14 @@ func TestRemotePostfixBoundaryUsesFixedAuthenticatedEndpoints(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		wantToken := token
-		if r.URL.Path == "/v1/queue/release" {
+		if r.URL.Path == "/v1/queue/release" || r.URL.Path == "/v1/queue/flush" || r.URL.Path == "/v1/queue/retry" {
 			wantToken = releaseToken
 		}
 		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer "+wantToken {
 			t.Fatalf("request=%s auth=%q", r.Method, r.Header.Get("Authorization"))
 		}
 		var in map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in["queue_id"] != queueID {
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || (r.URL.Path != "/v1/queue/flush" && in["queue_id"] != queueID) || (r.URL.Path == "/v1/queue/flush" && in["queue_id"] != "") {
 			t.Fatalf("body=%#v err=%v", in, err)
 		}
 		switch r.URL.Path {
@@ -34,7 +34,9 @@ func TestRemotePostfixBoundaryUsesFixedAuthenticatedEndpoints(t *testing.T) {
 				EnvelopeSender:     "user@example.test",
 				Recipients:         []string{"outside@example.net"},
 			})
-		case "/v1/queue/hold", "/v1/queue/release":
+		case "/v1/queue/summary":
+			_ = json.NewEncoder(w).Encode(QueueSnapshot{Deferred: 1, Total: 1, Digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
+		case "/v1/queue/hold", "/v1/queue/release", "/v1/queue/flush", "/v1/queue/retry":
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
@@ -62,7 +64,16 @@ func TestRemotePostfixBoundaryUsesFixedAuthenticatedEndpoints(t *testing.T) {
 	if err := boundary.Release(context.Background(), queueID); err != nil {
 		t.Fatal(err)
 	}
-	if requests != 3 {
+	if summary, err := boundary.Snapshot(context.Background(), queueID); err != nil || summary.Deferred != 1 {
+		t.Fatalf("summary=%#v err=%v", summary, err)
+	}
+	if err := boundary.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := boundary.Retry(context.Background(), queueID); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 6 {
 		t.Fatalf("requests=%d", requests)
 	}
 }

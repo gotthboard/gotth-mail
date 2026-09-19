@@ -33,12 +33,12 @@ $DOCKER compose -p "$PROJECT" -f "$COMPOSE" down -v --remove-orphans >/dev/null 
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" up -d --build notification-plugin
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" build test-runner
 for i in $(seq 1 90); do
-  if $DOCKER compose -p "$PROJECT" -f "$COMPOSE" run --rm -T --no-deps test-runner sh -lc 'nc -z notification-plugin 9443' >/dev/null 2>&1; then break; fi
-  [ "$i" = 90 ] && { echo "timeout waiting for notification-plugin:9443" >&2; exit 1; }
+  if $DOCKER compose -p "$PROJECT" -f "$COMPOSE" run --rm -T --no-deps test-runner sh -lc 'test -S /run/gotth-mail-plugins/telegram.sock' >/dev/null 2>&1; then break; fi
+  [ "$i" = 90 ] && { echo "timeout waiting for notification plugin Unix socket" >&2; exit 1; }
   sleep 1
 done
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" run --rm -T --no-deps \
-  -e GOTTH_MAIL_LIVE_PLUGIN_ENDPOINT=notification-plugin:9443 \
+  -e GOTTH_MAIL_LIVE_PLUGIN_ENDPOINT=unix:///run/gotth-mail-plugins/telegram.sock \
   -e GOTTH_MAIL_LIVE_PLUGIN_NAME=telegram-notification-sink \
   -e GOTTH_MAIL_LIVE_PLUGIN_TOKEN=dev-plugin-token \
   test-runner sh -eu -c '

@@ -9,6 +9,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/notification"
 	"forgejo/gotthboard/gotth-mail/internal/ops"
 )
 
@@ -164,6 +165,9 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 				http.Error(w, err.Error(), 500)
 				return
 			}
+			if b.Status == "failed" {
+				s.emitOperationalAlert(r.Context(), "backup.verification.failure", notification.SeverityCritical, "Backup verification failed", "backup verification failed", notification.ResourceRef{Type: "backup", ID: ref})
+			}
 			writeJSON(w, b)
 			return
 		}
@@ -316,7 +320,11 @@ func (s Server) registerV3(mux *http.ServeMux, auditLog *audit.MemoryWriter, ids
 		if q == nil {
 			q = &ops.Queue{}
 		}
-		writeJSON(w, ops.BuildAbuseSummary(auditLog.Events, q.Summary))
+		summary := ops.BuildAbuseSummary(auditLog.Events, q.Summary)
+		if summary.AuthFailures+summary.SenderLimits+summary.RejectedRecipients+summary.SpamDecisions+summary.SuspiciousOutbound > 0 {
+			s.emitOperationalAlert(r.Context(), "abuse.rate_limit", notification.SeverityWarning, "Abuse signal detected", "bounded abuse summary contains active signals", notification.ResourceRef{Type: "abuse_summary", ID: "current"})
+		}
+		writeJSON(w, summary)
 	})
 	mux.HandleFunc("/api/v1/ops/rate-limits", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, http.MethodGet) {

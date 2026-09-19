@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 )
 
 type fakeHolder struct {
@@ -24,12 +27,18 @@ func (f *fakeHolder) Release(context.Context, string) error {
 	return nil
 }
 
+func (f *fakeHolder) Snapshot(context.Context, string) (outboundpolicy.QueueSnapshot, error) {
+	return outboundpolicy.QueueSnapshot{Digest: strings.Repeat("a", 64)}, nil
+}
+func (f *fakeHolder) Flush(context.Context) error         { return nil }
+func (f *fakeHolder) Retry(context.Context, string) error { return nil }
+
 func TestHelperAuthenticatesAndExposesOnlyInspectHoldAndRelease(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
 	const releaseToken = "abcdef0123456789abcdef0123456789"
 	metadata := gateMetadata()
 	holder := &fakeHolder{}
-	helper, err := NewHelper(fakeInspector{metadata: metadata}, holder, holder, token, releaseToken)
+	helper, err := NewHelper(fakeInspector{metadata: metadata}, holder, holder, holder, token, releaseToken)
 	if err != nil {
 		t.Fatal(err)
 	}

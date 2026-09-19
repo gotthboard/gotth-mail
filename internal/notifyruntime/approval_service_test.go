@@ -3,12 +3,13 @@ package notifyruntime
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
-	"forgejo/gotthboard/gotth-mail/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/testpg"
@@ -34,7 +35,7 @@ func TestApprovalServiceCreatesAndDeliversBoundPromptWithoutReturningSecret(t *t
 		t.Fatal(err)
 	}
 	prompter := &capturePrompter{}
-	service := ApprovalService{Mapper: mapper, Authorizer: authz.StaticAuthorizer{}, Store: notification.SQLApprovalStore{DB: db}, Prompter: prompter, Queue: &ops.Queue{Summary: ops.QueueSummary{Active: 2, Deferred: []string{"a"}}}, Now: func() time.Time { return now }}
+	service := ApprovalService{Mapper: mapper, Authorizer: authz.StaticAuthorizer{}, Store: notification.SQLApprovalStore{DB: db}, Prompter: prompter, Queue: &fakeQueueController{snapshot: outboundpolicy.QueueSnapshot{Active: 2, Total: 2, Digest: strings.Repeat("a", 64)}}, Now: func() time.Time { return now }}
 	created, err := service.RequestTelegramApproval(context.Background(), TelegramApprovalRequest{TransportActor: transportActor, Action: "queue:flush", Resource: authz.Resource{Type: "queue", ID: "default"}, CorrelationID: "corr-1", ExpiresAt: now.Add(time.Minute), Title: "Approve flush", Summary: "Flush deferred mail"})
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +56,7 @@ func TestApprovalServiceInvalidatesPromptWhenDeliveryFails(t *testing.T) {
 	}
 	approvalStore := notification.SQLApprovalStore{DB: db}
 	prompter := &capturePrompter{err: errors.New("delivery unavailable")}
-	service := ApprovalService{Mapper: mapper, Authorizer: authz.StaticAuthorizer{}, Store: approvalStore, Prompter: prompter, Queue: &ops.Queue{}, Now: func() time.Time { return now }}
+	service := ApprovalService{Mapper: mapper, Authorizer: authz.StaticAuthorizer{}, Store: approvalStore, Prompter: prompter, Queue: &fakeQueueController{snapshot: outboundpolicy.QueueSnapshot{Digest: strings.Repeat("b", 64)}}, Now: func() time.Time { return now }}
 	if _, err := service.RequestTelegramApproval(context.Background(), TelegramApprovalRequest{TransportActor: transportActor, Action: "queue:retry", Resource: authz.Resource{Type: "queue", ID: "default"}, CorrelationID: "corr-2", ExpiresAt: now.Add(time.Minute), Title: "Approve retry", Summary: "Retry deferred mail"}); err == nil {
 		t.Fatal("delivery failure accepted")
 	}

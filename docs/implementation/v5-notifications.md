@@ -23,9 +23,11 @@ service NotificationBackend {
 
 Every RPC requires plugin service identity authentication, correlation ID metadata, deadlines, and structured errors.
 
+Production notification RPCs use an absolute shared Unix socket below `/run/gotth-mail-plugins/` (or loopback for a same-host process). Arbitrary private IPs and single-label container TCP endpoints are rejected because a bearer service credential over plaintext container networking is not an acceptable trust boundary.
+
 ## Telegram plugin
 
-Telegram runs as a separate Docker container. The current reference container is `telegram-notification-sink`, exposed as `notification-plugin:9443` on the existing authenticated `PluginControl` gRPC seam with notification health/version/capabilities and the notification-specific `NotificationBackend.SendAlert`/`SendPrompt` protobuf service. The current sink accepts sanitized alert/prompt payloads inside the repo-owned container smoke; live Telegram API delivery remains required before this is a real Telegram backend. The plugin does not read core DB state directly and never mutates canonical state.
+Telegram runs as a separate Docker container. The production `telegram-notification-sink` calls the fixed official Telegram Bot API endpoint, permits only an explicit alert chat and allowlisted prompt chats, blocks redirects, bounds response bodies, and classifies retryable and permanent failures without returning Telegram response text. A loopback API override exists only for deterministic tests. The reference Compose harness must explicitly set `GOTTH_MAIL_REFERENCE_FIXTURE=1` to use the local acceptance sink. The plugin does not read core DB state directly and never mutates canonical state.
 
 Telegram plugin config:
 
@@ -93,7 +95,7 @@ Mapping sources may include:
 
 Approval workflows cannot be enabled until mapping is configured and verified.
 
-The local SQL core now provides this mapping store, and the local read-only command dispatcher consumes it. Runtime summary providers exist for configured state objects. The Telegram update receiver core now parses Telegram-shaped command/callback updates and routes them into `CommandService` and `SQLApprovalStore`; live Telegram webhook/API delivery remains pending.
+The SQL core provides this mapping store, and the configured read-only command dispatcher consumes it. `GOTTH_MAIL_TELEGRAM_ACTOR_MAPPINGS_FILE` is a bounded owner-only JSON file that transactionally replaces the Telegram mapping set at startup, so stale authority is removed rather than accumulated. Runtime summaries query live Postfix state and current SQL backup/snapshot records. The Telegram webhook requires the Bot API secret-token header, rejects oversized or trailing JSON, parses exact chat/user actors, acknowledges application denials with HTTP 200 and a bounded safe reply, and durably deduplicates update IDs. Live deployment still requires operator-owned bot credentials, mappings, and webhook registration.
 
 ## Approval workflow
 
@@ -127,7 +129,7 @@ Flow:
 create prompt with one-time binding nonce -> deliver prompt -> receive response -> authenticate Telegram actor -> map identity -> verify single-use binding -> authorize action -> validate confirmation -> perform mutation -> audit result
 ```
 
-The prompt displays or carries only the one-time binding nonce needed for the operator response. Core stores only `confirmation_binding_hash`; responses that do not prove the binding are rejected before authorization or mutation.
+The prompt carries only a store-generated 128-bit one-time binding token. Core stores only its SHA-256 `confirmation_binding_hash`; responses that do not prove the binding are rejected before mutation. Mismatch attempts are audited but cannot consume another operator's pending prompt.
 
 Rejection cases:
 
@@ -139,7 +141,7 @@ Rejection cases:
 - changed preview/request hash
 - unauthorized actor
 
-Telegram carries the prompt only. Core decides authorization, validates confirmation, performs mutation, and writes audit events. The current local implementation receives approval callbacks, validates durable SQL prompt binding, and can execute only the narrow approved queue mutation set through `notifyruntime.ApprovalExecutor` (`queue:flush`, `queue:retry`). There is no generic chat-to-shell or arbitrary mutation registry.
+Telegram carries the prompt only. Core decides authorization, validates confirmation, performs mutation, and writes audit events. The rendered prompt includes the request/correlation IDs, actor, action, resource, request hash, and expiry. The configured implementation validates durable SQL binding, re-authorizes the mapped actor, and verifies a live Postfix JSON snapshot. Whole-queue flush invokes documented `postqueue -f`; exact-message retry requires a long queue ID and invokes documented `postqueue -i ID`. Approval execution is leased in SQL, failures return it to pending, stale claims can resume, and successful consumption plus audit commit atomically. These scheduling operations are safe to repeat after an ambiguous crash. There is no generic chat-to-shell or arbitrary mutation registry.
 
 ## Non-goals
 
@@ -187,7 +189,7 @@ Any email notification backend introduced in v5 must OpenPGP-sign every outbound
 
 Startup validates complete configuration. Startup and every delivery load a bounded regular private-key file that is not group/world accessible and require exactly one matching entity, exactly one matching sender user ID, usable unencrypted private signing material, and non-revoked/non-expired identity and key state. Invalid or partial configuration aborts startup; later lifecycle/key-file drift blocks that delivery. `GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_ADDR` is limited to loopback/private IPs or a single-label local service name because the transport has no remote TLS/authentication policy. Literal public IPs and dotted hostnames are rejected; a single-label name delegates trust to the deployment's local/container resolver. This first configured adapter intentionally has no prompt capability.
 
-The adapter is not yet selected by the control-plane application. `cmd/gotth-mail` still builds the default first-mechanism registry, which excludes signed email, and no core alert dispatcher routes to the explicit registration. That routing/selection work remains a feature blocker; the child-process integration proves the standalone plugin adapter, not an end-to-end application notification path.
+`cmd/gotth-mail` explicitly selects either the Telegram or signed-email notification plugin from complete runtime configuration, uses a shared Unix socket or loopback endpoint, applies a bounded gRPC deadline and service identity, and composes delivery results with `notification.SQLRecorder`. Signed email remains alert-only and fails closed for prompts.
 
 Required behavior:
 
@@ -230,11 +232,11 @@ Failure states:
 - `smtp_unavailable`
 - `smtp_delivery_ambiguous`
 
-All failure states block delivery and surface as bounded delivery results; dependency error strings and sink-supplied gRPC descriptions/details are not returned through the plugin seam. Both alert and prompt RPC failures are mapped to an allowed gRPC code with fixed server-owned text. Secret markers in alert text cause whole-field redaction before MIME construction rather than partial value substitution. Secret-bearing IDs, classes, correlation IDs, and resource types are rejected before bounding. Detail keys are checked in their complete normalized form before truncation, and a bounded-key collision cannot replace an existing redaction. Successful typed evidence contains transport, Message-ID, generation time, From/Sender, signing fingerprint, sender identity ID/class, policy version, lifecycle reference, `valid_exact_sender`, and workflow. Every evidence field is independently grammar- and secret-checked before memory, SQL, or gRPC use. The adapter carries that type over gRPC, and the SQL recorder separately persists it; control-plane composition remains unfinished. The email backend must not send unsigned mail to preserve alert delivery convenience. That would be security theater.
+All failure states block delivery and surface as bounded delivery results; dependency error strings and sink-supplied gRPC descriptions/details are not returned through the plugin seam. Both alert and prompt RPC failures are mapped to an allowed gRPC code with fixed server-owned text. Secret markers in alert text cause whole-field redaction before MIME construction rather than partial value substitution. Secret-bearing IDs, classes, correlation IDs, and resource types are rejected before bounding. Detail keys are checked in their complete normalized form before truncation, and a bounded-key collision cannot replace an existing redaction. Successful typed evidence contains transport, Message-ID, generation time, From/Sender, signing fingerprint, sender identity ID/class, policy version, lifecycle reference, `valid_exact_sender`, and workflow. Every evidence field is independently grammar- and secret-checked before memory, SQL, or gRPC use. The adapter carries that type over gRPC, and the SQL recorder persists it through the configured control-plane service. The email backend must not send unsigned mail to preserve alert delivery convenience. That would be security theater.
 
 The additive evidence migration does not rewrite the baseline schema. Runtime admission validates every recorded migration before applying a missing known upgrade: baseline rows must exist, all known rows must be clean with exact checksums, and unknown/future versions are rejected. The immutable `d432e5b` baseline checksum fixture prevents accidental history edits, while the canonical `0002_notification_delivery_evidence` SQL file is parity-checked against the registered runtime SQL, identifier, and checksum. A pre-existing wrong-shaped evidence column fails rather than being certified by `IF NOT EXISTS`. Migration and isolated-restore transactions execute with `SET LOCAL search_path = public, pg_catalog`; restore readback uses explicit `public` relations. `MigrateEmptySQL` rejects any existing user relation in `public` before DDL, so a hostile caller search path or shadow schema cannot redirect the restore target.
 
-The configured adapter represents one system notification identity. Core routing/selection, per-user/role/delegation identity mapping, message-context authorization, recorded public-key discovery, complete rotation/deletion/recovery policy, and production key custody remain explicit work. The adapter and feature do not yet claim application integration or full profile conformance.
+The configured adapter represents one system notification identity and is integrated with core routing/selection and SQL delivery evidence. Per-user/role/delegation identity mapping, recorded public-key discovery, complete rotation/deletion/recovery automation, and production key custody remain explicit later scope. The adapter does not claim full profile conformance.
 
 
 The signature requirement is not merely provenance for a domain or server. Verification must answer exactly which configured user identity signed the message. If the signer cannot be mapped to the asserted From/Sender identity and active user/key binding, the message is treated as unsigned/invalid.

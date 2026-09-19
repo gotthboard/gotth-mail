@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"forgejo/gotthboard/gotth-mail/internal/notification"
@@ -51,10 +52,11 @@ func run() error {
 			return err
 		}
 	}
-	lis, err := net.Listen("tcp", listen)
+	lis, cleanup, err := pluginListener(listen)
 	if err != nil {
 		return err
 	}
+	defer cleanup()
 	srv := grpc.NewServer()
 	registry := plugin.Registry{Plugins: map[string]plugin.Registration{reg.Name: reg}}
 	plugin.RegisterControlServer(srv, plugin.ControlServer{Name: reg.Name, Registry: registry})
@@ -62,6 +64,32 @@ func run() error {
 		plugin.RegisterNotificationServer(srv, plugin.NotificationServer{Name: reg.Name, Registry: registry, Sink: sink})
 	}
 	return srv.Serve(lis)
+}
+
+func pluginListener(address string) (net.Listener, func(), error) {
+	if !strings.HasPrefix(address, "unix://") {
+		listener, err := net.Listen("tcp", address)
+		return listener, func() {}, err
+	}
+	path := strings.TrimPrefix(address, "unix://")
+	if !strings.HasPrefix(path, "/run/gotth-mail-plugins/") || strings.Contains(path, "..") || filepath.Clean(path) != path {
+		return nil, func() {}, fmt.Errorf("invalid plugin Unix socket path")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return nil, func() {}, err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return nil, func() {}, err
+	}
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	if err := os.Chmod(path, 0o660); err != nil {
+		listener.Close()
+		return nil, func() {}, err
+	}
+	return listener, func() { listener.Close(); _ = os.Remove(path) }, nil
 }
 
 func notificationSinkFor(name string, getenv func(string) string) (plugin.NotificationSink, error) {

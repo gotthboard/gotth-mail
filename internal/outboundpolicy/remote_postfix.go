@@ -97,6 +97,31 @@ func (b *RemotePostfixBoundary) Release(ctx context.Context, queueID string) err
 	return b.call(ctx, "/v1/queue/release", queueID, nil)
 }
 
+func (b *RemotePostfixBoundary) Snapshot(ctx context.Context, queueID string) (QueueSnapshot, error) {
+	var snapshot QueueSnapshot
+	if queueID != "" && !validLongQueueID(queueID) {
+		return QueueSnapshot{}, errors.New("invalid Postfix queue selector")
+	}
+	if err := b.callOptional(ctx, "/v1/queue/summary", queueID, &snapshot); err != nil {
+		return QueueSnapshot{}, err
+	}
+	if snapshot.Total < 0 || snapshot.Active < 0 || snapshot.Deferred < 0 || snapshot.Held < 0 || snapshot.Total != snapshot.Active+snapshot.Deferred+snapshot.Held || len(snapshot.Digest) != 64 {
+		return QueueSnapshot{}, errors.New("Postfix helper returned invalid queue snapshot")
+	}
+	return snapshot, nil
+}
+
+func (b *RemotePostfixBoundary) Flush(ctx context.Context) error {
+	return b.callOptional(ctx, "/v1/queue/flush", "", nil)
+}
+
+func (b *RemotePostfixBoundary) Retry(ctx context.Context, queueID string) error {
+	if !validLongQueueID(queueID) {
+		return errors.New("invalid Postfix retry request")
+	}
+	return b.callOptional(ctx, "/v1/queue/retry", queueID, nil)
+}
+
 // call performs one bounded authenticated JSON request to a fixed endpoint.
 // Complexity: time and space O(n), Omega(1), with a 64 KiB response ceiling.
 func (b *RemotePostfixBoundary) call(ctx context.Context, path, queueID string, out any) error {
@@ -111,6 +136,54 @@ func (b *RemotePostfixBoundary) call(ctx context.Context, path, queueID string, 
 	req.Header.Set("Content-Type", "application/json")
 	token := b.Token
 	if path == "/v1/queue/release" {
+		token = b.ReleaseToken
+		if !validPostfixHelperToken(token) {
+			return errors.New("Postfix release credential unavailable")
+		}
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	response, err := b.Client.Do(req)
+	if err != nil {
+		return errors.New("Postfix helper unavailable")
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxPostfixHelperResponseBytes+1))
+	if err != nil || len(body) > maxPostfixHelperResponseBytes {
+		return errors.New("Postfix helper response invalid")
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return errors.New("Postfix helper rejected request")
+	}
+	if out == nil {
+		if len(bytes.TrimSpace(body)) != 0 {
+			return errors.New("Postfix helper mutation response was not empty")
+		}
+		return nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(out); err != nil {
+		return errors.New("Postfix helper response invalid")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("Postfix helper response invalid")
+	}
+	return nil
+}
+
+func (b *RemotePostfixBoundary) callOptional(ctx context.Context, path, queueID string, out any) error {
+	if b == nil || b.Client == nil || (queueID != "" && !validLongQueueID(queueID)) || (path != "/v1/queue/summary" && path != "/v1/queue/flush" && path != "/v1/queue/retry") {
+		return errors.New("invalid Postfix helper request")
+	}
+	payload, _ := json.Marshal(map[string]string{"queue_id": queueID})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.BaseURL+path, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	token := b.Token
+	if path != "/v1/queue/summary" {
 		token = b.ReleaseToken
 		if !validPostfixHelperToken(token) {
 			return errors.New("Postfix release credential unavailable")

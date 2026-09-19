@@ -14,12 +14,15 @@ import (
 )
 
 type RuntimeCommandProvider struct {
-	Doctor   *ops.DoctorReport
-	Queue    *ops.Queue
-	Daemon   *daemon.Service
-	Backup   *ops.Backup
-	Snapshot *ops.SnapshotView
-	Plugins  plugin.Registry
+	Doctor         *ops.DoctorReport
+	Queue          QueueController
+	Daemon         *daemon.Service
+	Backup         *ops.Backup
+	Snapshot       *ops.SnapshotView
+	Plugins        plugin.Registry
+	DoctorLookup   func(context.Context) (ops.DoctorReport, error)
+	BackupLookup   func(context.Context) (ops.Backup, bool, error)
+	SnapshotLookup func(context.Context) (ops.SnapshotView, bool, error)
 }
 
 func (p RuntimeCommandProvider) Summary(ctx context.Context, cmd notification.ReadOnlyCommand) (string, error) {
@@ -28,15 +31,15 @@ func (p RuntimeCommandProvider) Summary(ctx context.Context, cmd notification.Re
 	}
 	switch cmd {
 	case notification.CommandDoctorSummary:
-		return p.doctorSummary(), nil
+		return p.doctorSummary(ctx)
 	case notification.CommandQueueSummary:
-		return p.queueSummary(), nil
+		return p.queueSummary(ctx)
 	case notification.CommandDomainHealth:
 		return p.domainSummary(), nil
 	case notification.CommandBackupStatus:
-		return p.backupSummary(), nil
+		return p.backupSummary(ctx)
 	case notification.CommandDeploymentStatus:
-		return p.deploymentSummary(), nil
+		return p.deploymentSummary(ctx)
 	case notification.CommandPluginHealth:
 		return p.pluginSummary(), nil
 	default:
@@ -44,12 +47,20 @@ func (p RuntimeCommandProvider) Summary(ctx context.Context, cmd notification.Re
 	}
 }
 
-func (p RuntimeCommandProvider) doctorSummary() string {
-	if p.Doctor == nil {
-		return "doctor status unavailable"
+func (p RuntimeCommandProvider) doctorSummary(ctx context.Context) (string, error) {
+	report := p.Doctor
+	if p.DoctorLookup != nil {
+		got, err := p.DoctorLookup(ctx)
+		if err != nil {
+			return "", err
+		}
+		report = &got
+	}
+	if report == nil {
+		return "doctor status unavailable", nil
 	}
 	fail, warn := 0, 0
-	for _, c := range p.Doctor.Checks {
+	for _, c := range report.Checks {
 		switch c.Status {
 		case ops.Fail:
 			fail++
@@ -57,14 +68,18 @@ func (p RuntimeCommandProvider) doctorSummary() string {
 			warn++
 		}
 	}
-	return fmt.Sprintf("doctor status=%s checks=%d fail=%d warn=%d", p.Doctor.Status, len(p.Doctor.Checks), fail, warn)
+	return fmt.Sprintf("doctor status=%s checks=%d fail=%d warn=%d", report.Status, len(report.Checks), fail, warn), nil
 }
 
-func (p RuntimeCommandProvider) queueSummary() string {
+func (p RuntimeCommandProvider) queueSummary(ctx context.Context) (string, error) {
 	if p.Queue == nil {
-		return "queue status unavailable"
+		return "queue status unavailable", nil
 	}
-	return fmt.Sprintf("queue active=%d deferred=%d", p.Queue.Summary.Active, len(p.Queue.Summary.Deferred))
+	summary, err := p.Queue.Snapshot(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("queue active=%d deferred=%d held=%d total=%d", summary.Active, summary.Deferred, summary.Held, summary.Total), nil
 }
 
 func (p RuntimeCommandProvider) domainSummary() string {
@@ -87,31 +102,51 @@ func (p RuntimeCommandProvider) domainSummary() string {
 	return fmt.Sprintf("domains enabled=%d disabled=%d mailboxes=%d aliases=%d", enabledDomains, disabledDomains, enabledMailboxes, enabledAliases)
 }
 
-func (p RuntimeCommandProvider) backupSummary() string {
-	if p.Backup == nil {
-		return "backup status unavailable"
+func (p RuntimeCommandProvider) backupSummary(ctx context.Context) (string, error) {
+	backup := p.Backup
+	if p.BackupLookup != nil {
+		got, ok, err := p.BackupLookup(ctx)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			backup = &got
+		}
 	}
-	parts := []string{"backup status=" + p.Backup.Status}
-	if p.Backup.ConfigSetID != "" {
-		parts = append(parts, "config_set="+p.Backup.ConfigSetID)
+	if backup == nil {
+		return "backup status=not_recorded", nil
 	}
-	if p.Backup.SchemaVersion != "" {
-		parts = append(parts, "schema="+p.Backup.SchemaVersion)
+	parts := []string{"backup status=" + backup.Status}
+	if backup.ConfigSetID != "" {
+		parts = append(parts, "config_set="+backup.ConfigSetID)
 	}
-	if p.Backup.IsolatedRestoreRef != "" {
-		parts = append(parts, "restore_ref="+p.Backup.IsolatedRestoreRef)
+	if backup.SchemaVersion != "" {
+		parts = append(parts, "schema="+backup.SchemaVersion)
 	}
-	if p.Backup.FailureReport.Step != "" {
-		parts = append(parts, "failure_step="+p.Backup.FailureReport.Step)
+	if backup.IsolatedRestoreRef != "" {
+		parts = append(parts, "restore_ref="+backup.IsolatedRestoreRef)
 	}
-	return strings.Join(parts, " ")
+	if backup.FailureReport.Step != "" {
+		parts = append(parts, "failure_step="+backup.FailureReport.Step)
+	}
+	return strings.Join(parts, " "), nil
 }
 
-func (p RuntimeCommandProvider) deploymentSummary() string {
-	if p.Snapshot == nil {
-		return "deployment status unavailable"
+func (p RuntimeCommandProvider) deploymentSummary(ctx context.Context) (string, error) {
+	snapshot := p.Snapshot
+	if p.SnapshotLookup != nil {
+		got, ok, err := p.SnapshotLookup(ctx)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			snapshot = &got
+		}
 	}
-	return fmt.Sprintf("deployment snapshot=%s config_set=%s migration=%s restore=%s images=%d plugins=%d", p.Snapshot.ID, p.Snapshot.GeneratedConfigSetID, p.Snapshot.MigrationVersion, p.Snapshot.VerifiedRestoreStatus, len(p.Snapshot.ImageVersions), len(p.Snapshot.PluginVersions))
+	if snapshot == nil {
+		return "deployment status=not_recorded", nil
+	}
+	return fmt.Sprintf("deployment snapshot=%s config_set=%s migration=%s restore=%s images=%d plugins=%d", snapshot.ID, snapshot.GeneratedConfigSetID, snapshot.MigrationVersion, snapshot.VerifiedRestoreStatus, len(snapshot.ImageVersions), len(snapshot.PluginVersions)), nil
 }
 
 func (p RuntimeCommandProvider) pluginSummary() string {

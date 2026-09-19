@@ -8,13 +8,14 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/daemon"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
 	"forgejo/gotthboard/gotth-mail/internal/ops"
+	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 )
 
 func TestRuntimeCommandProviderSummarizesRealState(t *testing.T) {
 	provider := RuntimeCommandProvider{
 		Doctor:   &ops.DoctorReport{Status: ops.Warn, Checks: []ops.Check{{Status: ops.OK}, {Status: ops.Warn}, {Status: ops.Fail}}},
-		Queue:    &ops.Queue{Summary: ops.QueueSummary{Active: 3, Deferred: []string{"a", "b"}}},
+		Queue:    &fakeQueueController{snapshot: outboundpolicy.QueueSnapshot{Active: 3, Deferred: 2, Total: 5, Digest: strings.Repeat("a", 64)}},
 		Daemon:   &daemon.Service{Domains: map[string]daemon.Domain{"example.test": {Enabled: true}, "disabled.test": {}}, Mailboxes: map[string]daemon.Mailbox{"a@example.test": {Enabled: true}, "b@example.test": {}}, Aliases: map[string]daemon.Alias{"alias@example.test": {Enabled: true}}},
 		Backup:   &ops.Backup{Status: "verified", ConfigSetID: "cfg-1", SchemaVersion: "schema-1", IsolatedRestoreRef: "restore-1"},
 		Snapshot: &ops.SnapshotView{ID: "snap-1", GeneratedConfigSetID: "cfg-1", MigrationVersion: "m1", VerifiedRestoreStatus: "verified", ImageVersions: []string{"gotth-mail:1"}, PluginVersions: []string{"dns:1", "backup:1"}},
@@ -44,7 +45,7 @@ func TestRuntimeCommandProviderSummarizesRealState(t *testing.T) {
 func TestRuntimeCommandProviderUnavailableAndUnsupported(t *testing.T) {
 	provider := RuntimeCommandProvider{}
 	got, err := provider.Summary(context.Background(), notification.CommandBackupStatus)
-	if err != nil || got != "backup status unavailable" {
+	if err != nil || got != "backup status=not_recorded" {
 		t.Fatalf("backup unavailable got=%q err=%v", got, err)
 	}
 	if _, err := provider.Summary(context.Background(), notification.ReadOnlyCommand("shell")); err == nil || !strings.Contains(err.Error(), "unsupported") {

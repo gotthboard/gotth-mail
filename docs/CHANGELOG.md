@@ -21,6 +21,58 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-19 14:52 CDT — Complete the production notification runtime
+
+Commits: `de21330`, plus current workflow admission commit
+
+Affected files:
+
+- Telegram Bot API plugin and protected runtime configuration
+- control-plane gRPC selection and SQL delivery composition
+- authenticated Telegram webhook command and approval execution path
+- approval binding/execution/update migrations, live Postfix queue control,
+  actor-mapping replacement, Unix-socket transport, tests, docs, and evidence
+- plugin status credential redaction
+
+Explanation:
+
+Replaced the reference-only Telegram success sink with a real production Bot
+API backend while retaining the fake only behind the explicit fixture switch.
+Core can now select either Telegram or the mandatory-OpenPGP signed-email
+adapter, applies service identity and bounded deadlines, and durably records
+delivery results. Telegram commands require an authenticated webhook, exact
+chat/user mapping, authorization, bounded responses, and audit. Approval
+callbacks use a store-generated one-time token whose SHA-256 binding is the
+only durable secret-derived state; core re-authorizes and rejects replay,
+expiry, state drift, unsupported mutation, and binding mismatch before the
+narrow queue action. Cold review rejected the first candidate because those
+actions still mutated an in-memory queue and approval consumption preceded the
+real operation. The repair binds to live Postfix JSON state, exposes only
+documented `postqueue -f` and exact-ID `postqueue -i` helper calls, and uses a
+leased SQL execution state with transactional success/audit. It also adds
+durable Telegram update deduplication, HTTP-200 application denials, explicit
+private mapping-file provisioning, complete prompt binding metadata, real
+operational event dispatchers, authoritative command lookups, signed-email
+Compose selection, and a shared Unix socket for notification gRPC. Legacy
+pending prompts are rejected during migration because reconstructing a safe
+binding would be dishonest.
+
+Verification:
+
+- full serial Go suite and focused race suite
+- `go vet ./...`
+- rebuilt containerized notification plugin/gRPC/OpenPGP smoke
+- PostgreSQL migration and approval state-machine tests
+- Telegram API, webhook, gRPC, redaction, failure, and allowlist tests
+- post-commit hostile review and `git diff --check`
+
+Risks / non-goals:
+
+- no live Telegram request, webhook registration, credential, deployment,
+  signing key, tag, release, or external system changed
+- production key custody and per-user/delegated notification identities remain
+  later deployment/profile work
+
 ### 2026-09-19 13:21 CDT — Replace the webmail shell with the interactive client
 
 Commits: `a4c2609`, with hostile-review repairs `11e5c92` and `e4120fa`

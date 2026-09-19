@@ -69,7 +69,7 @@ func runHelper() error {
 		InstanceID:     instance,
 		MaxOutputBytes: 8 << 20,
 	}
-	helper, err := postfixgate.NewHelper(boundary, boundary, boundary, token, releaseToken)
+	helper, err := postfixgate.NewHelper(boundary, boundary, boundary, boundary, token, releaseToken)
 	if err != nil {
 		return err
 	}

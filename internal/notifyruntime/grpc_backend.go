@@ -42,6 +42,10 @@ func NewGRPCNotificationBackend(endpoint, token string) (*GRPCNotificationBacken
 }
 
 func localGRPCEndpoint(endpoint string) bool {
+	if strings.HasPrefix(endpoint, "unix://") {
+		path := strings.TrimPrefix(endpoint, "unix://")
+		return strings.HasPrefix(path, "/run/gotth-mail-plugins/") && !strings.Contains(path, "..") && len(path) <= 200
+	}
 	host, port, err := net.SplitHostPort(endpoint)
 	if err != nil || host == "" || port == "" {
 		return false
@@ -51,9 +55,9 @@ func localGRPCEndpoint(endpoint string) bool {
 		return false
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback() || ip.IsPrivate()
+		return ip.IsLoopback()
 	}
-	return !strings.Contains(host, ".") && validServiceName(host)
+	return host == "localhost"
 }
 
 func validServiceName(host string) bool {

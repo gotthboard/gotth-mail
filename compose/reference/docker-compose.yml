@@ -13,13 +13,15 @@ services:
       GOTTH_MAIL_POSTFIX_RELEASE_TOKEN: ${GOTTH_MAIL_POSTFIX_RELEASE_TOKEN:-reference-postfix-release-token-32byte}
       GOTTH_MAIL_NOTIFICATION_EMAIL_FROM: ${GOTTH_MAIL_NOTIFICATION_EMAIL_FROM:-}
       GOTTH_MAIL_NOTIFICATION_PLUGIN_NAME: ${GOTTH_MAIL_NOTIFICATION_PLUGIN_NAME:-telegram-notification-sink}
-      GOTTH_MAIL_NOTIFICATION_PLUGIN_ENDPOINT: ${GOTTH_MAIL_NOTIFICATION_PLUGIN_ENDPOINT:-notification-plugin:9443}
+      GOTTH_MAIL_NOTIFICATION_PLUGIN_ENDPOINT: ${GOTTH_MAIL_NOTIFICATION_PLUGIN_ENDPOINT:-unix:///run/gotth-mail-plugins/telegram.sock}
       GOTTH_MAIL_NOTIFICATION_PLUGIN_SERVICE_TOKEN: ${GOTTH_MAIL_NOTIFICATION_PLUGIN_SERVICE_TOKEN:-dev-plugin-token}
-      GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET: ${GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET:-reference-telegram-webhook-secret}
+      GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET: ${GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET-reference-telegram-webhook-secret}
       GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ID: system:mailer-daemon@example.test
       GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ADDRESS: mailer-daemon@example.test
     ports:
       - "8080:8080"
+    volumes:
+      - notification-sockets:/run/gotth-mail-plugins
     depends_on:
       database:
         condition: service_healthy
@@ -39,6 +41,9 @@ services:
       target: build
     profiles: ["test"]
     command: ["go", "test", "./..."]
+    user: "0:0"
+    volumes:
+      - notification-sockets:/run/gotth-mail-plugins
 
   database:
     image: postgres:17-alpine
@@ -265,6 +270,9 @@ services:
       GOTTH_MAIL_PLUGIN_NAME: telegram-notification-sink
       GOTTH_MAIL_PLUGIN_SERVICE_TOKEN: dev-plugin-token
       GOTTH_MAIL_REFERENCE_FIXTURE: "1"
+      GOTTH_MAIL_PLUGIN_LISTEN: ${GOTTH_MAIL_NOTIFICATION_PLUGIN_LISTEN:-unix:///run/gotth-mail-plugins/telegram.sock}
+    volumes:
+      - notification-sockets:/run/gotth-mail-plugins
   signed-email-notification-plugin:
     profiles: ["signed-email-notification"]
     build:
@@ -281,7 +289,9 @@ services:
       GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_USERNAME: ${GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_USERNAME:-system:alerts@example.test}
       GOTTH_MAIL_NOTIFICATION_EMAIL_SMTP_PASSWORD: ${GOTTH_MAIL_SYSTEM_SENDER_SMTP_PASSWORD:-reference-system-sender-smtp-secret}
       GOTTH_MAIL_OUTBOUND_POLICY_URL: http://gotth-mail:8080/internal/v1/postfix/outbound-policy
+      GOTTH_MAIL_PLUGIN_LISTEN: unix:///run/gotth-mail-plugins/signed-email.sock
     volumes:
+      - notification-sockets:/run/gotth-mail-plugins
       - type: bind
         source: ${GOTTH_MAIL_NOTIFICATION_EMAIL_PRIVATE_KEY_SOURCE:-./secrets/notification-signing-key.asc}
         target: /run/secrets/notification-signing-key.asc
@@ -296,3 +306,4 @@ volumes:
   mailu-data:
   mailu-dkim:
   mailu-redis:
+  notification-sockets:

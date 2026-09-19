@@ -72,6 +72,24 @@ func TestPostfixBoundaryCanonicalizesDocumentedNullSenderDisplay(t *testing.T) {
 	}
 }
 
+func TestPostfixBoundarySnapshotsAndUsesDocumentedDeliveryScheduling(t *testing.T) {
+	runner := &fakeCommandRunner{output: []byte(`{"queue_name":"deferred","queue_id":"3Pt2mN2VXxznjll","arrival_time":1700000000,"message_size":512,"sender":"sender@example.test","recipients":[{"address":"outside@example.test"}]}` + "\n")}
+	boundary := PostfixBoundary{Runner: runner, PostqueuePath: "/usr/sbin/postqueue", InstanceID: "mail.example.test", MaxOutputBytes: 1 << 20}
+	snapshot, err := boundary.Snapshot(context.Background(), "")
+	if err != nil || snapshot.Deferred != 1 || snapshot.Total != 1 || len(snapshot.Digest) != 64 {
+		t.Fatalf("snapshot=%#v err=%v", snapshot, err)
+	}
+	if err := boundary.Flush(context.Background()); err != nil || len(runner.args) != 1 || runner.args[0] != "-f" {
+		t.Fatalf("flush args=%q err=%v", runner.args, err)
+	}
+	if err := boundary.Retry(context.Background(), "3Pt2mN2VXxznjll"); err != nil || len(runner.args) != 2 || runner.args[0] != "-i" || runner.args[1] != "3Pt2mN2VXxznjll" {
+		t.Fatalf("retry args=%q err=%v", runner.args, err)
+	}
+	if err := boundary.Retry(context.Background(), "ALL"); err == nil {
+		t.Fatal("unsafe retry selector accepted")
+	}
+}
+
 func TestPostfixBoundaryFailsClosedOnChangingDuplicateOrUnsafeInput(t *testing.T) {
 	line := `{"queue_name":"deferred","queue_id":"3Pt2mN2VXxznjll","arrival_time":1700000000,"message_size":512,"sender":"sender@example.test","recipients":[{"address":"local@example.test"}]}`
 	changed := strings.Replace(line, `"queue_name":"deferred"`, `"queue_name":"hold"`, 1)

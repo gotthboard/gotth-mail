@@ -149,15 +149,44 @@ func (b TelegramBackend) SendPrompt(ctx context.Context, p plugin.NotificationPr
 		return plugin.PromptResult{}, status.Error(codes.InvalidArgument, "invalid confirmation binding")
 	}
 	clean, err := notification.SanitizeAlert(notification.Alert{ID: p.ID, Class: "approval.prompt", Title: p.Title, Summary: p.Summary, CorrelationID: p.CorrelationID, Resource: notification.ResourceRef{Type: p.ResourceType, ID: p.ResourceID}})
-	if err != nil || clean.Title == "[REDACTED]" || clean.Summary == "[REDACTED]" || clean.Resource.ID == "[REDACTED]" {
+	actorType, okActorType := safePromptField(p.ActorType, 40)
+	actorID, okActorID := safePromptField(p.ActorID, 128)
+	action, okAction := safePromptField(p.Action, 80)
+	requestHash, okHash := safePromptHash(p.RequestHash)
+	if err != nil || clean.Title == "[REDACTED]" || clean.Summary == "[REDACTED]" || clean.Resource.ID == "[REDACTED]" || !okActorType || !okActorID || !okAction || !okHash {
 		return plugin.PromptResult{}, status.Error(codes.InvalidArgument, "invalid notification prompt")
 	}
-	text := boundTelegramText(strings.Join([]string{clean.Title, clean.Summary, "action=" + p.Action, "resource=" + clean.Resource.Type + ":" + clean.Resource.ID, "expires=" + p.ExpiresAt}, "\n"))
+	text := boundTelegramText(strings.Join([]string{clean.Title, clean.Summary, "request=" + clean.ID, "correlation=" + clean.CorrelationID, "actor=" + actorType + ":" + actorID, "action=" + action, "resource=" + clean.Resource.Type + ":" + clean.Resource.ID, "request_hash=" + requestHash, "expires=" + p.ExpiresAt}, "\n"))
 	_, result, err := b.send(ctx, telegramSendMessage{ChatID: chatID, Text: text, ReplyMarkup: &telegramReplyMarkup{InlineKeyboard: [][]telegramButton{{{Text: "Approve", CallbackData: callback}}}}})
 	if err != nil {
 		return plugin.PromptResult{}, telegramPromptError(result, err)
 	}
 	return plugin.PromptResult{Accepted: true, Message: "telegram_prompt_delivered"}, nil
+}
+
+func safePromptField(value string, limit int) (string, bool) {
+	if value == "" || len(value) > limit || strings.TrimSpace(value) != value {
+		return "", false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("._:@/-", r) {
+			continue
+		}
+		return "", false
+	}
+	return value, true
+}
+
+func safePromptHash(value string) (string, bool) {
+	if !strings.HasPrefix(value, "sha256:") || len(value) != 71 {
+		return "", false
+	}
+	for _, r := range value[7:] {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return "", false
+		}
+	}
+	return value, true
 }
 
 func telegramActorChatID(externalID string) (string, error) {

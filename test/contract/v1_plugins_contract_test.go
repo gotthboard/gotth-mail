@@ -93,14 +93,14 @@ func TestReferenceComposeIncludesContainerizedNotificationPluginSmoke(t *testing
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"notification-plugin", "GOTTH_MAIL_LIVE_PLUGIN_ENDPOINT=notification-plugin:9443", "GOTTH_MAIL_LIVE_PLUGIN_NAME=telegram-notification-sink", "GOTTH_MAIL_LIVE_PLUGIN_TOKEN=dev-plugin-token", "TestLivePluginControlOverGRPC", "TestLiveNotificationBackendOverGRPC", "TestRuntimeCommandProvider", "TestTelegramReceiver", "TestApprovalExecutor", `go test -list "^TestSignedEmailBackend"`, `grep -qx "TestSignedEmailBackendSendsOnlyOpenPGPMIMESignedAlert"`, `grep -qx "TestSignedEmailBackendFailsClosedWithoutSignerOrMatchingIdentity"`, `go test -list "^TestSignedEmailNotificationSinkGRPC"`, `grep -qx "TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAndRejectsPrompt"`, "TestSignedEmailBackend.*", "TestSignedEmailNotificationSinkGRPC.*", "go test -v -count=1", "containerized notification plugin gRPC/backend smoke passed"} {
+	for _, want := range []string{"notification-plugin", "GOTTH_MAIL_LIVE_PLUGIN_ENDPOINT=unix:///run/gotth-mail-plugins/telegram.sock", "GOTTH_MAIL_LIVE_PLUGIN_NAME=telegram-notification-sink", "GOTTH_MAIL_LIVE_PLUGIN_TOKEN=dev-plugin-token", "TestLivePluginControlOverGRPC", "TestLiveNotificationBackendOverGRPC", "TestRuntimeCommandProvider", "TestTelegramReceiver", "TestApprovalExecutor", `go test -list "^TestSignedEmailBackend"`, `grep -qx "TestSignedEmailBackendSendsOnlyOpenPGPMIMESignedAlert"`, `grep -qx "TestSignedEmailBackendFailsClosedWithoutSignerOrMatchingIdentity"`, `go test -list "^TestSignedEmailNotificationSinkGRPC"`, `grep -qx "TestSignedEmailNotificationSinkGRPCDeliversCryptographicallyVerifiedSMTPAndRejectsPrompt"`, "TestSignedEmailBackend.*", "TestSignedEmailNotificationSinkGRPC.*", "go test -v -count=1", "containerized notification plugin gRPC/backend smoke passed"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("containerized notification plugin smoke missing %q", want)
 		}
 	}
 	build := `$DOCKER compose -p "$PROJECT" -f "$COMPOSE" build test-runner`
 	loop := `for i in $(seq 1 90); do`
-	probe := `$DOCKER compose -p "$PROJECT" -f "$COMPOSE" run --rm -T --no-deps test-runner sh -lc 'nc -z notification-plugin 9443'`
+	probe := `$DOCKER compose -p "$PROJECT" -f "$COMPOSE" run --rm -T --no-deps test-runner sh -lc 'test -S /run/gotth-mail-plugins/telegram.sock'`
 	listTests := `go test -list "^TestSignedEmailBackend"`
 	grepSend := `grep -qx "TestSignedEmailBackendSendsOnlyOpenPGPMIMESignedAlert"`
 	grepFailClosed := `grep -qx "TestSignedEmailBackendFailsClosedWithoutSignerOrMatchingIdentity"`
