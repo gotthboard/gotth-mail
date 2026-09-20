@@ -2,15 +2,19 @@
 package frontauth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/mail"
 	"os"
 	"strings"
+	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/daemon"
 )
@@ -25,12 +29,13 @@ const (
 // Handler is a closed NGINX auth_http adapter. Backend addresses are compile-
 // time product topology, not request-controlled routing data.
 type Handler struct {
-	service       daemon.Service
-	tokenDigest   [sha256.Size]byte
-	postfixServer string
-	postfixPort   string
-	dovecotServer string
-	dovecotPort   string
+	service        daemon.Service
+	tokenDigest    [sha256.Size]byte
+	postfixServer  string
+	postfixPort    string
+	dovecotServer  string
+	dovecotPort    string
+	resolveBackend func(context.Context, string) (string, error)
 }
 
 func New(service daemon.Service, token string) (*Handler, error) {
@@ -41,6 +46,7 @@ func New(service daemon.Service, token string) (*Handler, error) {
 		service: service, tokenDigest: sha256.Sum256([]byte(token)),
 		postfixServer: "postfix", postfixPort: "25",
 		dovecotServer: "dovecot", dovecotPort: "143",
+		resolveBackend: resolvePrivateBackend,
 	}, nil
 }
 
@@ -102,7 +108,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case protocol == "smtp" && method == "none":
 		recipient, valid := boundedHeader(r, "Auth-SMTP-To")
-		if !valid || recipient == "" {
+		if valid {
+			recipient, valid = smtpRecipient(recipient)
+		}
+		if !valid {
 			h.reject(w, "invalid recipient")
 			return
 		}
@@ -111,7 +120,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.rejectDecision(w, response.Decision)
 			return
 		}
-		h.accept(w, h.postfixServer, h.postfixPort)
+		h.accept(r.Context(), w, h.postfixServer, h.postfixPort)
 	case (protocol == "imap" || protocol == "smtp") && (method == "plain" || method == "login"):
 		username, userOK := boundedHeader(r, "Auth-User")
 		secret, secretOK := boundedHeader(r, "Auth-Pass")
@@ -132,10 +141,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.rejectDecision(w, response.Decision)
 			return
 		}
-		h.accept(w, server, port)
+		h.accept(r.Context(), w, server, port)
 	default:
 		h.reject(w, "unsupported authentication")
 	}
+}
+
+// smtpRecipient extracts the reverse proxy's recipient path. NGINX forwards
+// the complete original RCPT command in Auth-SMTP-To, not merely the address.
+func smtpRecipient(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if len(value) >= len("RCPT TO:") && strings.EqualFold(value[:len("RCPT TO:")], "RCPT TO:") {
+		path := strings.TrimSpace(value[len("RCPT TO:"):])
+		if !strings.HasPrefix(path, "<") {
+			return "", false
+		}
+		closeIndex := strings.IndexByte(path, '>')
+		if closeIndex <= 1 || closeIndex+1 < len(path) && path[closeIndex+1] != ' ' && path[closeIndex+1] != '\t' {
+			return "", false
+		}
+		value = path[1:closeIndex]
+	}
+	if value == "" || strings.ContainsAny(value, "<>\x00\r\n") {
+		return "", false
+	}
+	parsed, err := mail.ParseAddress(value)
+	if err != nil || !strings.EqualFold(parsed.Address, value) {
+		return "", false
+	}
+	return parsed.Address, true
 }
 
 func (h *Handler) authorized(token string) bool {
@@ -154,11 +188,33 @@ func boundedHeader(r *http.Request, name string) (string, bool) {
 	return values[0], true
 }
 
-func (h *Handler) accept(w http.ResponseWriter, server, port string) {
+func (h *Handler) accept(ctx context.Context, w http.ResponseWriter, server, port string) {
+	address, err := h.resolveBackend(ctx, server)
+	if err != nil {
+		w.Header().Set("Auth-Wait", "3")
+		h.reject(w, "authentication temporarily unavailable")
+		return
+	}
 	w.Header().Set("Auth-Status", "OK")
-	w.Header().Set("Auth-Server", server)
+	w.Header().Set("Auth-Server", address)
 	w.Header().Set("Auth-Port", port)
 	w.WriteHeader(http.StatusOK)
+}
+
+func resolvePrivateBackend(parent context.Context, host string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return "", err
+	}
+	for _, address := range addresses {
+		ipv4 := address.IP.To4()
+		if ipv4 != nil && ipv4.IsPrivate() {
+			return ipv4.String(), nil
+		}
+	}
+	return "", fmt.Errorf("backend did not resolve to private IPv4")
 }
 
 func (h *Handler) rejectDecision(w http.ResponseWriter, decision daemon.Decision) {

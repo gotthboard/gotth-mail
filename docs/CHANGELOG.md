@@ -55,6 +55,51 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-20 14:24 CDT — Prove the combined production mail path
+
+Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `cmd/gotth-mail/main.go` and its durable wiring test;
+- `internal/frontauth` and its tests;
+- `configs/production/front/nginx.conf`;
+- `configs/production/postfix/main.cf`;
+- `configs/production/dovecot/dovecot.conf`;
+- `scripts/production-runtime-smoke.sh`;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+Added a disposable production-boundary smoke that starts PostgreSQL and all
+five immutable Mail roles with read-only roots, dropped capabilities, fixed
+UIDs, file-mounted credentials, private runtime tmpfs paths, and no reference
+fixture. It provisions one real database mailbox, submits mail through NGINX
+STARTTLS, validates recipient policy, scans through Rspamd, delivers through
+Postfix and Dovecot LMTP, proves the Maildir object, and authenticates and
+reads it back through NGINX IMAPS.
+
+The combined proof exposed and corrected four real protocol mistakes. Durable
+identity is now projected into the published daemon before private listeners
+or the NGINX auth handler copy it. The auth handler parses NGINX's complete
+`RCPT TO` command, resolves only its two fixed service aliases to private IPv4
+addresses because NGINX rejects names in `Auth-Server`, and fails closed on
+resolution errors. NGINX sends only the HAProxy PROXY header instead of also
+sending an unauthorized SMTP `XCLIENT`. Postfix now distinguishes local
+recipient admission from unauthenticated relay rejection and permits an
+accepted policy result. Dovecot accepts HAProxy input only from private
+network ranges and uses the documented Dovecot 2.4 `nopassword` passdb field
+after the control plane has already authenticated the client.
+
+Verification:
+
+- focused control-plane and front-auth tests pass;
+- Dovecot 2.4 native configuration expansion passes;
+- the combined production smoke passes control-plane startup, NGINX
+  STARTTLS/auth, Postfix maps and policy, Rspamd milter scanning, Dovecot LMTP,
+  persistent Maildir delivery, and authenticated IMAPS readback;
+- `bash -n scripts/production-runtime-smoke.sh` and `git diff --check` pass.
+
 ### 2026-09-20 13:42 CDT — Correct native-daemon production startup
 
 Implementation commit: `current commit; hash assigned by Git after commit`

@@ -1,6 +1,7 @@
 package frontauth
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,6 +24,9 @@ func testHandler(t *testing.T) *Handler {
 	}, testToken)
 	if err != nil {
 		t.Fatal(err)
+	}
+	h.resolveBackend = func(_ context.Context, host string) (string, error) {
+		return map[string]string{"postfix": "172.30.0.3", "dovecot": "172.30.0.4"}[host], nil
 	}
 	return h
 }
@@ -49,9 +53,9 @@ func TestAuthenticatedIMAPAndSMTP(t *testing.T) {
 		if w.Code != http.StatusOK || w.Header().Get("Auth-Status") != "OK" {
 			t.Fatalf("%s response: code=%d headers=%v", protocol, w.Code, w.Header())
 		}
-		wantServer := "dovecot"
+		wantServer := "172.30.0.4"
 		if protocol == "smtp" {
-			wantServer = "postfix"
+			wantServer = "172.30.0.3"
 		}
 		if got := w.Header().Get("Auth-Server"); got != wantServer {
 			t.Fatalf("%s server=%q", protocol, got)
@@ -61,17 +65,38 @@ func TestAuthenticatedIMAPAndSMTP(t *testing.T) {
 
 func TestUnauthenticatedSMTPChecksRecipient(t *testing.T) {
 	h := testHandler(t)
-	accepted := request(t, h, map[string]string{
-		"Auth-Protocol": "smtp", "Auth-Method": "none", "Auth-SMTP-To": "user@example.test",
-	})
-	if accepted.Header().Get("Auth-Status") != "OK" || accepted.Header().Get("Auth-Server") != "postfix" {
-		t.Fatalf("accepted headers=%v", accepted.Header())
+	for _, recipient := range []string{"user@example.test", "RCPT TO:<user@example.test>", "rcpt to:<user@example.test> NOTIFY=SUCCESS"} {
+		accepted := request(t, h, map[string]string{
+			"Auth-Protocol": "smtp", "Auth-Method": "none", "Auth-SMTP-To": recipient,
+		})
+		if accepted.Header().Get("Auth-Status") != "OK" || accepted.Header().Get("Auth-Server") != "172.30.0.3" {
+			t.Fatalf("recipient=%q accepted headers=%v", recipient, accepted.Header())
+		}
 	}
 	rejected := request(t, h, map[string]string{
 		"Auth-Protocol": "smtp", "Auth-Method": "none", "Auth-SMTP-To": "missing@example.test",
 	})
 	if rejected.Header().Get("Auth-Status") != "authentication failed" || rejected.Header().Get("Auth-Server") != "" {
 		t.Fatalf("rejected headers=%v", rejected.Header())
+	}
+	for _, malformed := range []string{"RCPT TO:user@example.test", "RCPT TO:<>", "RCPT TO:<user@example.test>garbage"} {
+		response := request(t, h, map[string]string{
+			"Auth-Protocol": "smtp", "Auth-Method": "none", "Auth-SMTP-To": malformed,
+		})
+		if response.Header().Get("Auth-Status") != "invalid recipient" {
+			t.Fatalf("malformed recipient=%q headers=%v", malformed, response.Header())
+		}
+	}
+}
+
+func TestBackendResolutionFailsClosed(t *testing.T) {
+	h := testHandler(t)
+	h.resolveBackend = func(context.Context, string) (string, error) { return "", os.ErrNotExist }
+	response := request(t, h, map[string]string{
+		"Auth-Protocol": "smtp", "Auth-Method": "none", "Auth-SMTP-To": "RCPT TO:<user@example.test>",
+	})
+	if response.Header().Get("Auth-Status") != "authentication temporarily unavailable" || response.Header().Get("Auth-Wait") != "3" || response.Header().Get("Auth-Server") != "" {
+		t.Fatalf("headers=%v", response.Header())
 	}
 }
 

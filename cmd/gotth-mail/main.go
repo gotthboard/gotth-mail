@@ -618,6 +618,7 @@ func configureDatabaseFromEnv(ctx context.Context, server *api.Server) (*sql.DB,
 	identityService.Audit = audit.SQLWriter{DB: db}
 	server.OIDCStore = authn.SQLStore{DB: db}
 	server.Identity = identityService
+	identityService.BindDaemon(&server.Daemon)
 	policy := &outboundpolicy.EnforcementService{DB: db, Queue: outboundpolicy.QueueStore{DB: db}, HoldActor: audit.ActorRef{Type: "service", ID: "outbound-policy"}}
 	server.Daemon.OutboundPolicy = policy
 	server.Daemon.OutboundAdmission = &outboundpolicy.QueueAdmissionService{DB: db, Queue: outboundpolicy.QueueStore{DB: db}}
