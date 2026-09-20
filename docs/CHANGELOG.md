@@ -55,6 +55,37 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-20 12:05 CDT — Start alpha integration and reconcile main ancestry
+
+Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `workflow.toml`;
+- `workflow.events.jsonl`;
+- `workflow/features/release.1-0/alpha-integration/README.md`;
+- alpha-integration ancestry evidence;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+Created the alpha-integration line from the fully verified repository
+candidate and reconciled canonical `main` as a second parent. Main's OpenPGP
+draft, GOTTH Mail rename, and rename-admission changes were independently
+implemented and then superseded on the development line. A content-preserving
+merge records both histories without replaying stale main files over the
+finished candidate. Alpha integration is now active and in progress; no alpha
+tag or release is claimed while public extension distribution, live identity
+acceptance, immutable library releases, deployed lifecycle/recovery evidence,
+and reproducible release artifacts remain open.
+
+Verification:
+
+- the merge second parent is exact canonical `main` `fb1fcb8`;
+- `git diff cc80b9d^1 cc80b9d` is empty;
+- `workflow.toml` parses successfully;
+- `git diff --check` passes.
+
 ### 2026-09-19 18:48 CDT — Add the fail-closed Extensions administrator
 
 Implementation commit: `current commit; hash assigned by Git after commit`

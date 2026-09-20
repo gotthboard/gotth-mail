@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "v3.ops-import-admin.extension-management-ui"
+active_feature = "release.1-0.alpha-integration"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -185,7 +185,7 @@ verification = ["immutable public module pins", "OIDC discovery and authorizatio
 id = "release.1-0.alpha-integration"
 root = "release.1-0"
 title = "Complete all required workstreams and publish integrated alphas"
-state = "planned"
+state = "in_progress"
 path = "workflow/features/release.1-0/alpha-integration"
 source_path = "."
 branch = "workflow/feature/release.1-0.alpha-integration"
