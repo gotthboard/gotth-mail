@@ -223,10 +223,11 @@ func renderSecretConfig(templatePath, tokenPath, targetPath, placeholder string)
 	if !safeConfigurationToken(token) {
 		return fmt.Errorf("invalid service credential")
 	}
-	if strings.Count(string(template), placeholder) != 1 {
-		return fmt.Errorf("configuration must contain one service credential placeholder")
+	placeholderCount := strings.Count(string(template), placeholder)
+	if placeholderCount < 1 || placeholderCount > 4 {
+		return fmt.Errorf("configuration has invalid service credential placeholder count")
 	}
-	rendered := strings.Replace(string(template), placeholder, string(token), 1)
+	rendered := strings.ReplaceAll(string(template), placeholder, string(token))
 	for index := range token {
 		token[index] = 0
 	}
