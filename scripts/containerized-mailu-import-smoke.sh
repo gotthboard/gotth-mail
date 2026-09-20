@@ -2,7 +2,7 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 COMPOSE="$ROOT/compose/reference/docker-compose.yml"
-PROJECT=${GOTTH_MAIL_MAILU_SMOKE_PROJECT:-gotth-mail-mailu-import-smoke}
+PROJECT=${GOTTH_MAIL_MAILU_SMOKE_PROJECT:-gotth-mail-mailu-import-smoke-${USER:-test}-$$}
 DOCKER=${DOCKER:-docker}
 if ! $DOCKER ps >/dev/null 2>&1; then
   if command -v sudo >/dev/null 2>&1 && sudo docker ps >/dev/null 2>&1; then
@@ -16,6 +16,7 @@ cleanup() {
   $DOCKER compose -p "$PROJECT" -f "$COMPOSE" --profile mailu-import down -v --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+cleanup
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" --profile mailu-import up -d mailu-redis mailu-admin
 for i in $(seq 1 90); do
   status=$($DOCKER inspect -f '{{.State.Health.Status}}' "${PROJECT}-mailu-admin-1" 2>/dev/null || echo starting)
