@@ -55,6 +55,35 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-20 14:41 CDT — Keep production Bayes state inside the five-role boundary
+
+Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `configs/production/rspamd/override.inc`;
+- `scripts/production-runtime-smoke.sh`;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+Replaced Rspamd 3.11's distribution-default Redis Bayes backend with its
+supported SQLite backend. The production contract runs one scanner worker and
+does not provision Redis, so retaining the default caused every message to
+attempt a nonexistent service. The two Bayes databases and learn cache now
+live on the existing durable `/var/lib/rspamd` volume. This preserves spam
+learning without adding an undeclared sixth role or silently disabling the
+classifier.
+
+Verification:
+
+- Rspamd creates all three nonempty SQLite files on its durable volume;
+- the combined production smoke passes the complete SMTP-to-IMAPS path;
+- the smoke fails if Rspamd logs either missing Redis parameters or a failed
+  Redis call;
+- Mail's serial full tests, race tests, vet, and builds pass on the development
+  host, and the run leaves no test-owned SysV shared-memory segments behind.
+
 ### 2026-09-20 14:24 CDT — Prove the combined production mail path
 
 Implementation commit: `current commit; hash assigned by Git after commit`

@@ -239,4 +239,11 @@ else:
     raise SystemExit(f'delivered message was not readable through authenticated IMAPS: {last_error}')
 PY
 
+"${DOCKER[@]}" exec "$PREFIX-rspamd" sh -c \
+  'test -s /var/lib/rspamd/bayes.ham.sqlite3 && test -s /var/lib/rspamd/bayes.spam.sqlite3 && test -s /var/lib/rspamd/learn_cache.sqlite'
+if "${DOCKER[@]}" logs "$PREFIX-rspamd" 2>&1 | grep -E 'cannot load Redis parameters|call to redis failed' >/dev/null; then
+  echo 'Rspamd attempted to use an unprovisioned Redis backend' >&2
+  exit 1
+fi
+
 printf '%s\n' 'production runtime smoke passed: control plane, NGINX TLS/auth, Postfix, Rspamd, Dovecot LMTP, Maildir, and authenticated IMAPS'
