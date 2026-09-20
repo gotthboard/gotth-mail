@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"forgejo/gotthboard/gotth-mail/internal/authz"
 	gotthoidc "github.com/gotthboard/gotth-oidc/pkg/oidc"
 )
 
@@ -164,7 +165,25 @@ func (s SQLStore) BoundSession(ctx context.Context, id string, now time.Time) (B
 		&bound.CreatedAt, &bound.ExpiresAt, &bound.LastSeenAt,
 		&bound.Issuer, &bound.Subject, &bound.Mailbox,
 	)
-	return bound, err == nil
+	if err != nil {
+		return BoundSession{}, false
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT rb.role, COALESCE(lower(d.name),'') FROM role_bindings rb LEFT JOIN domains d ON d.id=rb.domain_id WHERE rb.identity_ref_id=$1 ORDER BY rb.role, d.name`, bound.IdentityRefID)
+	if err != nil {
+		return BoundSession{}, false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var assignment authz.RoleAssignment
+		if err := rows.Scan(&assignment.Role, &assignment.Domain); err != nil {
+			return BoundSession{}, false
+		}
+		bound.Roles = append(bound.Roles, assignment)
+	}
+	if err := rows.Err(); err != nil {
+		return BoundSession{}, false
+	}
+	return bound, true
 }
 
 func randomUUID() (string, error) {

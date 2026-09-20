@@ -14,6 +14,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/authn"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/daemon"
+	"forgejo/gotthboard/gotth-mail/internal/extensionsadmin"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 	"forgejo/gotthboard/gotth-mail/internal/ops"
 )
@@ -53,6 +54,10 @@ func HandlerWithAdminAndIdentity(store *admin.Store, ids *identity.Service, az a
 }
 
 func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Service, az authz.Authorizer, sessions authn.IdentitySessionStore, now func() time.Time) http.Handler {
+	return HandlerWithAdminIdentitySessionsAndExtensions(store, ids, az, sessions, now, nil)
+}
+
+func HandlerWithAdminIdentitySessionsAndExtensions(store *admin.Store, ids *identity.Service, az authz.Authorizer, sessions authn.IdentitySessionStore, now func() time.Time, extensions *extensionsadmin.Service) http.Handler {
 	if store == nil {
 		store = admin.NewStore()
 	}
@@ -68,6 +73,7 @@ func HandlerWithAdminIdentityAndSessions(store *admin.Store, ids *identity.Servi
 	importStore := ops.NewImportStore()
 	bulkStore := ops.NewBulkStore()
 	mux := http.NewServeMux()
+	registerExtensionUI(mux, ids, az, sessions, now, extensions)
 	render := func(w http.ResponseWriter, msg, simulation string) {
 		renderPage(w, store, ids, sessions != nil, msg, simulation)
 	}
@@ -305,7 +311,7 @@ func boundUIIdentity(w http.ResponseWriter, r *http.Request, sessions authn.Iden
 		http.Error(w, "identity CSRF binding is invalid", http.StatusUnauthorized)
 		return authn.BoundSession{}, authz.Actor{}, "", false
 	}
-	actor := authz.Actor{Type: "oidc_subject", ID: bound.IdentityRefID, Mailbox: bound.Mailbox}
+	actor := authz.Actor{Type: "oidc_subject", ID: bound.IdentityRefID, Mailbox: bound.Mailbox, Roles: append([]authz.RoleAssignment(nil), bound.Roles...)}
 	return bound, actor, csrfCookie.Value, true
 }
 
@@ -356,7 +362,7 @@ func renderPage(w http.ResponseWriter, store *admin.Store, ids *identity.Service
 
 var page = template.Must(template.New("page").Parse(`<!doctype html><html><body><main id="app">
 <h1>GOTTH Mail</h1>
-<nav>Dashboard Config Audit Authentik Identity SCIM App Passwords Permission Simulator Backups Snapshots Import Abuse Bulk Plugins Doctor DNS DKIM Lookup Queue Mail Admin</nav>
+<nav>Dashboard Config Audit Authentik Identity SCIM App Passwords Permission Simulator Backups Snapshots Import Abuse Bulk <a href="/admin/extensions">Extensions</a> Plugins Doctor DNS DKIM Lookup Queue Mail Admin</nav>
 {{if .Message}}<p role="status">{{.Message}}</p>{{end}}
 
 <section id="identity-status"><h3>OIDC/Auth status</h3><p>OIDC login uses browser-bound authorization-code state, nonce, redirect URI, issuer, audience, azp, and token-signature validation.</p></section>

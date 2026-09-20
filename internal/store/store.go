@@ -398,6 +398,104 @@ const notificationEventStatesMigrationSQL = `CREATE TABLE notification_event_sta
     CHECK (pending_alert_id IS NULL OR pending_alert_id ~ '^event-[0-9a-f]{24}-[0-9]+$')
 );`
 
+const extensionAdministratorMigrationVersion = "0017_extension_administrator"
+const extensionAdministratorMigrationSQL = `CREATE TABLE extension_instances (
+    instance_id uuid PRIMARY KEY,
+    product text NOT NULL DEFAULT 'gotth-mail',
+    extension_id text NOT NULL,
+    repository text NOT NULL,
+    artifact_pin text NOT NULL,
+    previous_artifact_pin text NULL,
+    previous_version_json jsonb NULL,
+    available_update_pin text NULL,
+    manifest_sha256 text NOT NULL,
+    grant_sha256 text NOT NULL,
+    session_sha256 text NOT NULL,
+    capabilities_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+    interfaces_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+    secret_slots_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+    metadata_json jsonb NOT NULL,
+    configuration_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+    configuration_revision bigint NOT NULL DEFAULT 1,
+    lifecycle text NOT NULL DEFAULT 'discovered',
+    health_code text NOT NULL DEFAULT 'extension.unknown',
+    tested_revision bigint NULL,
+    enabled boolean NOT NULL DEFAULT false,
+    routed boolean NOT NULL DEFAULT false,
+    last_correlation_id text NOT NULL DEFAULT '',
+    created_at timestamp NOT NULL,
+    updated_at timestamp NOT NULL,
+    UNIQUE (product, extension_id),
+    CHECK (product = 'gotth-mail'),
+    CHECK (length(extension_id) BETWEEN 3 AND 128),
+    CHECK (repository ~ '^https://github\.com/gotthboard/gotth-extension-[a-z0-9-]{1,63}$'),
+    CHECK (artifact_pin ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK ((previous_artifact_pin IS NULL) = (previous_version_json IS NULL)),
+    CHECK (previous_artifact_pin IS NULL OR previous_artifact_pin ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK (available_update_pin IS NULL OR available_update_pin ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK (manifest_sha256 ~ '^[0-9a-f]{64}$'),
+    CHECK (grant_sha256 ~ '^[0-9a-f]{64}$'),
+    CHECK (session_sha256 ~ '^[0-9a-f]{64}$'),
+    CHECK (configuration_revision > 0),
+    CHECK (tested_revision IS NULL OR tested_revision > 0),
+    CHECK (lifecycle IN ('discovered','starting','ready','degraded','stopping','stopped','failed')),
+    CHECK (health_code ~ '^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$'),
+    CHECK (NOT routed OR enabled),
+    CHECK (updated_at >= created_at)
+);
+
+CREATE TABLE extension_secrets (
+    instance_id uuid NOT NULL REFERENCES extension_instances(instance_id) ON DELETE CASCADE,
+    slot text NOT NULL,
+    nonce bytea NOT NULL,
+    ciphertext bytea NOT NULL,
+    key_version integer NOT NULL DEFAULT 1,
+    configured_at timestamp NOT NULL,
+    rotated_at timestamp NOT NULL,
+    PRIMARY KEY (instance_id, slot),
+    CHECK (length(slot) BETWEEN 3 AND 128),
+    CHECK (octet_length(nonce) = 12),
+    CHECK (octet_length(ciphertext) BETWEEN 17 AND 4112),
+    CHECK (key_version > 0),
+    CHECK (rotated_at >= configured_at)
+);
+
+CREATE TABLE extension_operation_previews (
+    id text PRIMARY KEY,
+    instance_id uuid NOT NULL REFERENCES extension_instances(instance_id) ON DELETE CASCADE,
+    operation text NOT NULL,
+    actor_type text NOT NULL,
+    actor_id text NOT NULL,
+    base_revision bigint NOT NULL,
+    payload_json jsonb NOT NULL,
+    payload_sha256 text NOT NULL,
+    secret_binding_sha256 text NOT NULL,
+    confirmation_sha256 text NOT NULL,
+    privilege_diff_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+    configuration_diff_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+    secret_slot_diff_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+    created_at timestamp NOT NULL,
+    expires_at timestamp NOT NULL,
+    consumed_at timestamp NULL,
+    CHECK (id ~ '^extp_[0-9a-f]{24}$'),
+    CHECK (operation IN ('configure','update','delete_secrets','uninstall')),
+    CHECK (length(actor_type) BETWEEN 1 AND 64),
+    CHECK (length(actor_id) BETWEEN 1 AND 1024),
+    CHECK (base_revision > 0),
+    CHECK (payload_sha256 ~ '^[0-9a-f]{64}$'),
+    CHECK (secret_binding_sha256 ~ '^[0-9a-f]{64}$'),
+    CHECK (confirmation_sha256 ~ '^[0-9a-f]{64}$'),
+    CHECK (expires_at > created_at),
+    CHECK (consumed_at IS NULL OR consumed_at >= created_at)
+);
+
+CREATE INDEX extension_instances_state_idx
+    ON extension_instances (enabled, lifecycle, extension_id);
+
+CREATE INDEX extension_operation_previews_instance_idx
+    ON extension_operation_previews (instance_id, operation, expires_at)
+    WHERE consumed_at IS NULL;`
+
 var upgradeMigrations = []Migration{
 	newMigration(notificationDeliveryEvidenceMigrationVersion, notificationDeliveryEvidenceMigrationSQL),
 	newMigration(oidcProtectedAttemptsMigrationVersion, oidcProtectedAttemptsMigrationSQL),
@@ -414,6 +512,7 @@ var upgradeMigrations = []Migration{
 	newMigration(notificationApprovalExecutionMigrationVersion, notificationApprovalExecutionMigrationSQL),
 	newMigration(notificationTelegramUpdatesMigrationVersion, notificationTelegramUpdatesMigrationSQL),
 	newMigration(notificationEventStatesMigrationVersion, notificationEventStatesMigrationSQL),
+	newMigration(extensionAdministratorMigrationVersion, extensionAdministratorMigrationSQL),
 }
 
 func newMigration(version, sql string) Migration {

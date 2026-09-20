@@ -16,6 +16,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/config"
 	"forgejo/gotthboard/gotth-mail/internal/daemon"
 	"forgejo/gotthboard/gotth-mail/internal/diag"
+	"forgejo/gotthboard/gotth-mail/internal/extensionsadmin"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
 	"forgejo/gotthboard/gotth-mail/internal/notifyruntime"
@@ -55,6 +56,7 @@ type Server struct {
 	ApprovalService      *notifyruntime.ApprovalService
 	NotificationReceiver http.Handler
 	SCIM                 http.Handler
+	Extensions           *extensionsadmin.Service
 }
 
 func (s Server) Handler() http.Handler {
@@ -207,6 +209,7 @@ func (s Server) Handler() http.Handler {
 	s.registerWebmail(mux, identitySvc)
 	s.registerOutboundPolicyAdmin(mux, identitySvc)
 	s.registerNotificationApprovals(mux, identitySvc)
+	s.registerExtensions(mux, identitySvc)
 	mux.HandleFunc("/api/v1/authz/explain", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "POST") {
 			return

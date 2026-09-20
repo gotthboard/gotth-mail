@@ -10,6 +10,7 @@ type Actor struct {
 	Mailbox  string
 	Scopes   []string
 	Groups   []string
+	Roles    []RoleAssignment
 }
 type Action string
 type Resource struct{ Type, ID string }
@@ -41,6 +42,11 @@ type RoleMapping struct {
 	Role           Role
 	Domain         string
 	Verified       bool
+}
+
+type RoleAssignment struct {
+	Role   Role
+	Domain string
 }
 
 type StaticAuthorizer struct{ Mappings []RoleMapping }
@@ -147,6 +153,16 @@ func (s StaticAuthorizer) explainOIDC(ex Explanation, a Actor, act Action, r Res
 
 func (s StaticAuthorizer) rolesFor(a Actor) map[Role]map[string]bool {
 	out := map[Role]map[string]bool{RoleGlobalAdmin: {}, RoleDomainManager: {}, RoleScopedDomainAccess: {}}
+	for _, assignment := range a.Roles {
+		if _, ok := out[assignment.Role]; !ok {
+			continue
+		}
+		domain := strings.ToLower(strings.TrimSpace(assignment.Domain))
+		if domain == "" {
+			domain = "*"
+		}
+		out[assignment.Role][domain] = true
+	}
 	groups := map[string]bool{}
 	for _, g := range a.Groups {
 		groups[g] = true

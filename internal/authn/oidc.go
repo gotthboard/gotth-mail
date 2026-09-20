@@ -15,6 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"forgejo/gotthboard/gotth-mail/internal/authz"
 	gotthoidc "github.com/gotthboard/gotth-oidc/pkg/oidc"
 )
 
@@ -61,6 +62,7 @@ type BoundSession struct {
 	Issuer  string
 	Subject string
 	Mailbox string
+	Roles   []authz.RoleAssignment
 }
 
 type StateStore interface {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/daemon"
 	"forgejo/gotthboard/gotth-mail/internal/diag"
+	"forgejo/gotthboard/gotth-mail/internal/extensionsadmin"
 	"forgejo/gotthboard/gotth-mail/internal/httpui"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
@@ -66,6 +68,9 @@ func main() {
 	}
 	if notificationBackend != nil {
 		defer notificationBackend.Close()
+	}
+	if err := configureExtensionsFromEnv(&server); err != nil {
+		log.Fatalf("configure extension administrator: %v", err)
 	}
 	if policyAddr := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_POLICY_LISTEN")); policyAddr != "" {
 		go servePostfixPolicy(policyAddr, server.Daemon)
@@ -172,8 +177,62 @@ func runtimeMux(server api.Server) http.Handler {
 		mux.Handle("/internal/v1/notifications/telegram", server.NotificationReceiver)
 	}
 	sessions, _ := server.OIDCStore.(authn.IdentitySessionStore)
-	mux.Handle("/", httpui.HandlerWithAdminIdentityAndSessions(referenceAdminStore(), server.Identity, server.Authz, sessions, server.OIDCNow))
+	mux.Handle("/", httpui.HandlerWithAdminIdentitySessionsAndExtensions(referenceAdminStore(), server.Identity, server.Authz, sessions, server.OIDCNow, server.Extensions))
 	return mux
+}
+
+// configureExtensionsFromEnv enables the durable administrator without
+// pretending that a configured extension process can be supervised when no
+// runtime adapter exists. Inventory, configuration, previews, encrypted
+// secrets, update planning, rollback, and removal remain available; runtime
+// test/enable/disable fail closed until an adapter is supplied.
+func configureExtensionsFromEnv(server *api.Server) error {
+	path := strings.TrimSpace(os.Getenv("GOTTH_MAIL_EXTENSION_MASTER_KEY_FILE"))
+	if path == "" {
+		return nil
+	}
+	if server.AuditDB == nil {
+		return fmt.Errorf("GOTTH_MAIL_DATABASE_URL or GOTTH_MAIL_DATABASE_URL_FILE is required when extension administration is enabled")
+	}
+	pathInfo, err := os.Lstat(path)
+	if err != nil || pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() || pathInfo.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("extension master key must be a private regular file")
+	}
+	handle, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open extension master key: %w", err)
+	}
+	defer handle.Close()
+	info, err := handle.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("extension master key must be a private regular file")
+	}
+	data, err := io.ReadAll(io.LimitReader(handle, 129))
+	if err != nil {
+		return fmt.Errorf("read extension master key: %w", err)
+	}
+	if len(data) != 32 {
+		data = []byte(strings.TrimRight(string(data), "\r\n"))
+	}
+	if len(data) == 64 {
+		decoded := make([]byte, 32)
+		if _, err := hex.Decode(decoded, data); err != nil {
+			return fmt.Errorf("extension master key must contain 32 raw bytes or 64 hexadecimal characters")
+		}
+		data = decoded
+	}
+	if len(data) != 32 {
+		return fmt.Errorf("extension master key must contain exactly 32 bytes")
+	}
+	service, err := extensionsadmin.NewService(server.AuditDB, data, nil)
+	for i := range data {
+		data[i] = 0
+	}
+	if err != nil {
+		return err
+	}
+	server.Extensions = service
+	return nil
 }
 
 func configureNotificationsFromEnv(server *api.Server) (*notifyruntime.GRPCNotificationBackend, error) {

@@ -55,6 +55,13 @@ func TestSQLStoreOIDCStateSingleUseAndSessionPersistence(t *testing.T) {
 	if !ok || bound.Mailbox != "member@example.test" || bound.Subject != "subject" || !ValidCSRF(bound.Session, "csrf-secret") {
 		t.Fatalf("bound=%#v ok=%v", bound, ok)
 	}
+	if _, err := db.Exec(`INSERT INTO role_bindings(id,identity_ref_id,role,domain_id,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000099',$1,'global_admin',NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, sess.IdentityRefID); err != nil {
+		t.Fatal(err)
+	}
+	bound, ok = persisted.BoundSession(context.Background(), "sess-1", now.Add(time.Minute))
+	if !ok || len(bound.Roles) != 1 || bound.Roles[0].Role != "global_admin" || bound.Roles[0].Domain != "" {
+		t.Fatalf("durable roles not bound to session: %#v ok=%v", bound.Roles, ok)
+	}
 }
 
 func TestSQLStoreIdentityBindingRejectsMissingDisabledMismatchedAndAmbiguousMailbox(t *testing.T) {

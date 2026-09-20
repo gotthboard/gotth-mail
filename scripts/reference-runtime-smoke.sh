@@ -143,8 +143,8 @@ done
 grep -E 'GOTTH Mail smoke' /tmp/gotth-mail-roundcube-inbox.html /tmp/gotth-mail-roundcube-list.json >/dev/null
 
 $DOCKER compose -p "$PROJECT" -f "$COMPOSE" exec -T rspamd sh -lc 'test -s /run/rspamd/dkim/example.test.mail.key && test -s /run/rspamd/dkim/example.test.mail.txt && rspamadm configtest >/tmp/rspamd-configtest.out && grep -i "syntax OK" /tmp/rspamd-configtest.out >/dev/null'
-$DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color gotth-mail | grep 'postfix policy recipient=alias@example.test decision=ok' >/dev/null
-$DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color gotth-mail | grep 'postfix policy recipient=nobody@example.test decision=not_found' >/dev/null
+$DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color gotth-mail | grep 'decision=ok reason=alias_expanded' >/dev/null
+$DOCKER compose -p "$PROJECT" -f "$COMPOSE" logs --no-color gotth-mail | grep 'decision=not_found reason=recipient_not_found' >/dev/null
 
 cat <<'OK'
 reference runtime smoke passed:

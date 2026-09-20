@@ -191,7 +191,7 @@ func TestReferenceRuntimeSmokeScriptCoversMailFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"RCPT TO:<nobody@example.test>", "recipient unknown", "RCPT TO:<alias@example.test>", "find /mail/example.test/smoke/new", "a login smoke@example.test smoke-secret", "GOTTH Mail smoke", "roundcube_token", "?_task=mail&_mbox=INBOX", "?_task=mail&_action=list", "acme_not_configured_reference_manual_mode", "\"category\":\"plugin\"", "^DKIM-Signature:", "rspamadm configtest", "postfix policy recipient=alias@example.test decision=ok", "/internal/v1/postfix/recipients/smoke@example.test", "/internal/v1/rspamd/dkim/example.test"} {
+	for _, want := range []string{"RCPT TO:<nobody@example.test>", "recipient unknown", "RCPT TO:<alias@example.test>", "find /mail/example.test/smoke/new", "a login smoke@example.test smoke-secret", "GOTTH Mail smoke", "roundcube_token", "?_task=mail&_mbox=INBOX", "?_task=mail&_action=list", "acme_not_configured_reference_manual_mode", "\"category\":\"plugin\"", "^DKIM-Signature:", "rspamadm configtest", "decision=ok reason=alias_expanded", "decision=not_found reason=recipient_not_found", "/internal/v1/postfix/recipients/smoke@example.test", "/internal/v1/rspamd/dkim/example.test"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("smoke script missing %q", want)
 		}

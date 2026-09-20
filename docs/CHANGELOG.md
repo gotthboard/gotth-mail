@@ -43,6 +43,60 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-19 18:48 CDT — Add the fail-closed Extensions administrator
+
+Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `migrations/0017_extension_administrator.sql` and the immutable runtime
+  migration ledger;
+- `internal/extensionsadmin`, `internal/api/extensions.go`, and their tests;
+- `internal/httpui/extensions.go` plus OIDC-session role/CSRF admission in
+  `internal/authn`, `internal/authz`, and `internal/httpui`;
+- `cmd/gotth-mail/main.go` and protected master-key configuration tests;
+- `internal/testpg/testpg.go`, which now shuts local PostgreSQL down cleanly
+  and uses mmap-backed shared memory;
+- `scripts/reference-runtime-smoke.sh` and its contract test, whose final assertions now match the
+  privacy-safe structured policy log contract instead of removed raw recipient
+  fields;
+- workflow state, coverage, handoff, and verification evidence.
+
+Explanation:
+
+Added a PostgreSQL-backed, Mail-owned extension inventory and lifecycle
+administrator. It stores exact repository/artifact/manifest/grant/session
+identity, closed scalar configuration metadata, revision-bound previews, full
+prior-version rollback state, and AES-256-GCM write-only secrets. Configure,
+update, secret deletion, and uninstall previews are actor-bound, expire, are
+single-use, and persist redacted capability/configuration/secret-slot diffs.
+Runtime sequencing proves test-before-enable, authenticated health before route
+admission, route revocation before stop, idempotent state, stale-preview
+rejection, and rollback after partial admission failures. Secret deletion and
+uninstall are deliberately separate confirmed operations.
+
+Added strict JSON API routes and a native responsive ordinary-HTML Extensions
+surface with Overview, Configuration, Secrets, Permissions, Health, Audit,
+Versions, and Rollback sections. The host renders all controls; hostile
+extension HTML, URLs, actions, unknown field kinds, duplicate JSON names, and
+secret values are rejected. Browser admission now accepts only durable
+`role_bindings` attached to a verified OIDC session and requires its existing
+CSRF binding for mutations; bearer automation remains supported. The protected
+master key must come from a private file and runtime operations remain
+unavailable unless a real supervisor/configuration-transport adapter is
+provided. No fake process control was added.
+
+Verification:
+
+- focused PostgreSQL lifecycle, migration, API, UI, OIDC-role, CSRF, hostile
+  metadata, redaction, failure-ordering, and cross-product isolation tests pass;
+- `internal/extensionsadmin` statement coverage is 73.9%; the uncovered paths
+  are predominantly injected entropy/database serialization failures and
+  defensive corrupt-row branches, while the behavior and failure-ordering
+  surface is exercised;
+- full, race, vet, build, and container gates are recorded in
+  `workflow/features/v3.ops-import-admin/extension-management-ui/evidence/2026-09-19-extension-administrator.md`.
+
 ### 2026-09-19 17:46 CDT — Adopt the GOTTH Extensions compatibility foundation
 
 Implementation commit: `3102db391a95cd4b54630f2f78ec160382a29f43`

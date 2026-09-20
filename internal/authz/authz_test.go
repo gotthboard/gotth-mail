@@ -28,6 +28,7 @@ func TestExplainPoliciesForActorClasses(t *testing.T) {
 		{"scim deny", Actor{Type: "scim_client"}, "policy:grant", Resource{Type: "system", ID: "x"}, false},
 		{"oidc status", Actor{Type: "oidc_subject", Groups: []string{}}, "status:read", Resource{Type: "system", ID: "x"}, true},
 		{"oidc global", Actor{Type: "oidc_subject", Groups: []string{"admins"}}, "domain:delete", Resource{Type: "domain", ID: "example.test"}, true},
+		{"oidc durable global", Actor{Type: "oidc_subject", Roles: []RoleAssignment{{Role: RoleGlobalAdmin}}}, "ops:admin", Resource{Type: "extension", ID: "instance"}, true},
 		{"oidc domain manager", Actor{Type: "oidc_subject", Groups: []string{"domain-managers"}}, "mailbox:create", Resource{Type: "mailbox", ID: "user@example.test"}, true},
 		{"oidc scoped read", Actor{Type: "oidc_subject", Groups: []string{"domain-example"}}, "mailbox:read", Resource{Type: "mailbox", ID: "user@example.test"}, true},
 		{"oidc scoped deny write", Actor{Type: "oidc_subject", Groups: []string{"domain-example"}}, "mailbox:create", Resource{Type: "mailbox", ID: "user@example.test"}, false},

@@ -38,11 +38,27 @@ func DB(t *testing.T, migrate func(context.Context, *sql.DB) error) *sql.DB {
 	if out, err := exec.Command(initdb, "-A", "trust", "-U", "gotth_mail", "-D", data).CombinedOutput(); err != nil {
 		t.Fatalf("initdb: %v\n%s", err, out)
 	}
-	cmd := exec.Command(postgres, "-D", data, "-h", "127.0.0.1", "-p", fmt.Sprint(port), "-k", runtime)
+	cmd := exec.Command(postgres, "-D", data, "-h", "127.0.0.1", "-p", fmt.Sprint(port), "-k", runtime,
+		"-c", "shared_memory_type=mmap", "-c", "dynamic_shared_memory_type=mmap")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("postgres start: %v", err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	t.Cleanup(func() {
+		if err := cmd.Process.Signal(os.Interrupt); err != nil {
+			_ = cmd.Process.Kill()
+		}
+		done := make(chan struct{})
+		go func() {
+			_ = cmd.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			_ = cmd.Process.Kill()
+			<-done
+		}
+	})
 	dsn := fmt.Sprintf("postgres://gotth_mail@127.0.0.1:%d/gotth_mail?sslmode=disable", port)
 	adminDSN := fmt.Sprintf("postgres://gotth_mail@127.0.0.1:%d/postgres?sslmode=disable", port)
 	waitSQL(t, adminDSN)
