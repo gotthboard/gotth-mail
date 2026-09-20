@@ -55,6 +55,44 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-20 16:36 CDT — Define the 2.0 Go-native mail-engine direction
+
+Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `README.md`;
+- `docs/prd/PRD.md` and `docs/prd/PRD-release-2.0.md`;
+- `docs/architecture/ARCHITECTURE.md` and
+  `docs/architecture/release-2.0.md`;
+- `docs/implementation/IMPLEMENTATION.md` and
+  `docs/implementation/release-2.0.md`;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+Defined product 2.0 as a self-contained Go mail engine whose canonical path
+has no NGINX, Postfix, Dovecot, Pigeonhole, or Rspamd runtime dependency. The
+new documents specify one codebase and release with isolated role-locked edge,
+transport, mailbox/API, message-intelligence, control, and worker authorities;
+a supported contract-preserving all-in-one profile; standards and security
+boundaries; durable queue and mailbox requirements; and explicit use of
+reviewed Go cryptographic and protocol libraries rather than bespoke crypto.
+
+The plan preserves 1.x as the compatibility oracle and rollback boundary.
+Removal proceeds through shadow parity and staged NGINX, Dovecot, Postfix, and
+Rspamd replacement, followed by daemon-free migration, recovery, security,
+interoperability, and owner-acceptance gates. This future release is explicitly
+separate from the historical `v2.identity-provisioning` capability ID and does
+not alter the admitted 1.0 runtime.
+
+Verification:
+
+- documentation links and release-line cross-references reviewed;
+- Markdown whitespace and `git diff --check` pass;
+- no source, workflow state, runtime artifact, deployment, or 1.0 requirement
+  changed.
+
 ### 2026-09-20 16:27 CDT — Admit the exact production artifact mechanism
 
 Implementation commit: `current commit; hash assigned by Git after commit`

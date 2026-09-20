@@ -11,6 +11,7 @@ This repository is in staged implementation governed by `workflow.toml`. Do not 
 - [Implementation specifications](docs/implementation/IMPLEMENTATION.md)
 - [Project identity contract](docs/prd/PRD-project-identity.md)
 - [1.0 release contract](docs/prd/PRD-release-1.0.md)
+- [2.0 Go-native mail-engine contract](docs/prd/PRD-release-2.0.md)
 - [Changelog](docs/CHANGELOG.md)
 - [Authentik password hashing compatibility](docs/reference/authentik-password-hashing.md)
 - [GOTTH component adoption contract](docs/reference/gotth-stack-adoption.md)
@@ -18,7 +19,7 @@ This repository is in staged implementation governed by `workflow.toml`. Do not 
 - [Workflow manifest](workflow.toml)
 - [Coverage posture](workflow/COVERAGE.md)
 
-## Required stack
+## Required 1.0 stack
 
 - Go control plane
 - Docker/Compose deployment
@@ -32,6 +33,18 @@ This repository is in staged implementation governed by `workflow.toml`. Do not 
   handshake, and health contracts; Mail retains seam protocols, credentials,
   routing, supervision, policy, mutation, audit, and rollback authority
 - Containerized gRPC/protobuf plugins at narrow mechanism seams
+
+## 2.0 direction
+
+The planned 2.0 release replaces the canonical NGINX, Postfix, Dovecot, and
+Rspamd mail path with GOTTH Mail-owned Go implementations. It remains one
+codebase and one release, but preserves isolated edge, transport, mailbox,
+message-intelligence, control-plane, and worker roles. The 1.x daemon-backed
+stack remains the compatibility oracle and rollback boundary until every
+Go-native role passes protocol, migration, recovery, security, and live-mail
+admission. See the [2.0 PRD](docs/prd/PRD-release-2.0.md),
+[architecture](docs/architecture/release-2.0.md), and
+[implementation specification](docs/implementation/release-2.0.md).
 
 ## Development workflow
 

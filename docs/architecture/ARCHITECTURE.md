@@ -15,10 +15,12 @@ GOTTH Mail is a Docker/Compose-deployed Go control plane for a self-hosted mail 
 - [v4 Custom Webmail](v4-webmail.md) — from [PRD-v4-webmail.md](../prd/PRD-v4-webmail.md)
 - [v5 Notifications](v5-notifications.md) — from [PRD-v5-notifications.md](../prd/PRD-v5-notifications.md)
 - [1.0 release line](release-1.0.md) — from [PRD-release-1.0.md](../prd/PRD-release-1.0.md)
+- [2.0 Go-native mail engine](release-2.0.md) — from [PRD-release-2.0.md](../prd/PRD-release-2.0.md)
 
 The `v0` through `v5` labels above are retained capability-workstream IDs, not
 published major versions. The product release state machine is defined by the
-1.0 release-line architecture.
+1.0 release-line architecture. Product 2.0 is a separate future release line
+that replaces the external mail daemons with GOTTH Mail-owned Go roles.
 
 ## Exact sender architecture references
 

@@ -17,9 +17,12 @@ This is still not code. Implementation may begin only after a version has a PRD,
 - [v4 implementation spec](v4-webmail.md) — from [PRD-v4-webmail.md](../prd/PRD-v4-webmail.md) and [architecture/v4-webmail.md](../architecture/v4-webmail.md)
 - [v5 implementation spec](v5-notifications.md) — from [PRD-v5-notifications.md](../prd/PRD-v5-notifications.md) and [architecture/v5-notifications.md](../architecture/v5-notifications.md)
 - [1.0 release-line specification](release-1.0.md) — from [PRD-release-1.0.md](../prd/PRD-release-1.0.md) and [architecture/release-1.0.md](../architecture/release-1.0.md)
+- [2.0 Go-native mail-engine specification](release-2.0.md) — from [PRD-release-2.0.md](../prd/PRD-release-2.0.md) and [architecture/release-2.0.md](../architecture/release-2.0.md)
 
 The `v0` through `v5` names are historical capability-workstream identifiers.
 They do not permit product tags outside the 1.0 alpha/beta/stable grammar.
+The product 2.0 plan is separately specified and does not reuse those
+historical workflow identifiers.
 
 ## Global implementation rules
 

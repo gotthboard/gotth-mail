@@ -77,6 +77,7 @@ product versions:
 - [v4 Custom Webmail](PRD-v4-webmail.md)
 - [v5 Notifications](PRD-v5-notifications.md)
 - [1.0 release line](PRD-release-1.0.md)
+- [2.0 Go-native mail engine](PRD-release-2.0.md)
 
 ## Capability workstreams for 1.0
 
@@ -107,6 +108,21 @@ Build the notification backend plugin seam, with Telegram as the first required 
 These workstreams all belong to the `1.0.0` release line. Incomplete integrated
 builds are `1.0.0-alpha.N`; feature-complete acceptance builds are
 `1.0.0-beta.N`; only the complete admitted stack becomes stable `1.0.0`.
+
+## 2.0 release direction
+
+GOTTH Mail 2.0 replaces the canonical NGINX, Postfix, Dovecot, and Rspamd
+runtime path with product-owned Go roles while preserving standards
+interoperability, isolated failure domains, exact-sender policy, migration,
+rollback, and operational evidence. It is a new mail-engine release, not a
+routine control-plane refactor and not a renaming of the historical
+`v2.identity-provisioning` workstream.
+
+The target is one Go codebase, one release manifest, and one family of
+role-locked artifacts. A supported all-in-one profile may run those roles
+together for small installations, but production architecture must preserve
+separate edge, transport, mailbox/API, message-intelligence, control-plane,
+and worker authorities. See [PRD-release-2.0.md](PRD-release-2.0.md).
 
 ## Plugin boundaries
 
