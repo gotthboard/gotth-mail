@@ -55,6 +55,37 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-20 13:42 CDT — Correct native-daemon production startup
+
+Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `cmd/gotth-mail-entrypoint/main.go`;
+- `configs/production/control/environment`;
+- `configs/production/postfix/main.cf`;
+- `configs/production/rspamd/override.inc`;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+Corrected defects found by starting the exact production containers under the
+documented read-only-root and capability boundary. Postfix now keeps its
+mutable data directory on the writable spool volume. The control plane calls
+the helper supervisor actually embedded in the Postfix role instead of a
+nonexistent service. Rspamd creates its tmpfs-backed control-socket directory
+before dropping into the daemon and uses one worker per role in this bounded
+deployment instead of inheriting the host CPU count.
+
+Verification:
+
+- Postfix starts with a read-only root and only the documented capabilities;
+- its master process and helper listener remain live and the SMTP health probe
+  passes;
+- Rspamd configuration expansion binds the intended proxy, normal, and
+  controller listeners with the mounted controller credential;
+- `git diff --check` passes.
+
 ### 2026-09-20 13:29 CDT — Implement the production Mail artifact foundation
 
 Implementation commit: `current commit; hash assigned by Git after commit`

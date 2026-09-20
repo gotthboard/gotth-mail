@@ -87,6 +87,9 @@ func runtimeCommand(selectedRole string) (string, []string, []string, error) {
 		if err := renderSecretConfig(rspamdTemplate, rspamdTokenPath, rspamdRuntimeFile, "@GOTTH_MAIL_RSPAMD_CONTROLLER_TOKEN@"); err != nil {
 			return "", nil, nil, err
 		}
+		if err := os.MkdirAll("/run/rspamd", 0o700); err != nil {
+			return "", nil, nil, fmt.Errorf("prepare Rspamd runtime path: %w", err)
+		}
 		return "/usr/bin/rspamd", []string{"rspamd", "-f", "-c", configRoot + "/rspamd/rspamd.conf"}, fixedEnvironment(), nil
 	default:
 		return "", nil, nil, fmt.Errorf("image has invalid compiled role")
