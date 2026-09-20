@@ -48,7 +48,7 @@ var roleRepositories = []struct {
 var requiredConfiguration = map[string]struct{}{
 	"control/environment": {}, "front/nginx.conf": {},
 	"postfix/environment": {}, "postfix/main.cf": {}, "postfix/master.cf": {},
-	"dovecot/dovecot.conf": {}, "rspamd/rspamd.conf": {},
+	"dovecot/dovecot.conf": {}, "rspamd/rspamd.conf": {}, "rspamd/override.inc": {},
 }
 
 type fileArtifact struct {

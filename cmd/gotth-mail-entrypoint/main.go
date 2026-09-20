@@ -22,9 +22,9 @@ const (
 	frontTokenPath    = "/run/secrets/front-auth-token"
 	frontTemplate     = configRoot + "/front/nginx.conf"
 	frontRuntimeFile  = "/tmp/gotth-mail-nginx.conf"
-	rspamdTemplate    = configRoot + "/rspamd/rspamd.conf"
+	rspamdTemplate    = configRoot + "/rspamd/override.inc"
 	rspamdTokenPath   = "/run/secrets/controller-token"
-	rspamdRuntimeFile = "/tmp/gotth-mail-rspamd.conf"
+	rspamdRuntimeFile = "/tmp/gotth-mail-rspamd-override.inc"
 	maxConfigBytes    = 1 << 20
 )
 
@@ -87,7 +87,7 @@ func runtimeCommand(selectedRole string) (string, []string, []string, error) {
 		if err := renderSecretConfig(rspamdTemplate, rspamdTokenPath, rspamdRuntimeFile, "@GOTTH_MAIL_RSPAMD_CONTROLLER_TOKEN@"); err != nil {
 			return "", nil, nil, err
 		}
-		return "/usr/bin/rspamd", []string{"rspamd", "-f", "-c", rspamdRuntimeFile}, fixedEnvironment(), nil
+		return "/usr/bin/rspamd", []string{"rspamd", "-f", "-c", configRoot + "/rspamd/rspamd.conf"}, fixedEnvironment(), nil
 	default:
 		return "", nil, nil, fmt.Errorf("image has invalid compiled role")
 	}

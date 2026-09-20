@@ -85,7 +85,7 @@ daemon ports, STARTTLS/implicit TLS, PROXY protocol, policy/map services,
 LMTP, Sieve/quota plugins, and an authenticated Rspamd controller secret.
 
 The new release assembler accepts one closed typed specification and exact
-seven-member configuration set, emits sorted deterministic USTAR with mode
+eight-member configuration set, emits sorted deterministic USTAR with mode
 0440/UID 0/GID 0/epoch metadata, and writes the Stack-compatible canonical
 manifest atomically. Unknown files, unknown specification fields, floating or
 missing image identities, malformed release identity, symlinks, oversized
