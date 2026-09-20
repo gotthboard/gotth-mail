@@ -123,6 +123,36 @@ implementation assignment before lower-priority new feature work.
 
 ## Release verification
 
+### Production artifact implementation
+
+`build/production` owns five role Dockerfiles, fixed entrypoints, native
+configuration checks, and deterministic artifact assembly. Builds require
+`VERSION`, `SOURCE_COMMIT`, and `BUILD_DATE_EPOCH`; release builds reject dirty
+source and development identity. Every image sets exact OCI version/revision
+labels and `com.gotth.mail.role`, uses the fixed
+`/usr/local/bin/gotth-mail-entrypoint`, and contains
+`/usr/local/bin/gotth-mail-health`.
+
+`cmd/gotth-mail-release` builds the strict canonical release manifest and
+configuration USTAR without invoking Docker or accessing the network. Input
+is a closed typed release specification. Archive members are sorted regular
+files with UID/GID zero, mode 0440, USTAR format, epoch mtime, no links, and no
+extended metadata. The command hashes the exact archive bytes and every
+member, refuses unknown or reference-only files, and writes atomically.
+
+The front-auth endpoint accepts only the NGINX mail-module header contract,
+bounds every header, redacts credentials from logs/errors, validates mailbox
+credentials through the canonical daemon/passdb service, enforces unauthenticated
+SMTP recipient policy, and returns only fixed private backend names/ports.
+Its service credential is file-backed; no password, token, key, or DSN enters
+image metadata, Docker arguments, or plaintext environment values.
+
+The release gate builds every role twice, compares configuration/manifest and
+binary digests, inspects effective image labels/user/entrypoint/packages, runs
+native config checks, starts all roles on a disposable private network, proves
+TLS/STARTTLS/auth/proxy behavior, and then runs Stack replacement/rollback.
+The existing reference Compose and Telegram fixtures are forbidden inputs.
+
 - version grammar unit tests, including rejected zero, leading-zero, `0.x`,
   `v`-prefixed build strings, and release-candidate forms;
 - exact public-module pseudo-version or tag pins in `go.mod`/`go.sum`;

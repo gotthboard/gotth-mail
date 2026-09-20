@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "release.1-0.alpha-integration"
+active_feature = "release.1-0.production-artifacts"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -185,13 +185,25 @@ verification = ["immutable public module pins", "OIDC discovery and authorizatio
 id = "release.1-0.alpha-integration"
 root = "release.1-0"
 title = "Complete all required workstreams and publish integrated alphas"
-state = "in_progress"
+state = "blocked"
 path = "workflow/features/release.1-0/alpha-integration"
 source_path = "."
 branch = "workflow/feature/release.1-0.alpha-integration"
-dependencies = ["project.identity", "v0.foundation", "v1.mail-core", "v2.identity-provisioning", "v3.ops-import-admin", "v4.webmail", "v5.notifications", "release.1-0.identity-libraries", "release.1-0.identity-library-releases", "release.1-0.extensions-foundation-adoption", "release.1-0.same-domain-outbound-policy", "v3.ops-import-admin.extension-management-ui"]
+dependencies = ["project.identity", "v0.foundation", "v1.mail-core", "v2.identity-provisioning", "v3.ops-import-admin", "v4.webmail", "v5.notifications", "release.1-0.identity-libraries", "release.1-0.identity-library-releases", "release.1-0.extensions-foundation-adoption", "release.1-0.same-domain-outbound-policy", "release.1-0.production-artifacts", "v3.ops-import-admin.extension-management-ui"]
 implementation_spec_sections = ["Release verification"]
 verification = ["complete workstream traceability", "reproducible alpha artifact", "upgrade/backup/restore/rollback proof", "full/race/vet/build/container gates"]
+
+[[features]]
+id = "release.1-0.production-artifacts"
+root = "release.1-0"
+title = "Build the five-role production artifact set"
+state = "in_progress"
+path = "workflow/features/release.1-0/production-artifacts"
+source_path = "."
+branch = "workflow/feature/release.1-0.alpha-integration"
+dependencies = ["v1.mail-core", "release.1-0.same-domain-outbound-policy", "release.1-0.extensions-foundation-adoption"]
+implementation_spec_sections = ["Production artifact implementation"]
+verification = ["five preinstalled role images", "strict deterministic configuration USTAR and release manifest", "native daemon configuration checks", "front TLS STARTTLS auth and proxy proof", "no reference Mailu Roundcube Telegram or runtime package installation", "two-build reproducibility", "gotth-stack replacement and rollback proof", "go test ./...", "go test -race ./...", "go vet ./...", "git diff --check"]
 
 [[features]]
 id = "release.1-0.same-domain-outbound-policy"

@@ -42,6 +42,27 @@ Stable `1.0.0` requires all of the following:
    monitoring, and operator handoff evidence; and
 8. explicit owner acceptance of the complete deployed stack.
 
+## Production artifacts
+
+The reference Compose stack is test equipment, not a release artifact. Alpha
+integration must produce five prebuilt Linux/amd64 images: control plane, mail
+front, Postfix, Dovecot, and Rspamd. Every daemon package and executable is
+installed at image build time. Startup performs no package installation,
+source build, image pull, or network fetch.
+
+The mail front uses the NGINX mail modules to own TCP 25, 465, 587, 143, and
+993, the mail certificate, implicit TLS, and SMTP/IMAP STARTTLS. It delegates
+bounded authentication and backend selection to a private control-plane HTTP
+contract and proxies only to the fixed private Postfix and Dovecot endpoints.
+Postfix, Dovecot, Rspamd, and product helper listeners are never published.
+
+One deterministic configuration USTAR archive binds every production config
+file, exact member digest and size, schema range, image digest, source commit,
+toolchain, and admitted extension artifact. It contains no fixture domain,
+default credential, Telegram component, Roundcube dependency, secret value,
+or development self-signed certificate. Secret values remain immutable files
+mounted by the deployment controller.
+
 ## GOTTH identity libraries
 
 `gotth-oidc` owns hardened OIDC protocol behavior. GOTTH Mail owns atomic

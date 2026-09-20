@@ -103,6 +103,33 @@ transport cannot escape the policy and that policy uncertainty defers mail.
   and blocks new routing before shutdown; uninstall and secret deletion are
   separate confirmed operations.
 
+## Production image topology
+
+All five images expose the same fixed entrypoint and role-health executable;
+the image identity fixes the role, entrypoint, user, labels, and installed
+packages. Runtime arguments cannot select another role.
+
+- The control image contains only GOTTH Mail executables and CA/timezone data,
+  runs as UID/GID 1000, reads database/OIDC/extension material from files, and
+  serves product HTTP plus the private front-auth contract.
+- The front image contains NGINX with the mail, mail-SSL, and mail-auth-HTTP
+  modules. It runs unprivileged on container ports 1025, 1465, 1587, 1143, and
+  1993; the deployment controller alone maps those to public ports. NGINX
+  terminates implicit TLS and STARTTLS, disables cleartext authentication,
+  and proxies to exact private backends using one configured PROXY protocol.
+- The Postfix image contains Postfix and the Mail queue/policy helper. It owns
+  private SMTP/queue processing only and receives authenticated/provenance
+  state from the front and control plane.
+- The Dovecot image contains Dovecot and Pigeonhole. It owns private mailbox,
+  passdb/userdb, quota, and Sieve processing only.
+- The Rspamd image contains Rspamd. It owns private milter/controller workers
+  and exact DKIM-key file references; no controller port is public.
+
+Configuration revisions and secret/certificate revisions live in immutable
+digest-named directories. Replacement mounts the new revisions while the
+stopped rollback container retains its old paths. A generic mutable
+`/etc` directory is not rollback authority.
+
 ## Rollback
 
 Each alpha/beta deployment retains the preceding application artifact,

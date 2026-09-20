@@ -55,6 +55,40 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-20 13:02 CDT — Define the five-role production artifact boundary
+
+Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `docs/prd/PRD-release-1.0.md`;
+- `docs/architecture/release-1.0.md`;
+- `docs/implementation/release-1.0.md`;
+- `workflow.toml` and `workflow.events.jsonl`;
+- `workflow/features/release.1-0/production-artifacts/README.md`;
+- `workflow/features/release.1-0/alpha-integration/README.md`;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+Defined the production boundary required by GOTTH Stack: five immutable
+Linux/amd64 role images for the control plane, NGINX mail front, Postfix,
+Dovecot, and Rspamd; a strict deterministic USTAR configuration archive; and
+a canonical release manifest binding source, image, configuration, extension,
+schema, and toolchain identity. The public mail front owns implicit TLS and
+STARTTLS before proxying to private native daemons. Production artifacts
+exclude reference fixtures, Mailu, Roundcube, Telegram, self-signed fallback,
+runtime package installation, and runtime source builds. Alpha integration is
+blocked while this bounded child is active rather than pretending the current
+development container is deployable.
+
+Verification:
+
+- the documented NGINX mail-auth, STARTTLS, SMTP auth, and proxy mechanisms
+  were checked against the upstream NGINX module contracts;
+- workflow state preserves one active feature and the alpha dependency edge;
+- `git diff --check` passes.
+
 ### 2026-09-20 12:05 CDT — Start alpha integration and reconcile main ancestry
 
 Implementation commit: `current commit; hash assigned by Git after commit`

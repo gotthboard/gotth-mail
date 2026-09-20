@@ -3,7 +3,7 @@
 Tracks completion of every required workstream and reproducible integrated
 `1.0.0-alpha.N` artifacts.
 
-State: `in_progress`
+State: `blocked`
 
 The integration branch now contains the complete repository implementation and
 records both the protected development history and canonical `main` history.
@@ -15,3 +15,7 @@ Alpha publication remains closed on the exact declared dependencies: public
 extension distribution/release parity, live identity adapter acceptance and
 immutable OIDC/SCIM tags, deployed Authentik and mail lifecycle evidence, and
 the reproducible integrated release artifact and rollback proof.
+
+The production-artifacts child is active to close the five-image,
+configuration-bundle, and Stack replacement boundary. Alpha integration
+resumes only after that child is admitted.
