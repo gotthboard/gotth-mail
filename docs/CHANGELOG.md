@@ -55,9 +55,79 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-20 13:02 CDT — Define the five-role production artifact boundary
+### 2026-09-20 15:55 CDT — Implement and prove the five-role production artifact mechanism
 
 Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `build/production/Dockerfile`, `.dockerignore`, and
+  `configs/production/**`;
+- `cmd/gotth-mail-entrypoint`, `cmd/gotth-mail-health`, and
+  `cmd/gotth-mail-release`;
+- `cmd/gotth-mail/main.go`, its front-auth/Postfix map tests, and
+  `internal/api/api.go`;
+- `internal/frontauth`;
+- production build, source-state, reproducibility, runtime-smoke, and contract
+  scripts;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+Implemented the production artifact boundary instead of shipping the reference
+Compose image. Five Linux/amd64 targets contain fixed compiled roles, pinned
+daemon packages, fixed entrypoint and health binaries, role/source identity
+labels, and no runtime package installation or source build. Builds verify the
+exact Git commit, commit epoch, and complete tracked/staged/untracked source
+state. Non-development builds reject dirty source. The deterministic exporter
+rewrites filesystem timestamps to `SOURCE_DATE_EPOCH`, disables provenance
+mutation, and emits the five repositories required by the release manifest
+rather than hiding roles behind mutable tags in one repository. The gate also
+checks the fixed image user and exact installed package versions, and every
+shipped entrypoint/health binary rejects an invalid linked release identity.
+
+Added native NGINX, Postfix, Dovecot/Pigeonhole, and Rspamd configuration.
+The private front-auth endpoint canonicalizes mailbox identity, distinguishes
+permanent authentication/recipient rejection from retryable service failure,
+uses fixed private backends, and never returns credentials. All four Postfix
+policy/map listeners bind synchronously so address conflicts fail startup
+instead of leaving a superficially healthy but unenforced control plane.
+Rspamd keeps Bayes and its learn cache on the existing durable volume using
+SQLite; no undeclared Redis role is smuggled into the topology.
+
+The release assembler emits a sorted deterministic eight-member USTAR and a
+Stack-compatible manifest bound to source, five image digests, schema,
+extensions, exact Go toolchain, platform, and build epoch. It rejects unknown
+files/fields, symlinks, malformed identity, fixture domains, Mailu, Roundcube,
+Telegram, private keys, literal front/Rspamd credentials, and environment
+secret slots that are not immutable `/run/secrets` file references. Artifact
+publication uses no-replace hard links plus directory synchronization, so a
+concurrent or repeated run cannot overwrite an existing output.
+
+The first apparent container smoke and Stack proof reused an image labeled
+with nonexistent commit `acd1100`; that evidence was invalid and is not used.
+Fresh builds from the actual source found and fixed transient SMTP semantics,
+listener startup, manifest toolchain drift, repository naming, and Docker
+filesystem timestamp nondeterminism.
+
+Verification:
+
+- full normal and race suites, vet, focused hostile configuration tests,
+  shell syntax, build-contract rejection checks, and `git diff --check` pass;
+- two independent no-cache builds produced identical image IDs and executable
+  digests after the deterministic exporter correction;
+- a fresh exact-source combined smoke passes NGINX TLS/STARTTLS/auth, Postfix
+  policy/maps/queueing, Rspamd milter and durable Bayes state, Dovecot LMTP,
+  Maildir persistence, and authenticated IMAPS readback under the bounded
+  users/capabilities/read-only-root profile;
+- the final clean candidate reproducibility and Stack replacement/rollback
+  proof remain open and will bind the implementation commit rather than this
+  dirty development tree;
+- `git diff --check` passes.
+
+### 2026-09-20 13:02 CDT — Define the five-role production artifact boundary
+
+Implementation commit: `5e7228249c175b716e191fde36bf0ae889574fcb`
 
 Affected files:
 
@@ -91,7 +161,7 @@ Verification:
 
 ### 2026-09-20 12:05 CDT — Start alpha integration and reconcile main ancestry
 
-Implementation commit: `current commit; hash assigned by Git after commit`
+Implementation commit: `764a48d3f40f5a2b3240b8c7fe12e0923e293964`
 
 Affected files:
 

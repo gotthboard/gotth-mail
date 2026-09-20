@@ -55,6 +55,7 @@ type Server struct {
 	PluginHealth         func(context.Context, string) (plugin.HealthResponse, error)
 	ApprovalService      *notifyruntime.ApprovalService
 	NotificationReceiver http.Handler
+	FrontAuth            http.Handler
 	SCIM                 http.Handler
 	Extensions           *extensionsadmin.Service
 }

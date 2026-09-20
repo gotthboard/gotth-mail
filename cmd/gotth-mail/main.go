@@ -28,6 +28,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/diag"
 	"forgejo/gotthboard/gotth-mail/internal/extensionsadmin"
 	"forgejo/gotthboard/gotth-mail/internal/extensionsruntime"
+	"forgejo/gotthboard/gotth-mail/internal/frontauth"
 	"forgejo/gotthboard/gotth-mail/internal/httpui"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
@@ -60,6 +61,9 @@ func main() {
 	if err := configurePostfixHelperFromEnv(&server); err != nil {
 		log.Fatalf("configure Postfix helper: %v", err)
 	}
+	if err := configureFrontAuthFromEnv(&server); err != nil {
+		log.Fatalf("configure front auth: %v", err)
+	}
 	if err := configureWebmailFromEnv(&server); err != nil {
 		log.Fatalf("configure webmail: %v", err)
 	}
@@ -73,8 +77,12 @@ func main() {
 	if err := configureExtensionsFromEnv(&server); err != nil {
 		log.Fatalf("configure extension administrator: %v", err)
 	}
-	if policyAddr := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_POLICY_LISTEN")); policyAddr != "" {
-		go servePostfixPolicy(policyAddr, server.Daemon)
+	postfixListeners, err := configurePostfixListenersFromEnv(server.Daemon)
+	if err != nil {
+		log.Fatalf("configure Postfix listeners: %v", err)
+	}
+	for _, listener := range postfixListeners {
+		defer listener.Close()
 	}
 	if err := configureOIDCFromEnv(context.Background(), &server, http.DefaultClient); err != nil {
 		log.Fatalf("configure oidc: %v", err)
@@ -92,6 +100,57 @@ func main() {
 		addr = ":8080"
 	}
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+// configurePostfixListenersFromEnv binds every required policy/map listener
+// before starting any accept loop, so partial startup cannot look healthy.
+// Complexity: time O(k), Omega(k), tight Theta(k); auxiliary space O(k),
+// Omega(k), tight Theta(k), where k is the configured listener count (at most
+// four); each bind is delegated to the operating system.
+func configurePostfixListenersFromEnv(service daemon.Service) ([]net.Listener, error) {
+	type listenerSpec struct {
+		environment string
+		serve       func(net.Listener)
+	}
+	specs := []listenerSpec{
+		{"GOTTH_MAIL_POSTFIX_POLICY_LISTEN", func(listener net.Listener) {
+			servePostfixPolicy(listener, service)
+		}},
+		{"GOTTH_MAIL_POSTFIX_DOMAIN_MAP_LISTEN", func(listener net.Listener) {
+			servePostfixMap(listener, postfixDomainMap, service)
+		}},
+		{"GOTTH_MAIL_POSTFIX_MAILBOX_MAP_LISTEN", func(listener net.Listener) {
+			servePostfixMap(listener, postfixMailboxMap, service)
+		}},
+		{"GOTTH_MAIL_POSTFIX_ALIAS_MAP_LISTEN", func(listener net.Listener) {
+			servePostfixMap(listener, postfixAliasMap, service)
+		}},
+	}
+	type boundListener struct {
+		listener net.Listener
+		serve    func(net.Listener)
+	}
+	bound := make([]boundListener, 0, len(specs))
+	for _, spec := range specs {
+		address := strings.TrimSpace(os.Getenv(spec.environment))
+		if address == "" {
+			continue
+		}
+		listener, err := net.Listen("tcp", address)
+		if err != nil {
+			for _, current := range bound {
+				_ = current.listener.Close()
+			}
+			return nil, fmt.Errorf("%s: %w", spec.environment, err)
+		}
+		bound = append(bound, boundListener{listener: listener, serve: spec.serve})
+	}
+	listeners := make([]net.Listener, 0, len(bound))
+	for _, current := range bound {
+		listeners = append(listeners, current.listener)
+		go current.serve(current.listener)
+	}
+	return listeners, nil
 }
 
 func productionNotificationMonitor(server *api.Server, backend *notifyruntime.GRPCNotificationBackend, name string) notifyruntime.OperationalMonitor {
@@ -170,6 +229,9 @@ func runtimeMux(server api.Server) http.Handler {
 	mux.Handle("/api/", serverHandler)
 	mux.Handle("/scim/", serverHandler)
 	mux.Handle("/internal/", serverHandler)
+	if server.FrontAuth != nil {
+		mux.Handle("/internal/v1/front/auth", server.FrontAuth)
+	}
 	mux.Handle("/healthz", serverHandler)
 	mux.Handle("/readyz", serverHandler)
 	mux.Handle("/webmail", serverHandler)
@@ -180,6 +242,23 @@ func runtimeMux(server api.Server) http.Handler {
 	sessions, _ := server.OIDCStore.(authn.IdentitySessionStore)
 	mux.Handle("/", httpui.HandlerWithAdminIdentitySessionsAndExtensions(referenceAdminStore(), server.Identity, server.Authz, sessions, server.OIDCNow, server.Extensions))
 	return mux
+}
+
+func configureFrontAuthFromEnv(server *api.Server) error {
+	path := strings.TrimSpace(os.Getenv("GOTTH_MAIL_FRONT_AUTH_TOKEN_FILE"))
+	if path == "" {
+		return nil
+	}
+	token, err := frontauth.LoadTokenFile(path)
+	if err != nil {
+		return err
+	}
+	handler, err := frontauth.New(server.Daemon, token)
+	if err != nil {
+		return err
+	}
+	server.FrontAuth = handler
+	return nil
 }
 
 // configureExtensionsFromEnv enables the durable administrator. Inventory and
@@ -582,6 +661,7 @@ func configureDatabaseFromEnv(ctx context.Context, server *api.Server) (*sql.DB,
 	identityService.Audit = audit.SQLWriter{DB: db}
 	server.OIDCStore = authn.SQLStore{DB: db}
 	server.Identity = identityService
+	identityService.BindDaemon(&server.Daemon)
 	policy := &outboundpolicy.EnforcementService{DB: db, Queue: outboundpolicy.QueueStore{DB: db}, HoldActor: audit.ActorRef{Type: "service", ID: "outbound-policy"}}
 	server.Daemon.OutboundPolicy = policy
 	server.Daemon.OutboundAdmission = &outboundpolicy.QueueAdmissionService{DB: db, Queue: outboundpolicy.QueueStore{DB: db}}
@@ -717,17 +797,17 @@ func insecureLoopback(raw string) bool {
 	return host == "localhost" || (ip != nil && ip.IsLoopback())
 }
 
-func servePostfixPolicy(addr string, svc daemon.Service) {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Printf("postfix policy listen failed: %v", err)
-		return
-	}
+// servePostfixPolicy accepts an unbounded request stream on an already-bound
+// required listener. Per accepted connection, time and auxiliary space are
+// O(1), Omega(1), tight Theta(1), excluding the delegated request handler.
+func servePostfixPolicy(ln net.Listener, svc daemon.Service) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			log.Printf("postfix policy accept failed: %v", err)
-			continue
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			log.Fatalf("postfix policy accept failed: %v", err)
 		}
 		go handlePostfixPolicy(conn, svc)
 	}

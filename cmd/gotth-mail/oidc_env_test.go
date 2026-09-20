@@ -14,6 +14,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/authn"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/daemon"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/store"
@@ -165,6 +166,12 @@ func TestSecretFromEnvOrFileReadsOneBoundedSource(t *testing.T) {
 
 func TestConfigureDatabaseFromEnvMigratesAndWiresDurableServices(t *testing.T) {
 	seed := testpg.DB(t, nil)
+	if err := store.MigrateSQL(context.Background(), seed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seed.Exec(`INSERT INTO domains(id,name,enabled,created_at,updated_at) VALUES ('20000000-0000-4000-8000-000000000001','example.test',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP); INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ('20000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000001','user',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
 	var port int
 	if err := seed.QueryRow(`SELECT inet_server_port()`).Scan(&port); err != nil {
 		t.Fatal(err)
@@ -182,12 +189,15 @@ func TestConfigureDatabaseFromEnvMigratesAndWiresDurableServices(t *testing.T) {
 	if _, ok := server.Identity.Audit.(audit.SQLWriter); !ok {
 		t.Fatalf("configured identity/passdb audit is not durable: %T", server.Identity.Audit)
 	}
-	if server.Identity.Daemon != nil {
-		t.Fatal("database configuration bound identity to a daemon copy before handler construction")
+	if server.Identity.Daemon != &server.Daemon {
+		t.Fatal("database configuration did not bind identity to the published daemon")
+	}
+	if got := server.Daemon.PostfixRecipient("test", "user@example.test"); got.Decision != daemon.OK {
+		t.Fatalf("loaded mailbox was not projected before listener construction: %#v", got)
 	}
 	_ = server.Handler()
-	if server.Identity.Daemon == nil {
-		t.Fatal("handler did not bind the durable identity service to its daemon state")
+	if server.Identity.Daemon != &server.Daemon {
+		t.Fatal("handler replaced the published daemon binding")
 	}
 	var migrations int
 	if err := db.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&migrations); err != nil {
