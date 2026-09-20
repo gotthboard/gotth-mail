@@ -28,6 +28,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/diag"
 	"forgejo/gotthboard/gotth-mail/internal/extensionsadmin"
 	"forgejo/gotthboard/gotth-mail/internal/extensionsruntime"
+	"forgejo/gotthboard/gotth-mail/internal/frontauth"
 	"forgejo/gotthboard/gotth-mail/internal/httpui"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
@@ -60,6 +61,9 @@ func main() {
 	if err := configurePostfixHelperFromEnv(&server); err != nil {
 		log.Fatalf("configure Postfix helper: %v", err)
 	}
+	if err := configureFrontAuthFromEnv(&server); err != nil {
+		log.Fatalf("configure front auth: %v", err)
+	}
 	if err := configureWebmailFromEnv(&server); err != nil {
 		log.Fatalf("configure webmail: %v", err)
 	}
@@ -75,6 +79,18 @@ func main() {
 	}
 	if policyAddr := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_POLICY_LISTEN")); policyAddr != "" {
 		go servePostfixPolicy(policyAddr, server.Daemon)
+	}
+	for _, configured := range []struct {
+		environment string
+		kind        postfixMapKind
+	}{
+		{"GOTTH_MAIL_POSTFIX_DOMAIN_MAP_LISTEN", postfixDomainMap},
+		{"GOTTH_MAIL_POSTFIX_MAILBOX_MAP_LISTEN", postfixMailboxMap},
+		{"GOTTH_MAIL_POSTFIX_ALIAS_MAP_LISTEN", postfixAliasMap},
+	} {
+		if address := strings.TrimSpace(os.Getenv(configured.environment)); address != "" {
+			go servePostfixMap(address, configured.kind, server.Daemon)
+		}
 	}
 	if err := configureOIDCFromEnv(context.Background(), &server, http.DefaultClient); err != nil {
 		log.Fatalf("configure oidc: %v", err)
@@ -170,6 +186,9 @@ func runtimeMux(server api.Server) http.Handler {
 	mux.Handle("/api/", serverHandler)
 	mux.Handle("/scim/", serverHandler)
 	mux.Handle("/internal/", serverHandler)
+	if server.FrontAuth != nil {
+		mux.Handle("/internal/v1/front/auth", server.FrontAuth)
+	}
 	mux.Handle("/healthz", serverHandler)
 	mux.Handle("/readyz", serverHandler)
 	mux.Handle("/webmail", serverHandler)
@@ -180,6 +199,23 @@ func runtimeMux(server api.Server) http.Handler {
 	sessions, _ := server.OIDCStore.(authn.IdentitySessionStore)
 	mux.Handle("/", httpui.HandlerWithAdminIdentitySessionsAndExtensions(referenceAdminStore(), server.Identity, server.Authz, sessions, server.OIDCNow, server.Extensions))
 	return mux
+}
+
+func configureFrontAuthFromEnv(server *api.Server) error {
+	path := strings.TrimSpace(os.Getenv("GOTTH_MAIL_FRONT_AUTH_TOKEN_FILE"))
+	if path == "" {
+		return nil
+	}
+	token, err := frontauth.LoadTokenFile(path)
+	if err != nil {
+		return err
+	}
+	handler, err := frontauth.New(server.Daemon, token)
+	if err != nil {
+		return err
+	}
+	server.FrontAuth = handler
+	return nil
 }
 
 // configureExtensionsFromEnv enables the durable administrator. Inventory and

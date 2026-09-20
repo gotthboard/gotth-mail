@@ -55,6 +55,56 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
+### 2026-09-20 13:29 CDT — Implement the production Mail artifact foundation
+
+Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `build/production/Dockerfile` and `configs/production/**`;
+- `cmd/gotth-mail-entrypoint` and `cmd/gotth-mail-health`;
+- `cmd/gotth-mail-release`;
+- `cmd/gotth-mail/main.go`, its front-auth and Postfix-map tests, and
+  `internal/api/api.go`;
+- `internal/frontauth`;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+Implemented the first complete production artifact boundary instead of
+shipping the reference Compose image. Five digest-based Linux/amd64 build
+targets now contain fixed compiled roles, exact preinstalled daemon packages,
+fixed entrypoint/health binaries, OCI identity labels, and no runtime package
+installation or source build. Added the private NGINX mail-auth adapter with a
+file-only service credential, bounded documented headers, fixed private
+backends, canonical passdb authentication, unauthenticated recipient checks,
+and directive-injection rejection. Added Postfix TCP maps backed by the
+authoritative control-plane domain/mailbox/alias services. The shipped NGINX,
+Postfix, Dovecot/Pigeonhole, and Rspamd configurations use private native
+daemon ports, STARTTLS/implicit TLS, PROXY protocol, policy/map services,
+LMTP, Sieve/quota plugins, and an authenticated Rspamd controller secret.
+
+The new release assembler accepts one closed typed specification and exact
+seven-member configuration set, emits sorted deterministic USTAR with mode
+0440/UID 0/GID 0/epoch metadata, and writes the Stack-compatible canonical
+manifest atomically. Unknown files, unknown specification fields, floating or
+missing image identities, malformed release identity, symlinks, oversized
+members, and pre-existing output are rejected.
+
+Verification:
+
+- focused serial, race, and vet checks pass for the new release assembler,
+  entrypoint, health, front-auth, control-plane, and Postfix gate surfaces;
+- all five exact package-pinned targets build on the development host;
+- NGINX starts as UID/GID 1000 with a read-only root and all five listeners;
+- Dovecot 2.4 native configuration validation and read-only/capability-profile
+  startup pass with IMAP, LMTP, and Postfix-auth listeners;
+- Postfix native configuration validation passes and its master remains live
+  under the required explicit network-bind capability;
+- Rspamd native configuration validation passes; full combined-role and Stack
+  replacement proof remains open;
+- `git diff --check` passes.
+
 ### 2026-09-20 13:02 CDT — Define the five-role production artifact boundary
 
 Implementation commit: `current commit; hash assigned by Git after commit`
