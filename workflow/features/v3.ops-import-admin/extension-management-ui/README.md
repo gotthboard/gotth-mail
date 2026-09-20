@@ -14,12 +14,17 @@ inventory, encrypted write-only secrets, actor/revision-bound previews,
 host-owned API/UI, durable OIDC-role plus CSRF admission, runtime ordering,
 update diffs, full-version rollback, and separate secret deletion/uninstall.
 
-The feature is blocked at the honest production boundary. The repository does
-not contain or pin an independently distributed `gotth-extension-<slug>`
-artifact with a supervisor/configuration transport capable of receiving the
-admitted configuration and secret slots. Consequently production wiring
-constructs the administrator without a runtime adapter, and test/enable/disable
-return unavailable instead of pretending an already-running plugin was
-configured or supervised. Closing this requires the real artifact and its
-documented transport; credentials or process control must not be fabricated in
-this repository.
+The production adapter is now implemented for the exact non-Telegram
+`gotth.mail.notification.webhook` contract. It verifies a digest-named local
+artifact, projects configuration and the HMAC key through owner-only files,
+supervises the process group, authenticates a Unix gRPC transport, validates
+the complete foundation handshake and health, admits/revokes alert routing,
+and removes runtime secrets only after confirmed stop. Static notification
+configuration conflicts fail startup rather than silently changing routing.
+
+The feature remains blocked only at distribution admission: the canonical
+private Forgejo `gotth-extension-webhook` repository exists and the real
+cross-process lifecycle passes, but the required public GitHub repository,
+one-way mirror, immutable extension tag/artifact, and Forgejo/GitHub release
+parity do not yet exist. Production install/enable must remain closed until
+those exact public artifact identities are published and pinned.

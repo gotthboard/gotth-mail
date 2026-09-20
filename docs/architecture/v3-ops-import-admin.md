@@ -139,6 +139,21 @@ reviewed design tokens with webmail, but it never gains webmail mailbox
 authority. Mail and Board may present the same interaction pattern while
 keeping separate registries and credentials.
 
+The first production adapter is deliberately narrow. It admits only
+`gotth.mail.notification.webhook` from
+`https://github.com/gotthboard/gotth-extension-webhook`, with the exact
+notification interface, capability set, configuration metadata, and HMAC-key
+slot reviewed by Mail. This does not introduce Telegram behavior, arbitrary
+extension execution, generic RPC, or extension-provided routing policy.
+
+Deployment installs each verified immutable archive beneath a read-only
+digest-named artifact root. Mail creates a fresh owner-only runtime directory,
+writes separate configuration, binding, service-token, and secret files,
+starts the pinned executable with paths rather than secret environment values,
+and communicates over an owner-only Unix socket. A parent-death signal and
+process-group termination prevent orphaned extension processes. Runtime files
+are removed only after confirmed process exit.
+
 ## Verification gates
 
 - audit UI answers who changed what, when, through which path, and result

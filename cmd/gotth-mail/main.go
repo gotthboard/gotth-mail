@@ -27,6 +27,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/daemon"
 	"forgejo/gotthboard/gotth-mail/internal/diag"
 	"forgejo/gotthboard/gotth-mail/internal/extensionsadmin"
+	"forgejo/gotthboard/gotth-mail/internal/extensionsruntime"
 	"forgejo/gotthboard/gotth-mail/internal/httpui"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
@@ -181,14 +182,18 @@ func runtimeMux(server api.Server) http.Handler {
 	return mux
 }
 
-// configureExtensionsFromEnv enables the durable administrator without
-// pretending that a configured extension process can be supervised when no
-// runtime adapter exists. Inventory, configuration, previews, encrypted
-// secrets, update planning, rollback, and removal remain available; runtime
-// test/enable/disable fail closed until an adapter is supplied.
+// configureExtensionsFromEnv enables the durable administrator. Inventory and
+// offline configuration remain available with only the master key. Runtime
+// lifecycle is enabled only when both protected artifact and runtime roots are
+// explicitly configured.
 func configureExtensionsFromEnv(server *api.Server) error {
 	path := strings.TrimSpace(os.Getenv("GOTTH_MAIL_EXTENSION_MASTER_KEY_FILE"))
+	artifactRoot := strings.TrimSpace(os.Getenv("GOTTH_MAIL_EXTENSION_ARTIFACT_ROOT"))
+	runtimeRoot := strings.TrimSpace(os.Getenv("GOTTH_MAIL_EXTENSION_RUNTIME_ROOT"))
 	if path == "" {
+		if artifactRoot != "" || runtimeRoot != "" {
+			return fmt.Errorf("extension master key is required with extension runtime roots")
+		}
 		return nil
 	}
 	if server.AuditDB == nil {
@@ -224,7 +229,34 @@ func configureExtensionsFromEnv(server *api.Server) error {
 	if len(data) != 32 {
 		return fmt.Errorf("extension master key must contain exactly 32 bytes")
 	}
-	service, err := extensionsadmin.NewService(server.AuditDB, data, nil)
+	if (artifactRoot == "") != (runtimeRoot == "") {
+		for i := range data {
+			data[i] = 0
+		}
+		return fmt.Errorf("extension artifact and runtime roots are required together")
+	}
+	var runtime extensionsadmin.Runtime
+	if artifactRoot != "" {
+		if server.NotificationService != nil {
+			for i := range data {
+				data[i] = 0
+			}
+			return fmt.Errorf("managed webhook extension conflicts with statically configured notification plugin")
+		}
+		supervisor, err := extensionsruntime.New(artifactRoot, runtimeRoot)
+		if err != nil {
+			for i := range data {
+				data[i] = 0
+			}
+			return err
+		}
+		runtime = supervisor
+		recorder := notification.SQLRecorder{DB: server.AuditDB}
+		server.NotificationRecorder = recorder
+		server.NotificationService = &notification.Service{Backend: supervisor, Recorder: recorder}
+		server.PluginHealth = supervisor.Health
+	}
+	service, err := extensionsadmin.NewService(server.AuditDB, data, runtime)
 	for i := range data {
 		data[i] = 0
 	}

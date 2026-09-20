@@ -226,6 +226,34 @@ health, then admit routing. Disable ordering is revoke grant, remove routing,
 stop, then record final state. Retried and ambiguous operations reconcile by
 the bound configuration/session identities rather than guessing success.
 
+Production runtime is enabled only when all three protected settings exist:
+
+```text
+GOTTH_MAIL_EXTENSION_MASTER_KEY_FILE
+GOTTH_MAIL_EXTENSION_ARTIFACT_ROOT
+GOTTH_MAIL_EXTENSION_RUNTIME_ROOT
+```
+
+The artifact root contains one directory per lowercase `sha256:<hex>` pin,
+named by the hex portion. Each directory contains an immutable
+`gotth-extension-webhook` executable and an `artifact-pin` file containing the
+exact full pin. Directories and executables may not be symlinks or
+group/world-writable. The runtime root is an owner-only non-symlink directory.
+
+For every start Mail writes mode-0600 configuration, runtime-binding,
+service-token, and `webhook.hmac-key` files below a new mode-0700 instance
+directory. The child receives only those paths and the Unix-socket path in a
+bounded environment. Mail verifies challenge echo, extension identity,
+release version, control/interface versions, manifest/grant/session digests,
+capabilities, and health before routing. Stop failure leaves the runtime record
+and protected directory intact for reconciliation; it never reports success
+while a process may remain alive.
+
+The managed webhook route and a statically configured notification plugin are
+mutually exclusive. Startup rejects that ambiguous configuration instead of
+silently changing which backend receives alerts. The webhook adapter supports
+alerts only; prompts and Telegram command/approval behavior are absent.
+
 ## Verification
 
 Required tests:

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-20 — Add the non-Telegram webhook extension runtime
+
+- Added the exact `gotth.mail.notification.webhook` production adapter for the
+  host-owned Extensions administrator.
+- Added digest-named artifact verification, protected
+  configuration/binding/service-token/HMAC files, process-group supervision,
+  authenticated Unix gRPC handshake and health, ordered alert routing, bounded
+  delivery failures, and confirmed-stop secret cleanup.
+- Static notification configuration conflicts now fail startup. The private
+  canonical extension repository and cross-process lifecycle proof exist;
+  public distribution and immutable release admission remain blocked.
+
 ## 2026-09-19 — Notification workflow source traceability
 
 - Corrected the completed Telegram notification feature's canonical
