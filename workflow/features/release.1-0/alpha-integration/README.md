@@ -16,6 +16,9 @@ extension distribution/release parity, live identity adapter acceptance and
 immutable OIDC/SCIM tags, deployed Authentik and mail lifecycle evidence, and
 the reproducible integrated release artifact and rollback proof.
 
-The production-artifacts child is active to close the five-image,
-configuration-bundle, and Stack replacement boundary. Alpha integration
-resumes only after that child is admitted.
+The production-artifacts child is admitted: five exact images, deterministic
+configuration bundle/manifest, real mail-flow smoke, reproducibility, and
+Stack replacement/rollback are proved. Alpha integration remains blocked on
+the independently distributed webhook artifact, identity-library releases,
+live Authentik/mail lifecycle, and recovery evidence. The extension
+administrator child is active to close the non-Telegram distribution boundary.

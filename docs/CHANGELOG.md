@@ -55,9 +55,45 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-20 15:55 CDT — Implement and prove the five-role production artifact mechanism
+### 2026-09-20 16:27 CDT — Admit the exact production artifact mechanism
 
 Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `workflow.toml` and `workflow.events.jsonl`;
+- production-artifact README, evidence, and two cold reviews;
+- alpha-integration and extension-administrator workflow notes;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+Closed the bounded production-artifact child against implementation commit
+`12dbe59973cba53e52d56437f21424b2ec53f3c8`. The final clean candidate has
+five reproducible exact role images, a deterministic configuration USTAR and
+canonical release manifest, a real combined SMTP/IMAP mail-flow smoke, and a
+real Stack Rspamd install/replacement/reopen/rollback proof. Forgejo and
+GitHub source refs agree for both the Mail producer and Stack consumer.
+
+The proof manifest intentionally has no extension entry and is not called an
+integrated alpha. The workflow resumes the non-Telegram webhook distribution
+boundary; live identity, recovery, and release publication remain blocked.
+
+Verification:
+
+- final-commit full normal and race suites and vet pass;
+- two no-cache production builds have identical image and embedded-binary
+  digests;
+- the exact-source five-role mail-flow smoke passes;
+- two release-assembler runs have identical archive/manifest bytes;
+- Stack consumes the exact artifact and passes replacement/rollback in 50.70
+  seconds;
+- two fresh cold reviews are clean;
+- TOML/JSONL parsing and `git diff --check` pass.
+
+### 2026-09-20 15:55 CDT — Implement and prove the five-role production artifact mechanism
+
+Implementation commit: `12dbe59973cba53e52d56437f21424b2ec53f3c8`
 
 Affected files:
 

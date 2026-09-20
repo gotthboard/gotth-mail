@@ -1,6 +1,6 @@
 # Extensions administrator
 
-State: `blocked`
+State: `in_progress`
 
 Host-owned GOTTH Mail administrator for extension inventory,
 configuration, write-only secrets, permissions, health, enable/disable,
@@ -22,9 +22,10 @@ the complete foundation handshake and health, admits/revokes alert routing,
 and removes runtime secrets only after confirmed stop. Static notification
 configuration conflicts fail startup rather than silently changing routing.
 
-The feature remains blocked only at distribution admission: the canonical
-private Forgejo `gotth-extension-webhook` repository exists and the real
-cross-process lifecycle passes, but the required public GitHub repository,
-one-way mirror, immutable extension tag/artifact, and Forgejo/GitHub release
-parity do not yet exist. Production install/enable must remain closed until
-those exact public artifact identities are published and pinned.
+The feature has resumed at its only remaining boundary: distribution
+admission. The canonical private Forgejo `gotth-extension-webhook` repository
+and real cross-process lifecycle exist, but the required public GitHub
+repository, one-way mirror, immutable extension tag/artifact, and
+Forgejo/GitHub release parity do not yet exist. Production install/enable
+remains closed until those exact public artifact identities are published and
+pinned. Telegram is explicitly outside this resumed work.
