@@ -75,18 +75,28 @@ func TestGlobalRoleGrantRevokeProjectsIntoExistingSession(t *testing.T) {
 	assertCounts(t, db, 0, 2)
 	assertSessionRole(t, db, "", "")
 
-	rows, err := db.Query(`SELECT action, after_redacted_json FROM audit_events ORDER BY timestamp, action`)
+	rows, err := db.Query(`SELECT action, before_redacted_json, after_redacted_json FROM audit_events ORDER BY action`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var action, after string
-		if err := rows.Scan(&action, &after); err != nil {
+		var action, before, after string
+		if err := rows.Scan(&action, &before, &after); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasPrefix(action, "identity.role_binding.") || strings.Contains(after, testIssuer) || strings.Contains(after, testSubject) || strings.Contains(after, testMailbox) {
-			t.Fatalf("unsafe audit action=%q after=%q", action, after)
+		if !strings.HasPrefix(action, "identity.role_binding.") || strings.Contains(before+after, testIssuer) || strings.Contains(before+after, testSubject) || strings.Contains(before+after, testMailbox) {
+			t.Fatalf("unsafe audit action=%q before=%q after=%q", action, before, after)
+		}
+		switch action {
+		case "identity.role_binding.grant":
+			if before != "null" || !strings.Contains(after, RoleGlobalAdmin) {
+				t.Fatalf("grant audit before=%q after=%q", before, after)
+			}
+		case "identity.role_binding.revoke":
+			if !strings.Contains(before, RoleGlobalAdmin) || after != "null" {
+				t.Fatalf("revoke audit before=%q after=%q", before, after)
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -167,6 +177,54 @@ func TestRoleBindingRejectsInvalidExactAndDisabledState(t *testing.T) {
 	if _, err := service.Preview(ctx, validRequest()); err == nil {
 		t.Fatal("grant for disabled mailbox accepted")
 	}
+}
+
+func TestRoleBindingDisabledStateAndRevokeRecovery(t *testing.T) {
+	t.Run("mailbox domain blocks grant", func(t *testing.T) {
+		db := roleDB(t)
+		if _, err := db.Exec(`UPDATE domains SET enabled=false WHERE id=$1`, testDomain); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := testService(db).Preview(context.Background(), validRequest()); err == nil {
+			t.Fatal("grant for disabled mailbox domain accepted")
+		}
+	})
+	t.Run("target domain blocks scoped grant", func(t *testing.T) {
+		db := roleDB(t)
+		if _, err := db.Exec(`INSERT INTO domains(id,name,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000184','disabled.example.test',false,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+			t.Fatal(err)
+		}
+		request := validRequest()
+		request.Role = RoleDomainManager
+		request.Domain = "disabled.example.test"
+		if _, err := testService(db).Preview(context.Background(), request); err == nil {
+			t.Fatal("grant for disabled target domain accepted")
+		}
+	})
+	t.Run("revoke remains available", func(t *testing.T) {
+		db := roleDB(t)
+		service := testService(db)
+		request := validRequest()
+		grant, err := service.Preview(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.Apply(context.Background(), request, grant.PlanID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE mailboxes SET enabled=false; UPDATE domains SET enabled=false`); err != nil {
+			t.Fatal(err)
+		}
+		request.Operation = OperationRevoke
+		revoke, err := service.Preview(context.Background(), request)
+		if err != nil || revoke.Operation != OperationRevoke {
+			t.Fatalf("revoke preview=%#v err=%v", revoke, err)
+		}
+		if _, err := service.Apply(context.Background(), request, revoke.PlanID); err != nil {
+			t.Fatal(err)
+		}
+		assertCounts(t, db, 0, 2)
+	})
 }
 
 func TestRoleBindingRejectsStalePlanAndRollsBackAuditFailure(t *testing.T) {
