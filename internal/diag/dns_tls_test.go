@@ -6,10 +6,22 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
+	"net"
 	"testing"
 	"time"
 )
+
+func TestDNSLookupNotFoundIsARecordAbsence(t *testing.T) {
+	if err := dnsLookupError(&net.DNSError{Err: "no such host", Name: "missing.example", IsNotFound: true}); err != nil {
+		t.Fatalf("not-found DNS result was treated as resolver failure: %v", err)
+	}
+	want := &net.DNSError{Err: "temporary failure", Name: "example.test", IsTemporary: true}
+	if got := dnsLookupError(want); !errors.Is(got, want) {
+		t.Fatalf("temporary DNS failure was hidden: %v", got)
+	}
+}
 
 func TestDNSReadinessExactPresentMissingMismatchUnsupported(t *testing.T) {
 	plan := DomainDNSPlan{Domain: "example.test", MailHost: "mail.example.test", MailIP: "192.0.2.10", PTRExpected: "mail.example.test", DKIMSelector: "mail", DKIMPublicKeyTXT: "v=DKIM1; k=rsa; p=abc", DMARCReportAddress: "mailto:dmarc@example.test", TLSRPTReportAddress: "mailto:tlsrpt@example.test"}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"sort"
@@ -108,7 +109,7 @@ func (r NetDNS) LookupA(name string) ([]string, error) {
 	defer cancel()
 	addresses, err := r.resolver().LookupHost(ctx, name)
 	if err != nil {
-		return nil, err
+		return nil, dnsLookupError(err)
 	}
 	out := make([]string, 0, len(addresses))
 	for _, address := range addresses {
@@ -122,13 +123,15 @@ func (r NetDNS) LookupA(name string) ([]string, error) {
 func (r NetDNS) LookupPTR(address string) ([]string, error) {
 	ctx, cancel := r.context()
 	defer cancel()
-	return r.resolver().LookupAddr(ctx, address)
+	values, err := r.resolver().LookupAddr(ctx, address)
+	return values, dnsLookupError(err)
 }
 
 func (r NetDNS) LookupTXT(name string) ([]string, error) {
 	ctx, cancel := r.context()
 	defer cancel()
-	return r.resolver().LookupTXT(ctx, name)
+	values, err := r.resolver().LookupTXT(ctx, name)
+	return values, dnsLookupError(err)
 }
 
 func (r NetDNS) LookupMX(name string) ([]string, error) {
@@ -136,7 +139,7 @@ func (r NetDNS) LookupMX(name string) ([]string, error) {
 	defer cancel()
 	records, err := r.resolver().LookupMX(ctx, name)
 	if err != nil {
-		return nil, err
+		return nil, dnsLookupError(err)
 	}
 	out := make([]string, 0, len(records))
 	for _, record := range records {
@@ -150,7 +153,7 @@ func (r NetDNS) LookupSRV(name string) ([]string, error) {
 	defer cancel()
 	_, records, err := r.resolver().LookupSRV(ctx, "", "", name)
 	if err != nil {
-		return nil, err
+		return nil, dnsLookupError(err)
 	}
 	out := make([]string, 0, len(records))
 	for _, record := range records {
@@ -161,6 +164,14 @@ func (r NetDNS) LookupSRV(name string) ([]string, error) {
 
 func (NetDNS) LookupTLSA(string) ([]string, error) {
 	return nil, fmt.Errorf("TLSA lookup is unsupported by the configured resolver")
+}
+
+func dnsLookupError(err error) error {
+	var dnsError *net.DNSError
+	if errors.As(err, &dnsError) && dnsError.IsNotFound {
+		return nil
+	}
+	return err
 }
 
 func DNSReadiness(plan DomainDNSPlan, r DNSResolver) []DNSRecordCheck {
