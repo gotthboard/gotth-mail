@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "release.1-0.role-binding-operator"
+active_feature = "v3.ops-import-admin.extension-management-ui"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -209,7 +209,7 @@ verification = ["five preinstalled role images", "strict deterministic configura
 id = "release.1-0.role-binding-operator"
 root = "release.1-0"
 title = "Admit durable OIDC identity role bindings"
-state = "active"
+state = "done"
 path = "workflow/features/release.1-0/role-binding-operator"
 source_path = "."
 branch = "workflow/feature/release.1-0.role-binding-operator"

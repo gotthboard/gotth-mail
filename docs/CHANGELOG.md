@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-09-20 19:59 CDT — Admit durable Authentik role-binding operations
+
+Implementation commit: `d29f0e18fe8437d30ed100788f2a9dbb65293539`
+
+Affected files:
+
+- `cmd/gotth-mailctl/main.go` and its tests;
+- `internal/rolebinding/`;
+- migration `0018_role_binding_authority` and store migration parity tests;
+- role-binding workflow contract, evidence, reviews, state, and event log;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+- Added a preview/confirm CLI boundary for granting and revoking durable
+  `global_admin`, `domain_manager`, and `scoped_domain_access` bindings.
+- Selection is restricted to the exact verified Authentik issuer, opaque
+  subject, and canonical mailbox tuple. Padded issuer/subject values,
+  unknown/duplicate/empty flags, stale confirmations, invalid role/domain
+  combinations, and grants into disabled state fail closed.
+- Apply uses a serializable transaction, row locks, schema-enforced authority
+  cardinality, atomic redacted audit, and immediate projection into existing
+  sessions. Revoke remains available after the mailbox or domain is disabled.
+- No live role, credential, deployment, DNS record, tag, release, or external
+  service changed.
+
+Verification:
+
+- full `go test ./...`, `go test -race ./...`, `go vet ./...`, and
+  `go build ./cmd/...` passed on the exact candidate;
+- the changed packages passed a 20-run shuffled race repetition;
+- focused coverage was 86.7% for `internal/rolebinding` and 100% for the new
+  CLI request parser; uncovered statements are database/entropy failure paths,
+  while stale state, concurrency, audit rollback, disabled-state recovery, and
+  all requested behavior are exercised;
+- a clean clone of the exact candidate passed store, service, and CLI tests;
+- the production build contract and four cold review passes were clean.
+
 ## 2026-09-20 19:35 CDT — Define durable role-binding operator boundary
 
 - Added the PRD, architecture, implementation specification, workflow state,
