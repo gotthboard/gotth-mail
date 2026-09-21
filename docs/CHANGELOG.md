@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-09-21 16:54 CDT — Plan the optional message-translation extension
+
+Affected files:
+
+- v4 webmail PRD, architecture, and implementation specification;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+- Record `gotth-extension-translate` as the future optional adapter to the
+  standalone `gotth-translate` service.
+- Keep mailbox authorization, MIME parsing, bounded visible-text selection,
+  consent, remote-provider disclosure, audit, retention, and rendering in
+  Mail. The original message remains canonical.
+- Forbid raw MIME, attachments, credentials, hidden headers, storage locators,
+  remote-image URLs, and control-plane sessions at the extension boundary.
+- Keep UI localization in core and keep translation outside the current
+  alpha/beta release-recovery scope.
+
+Verification:
+
+- documentation links and headings inspected;
+- `git diff --check` required before commit.
+
+Risks / non-goals:
+
+- no runtime code, dependency, route, configuration, credential, deployment,
+  tag, release, or compatibility claim;
+- no automatic whole-mailbox translation and no silent remote-provider
+  egress.
+
 ## 2026-09-20 19:59 CDT — Admit durable Authentik role-binding operations
 
 Implementation commit: `d29f0e18fe8437d30ed100788f2a9dbb65293539`

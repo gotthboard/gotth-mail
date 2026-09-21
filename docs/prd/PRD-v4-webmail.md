@@ -63,12 +63,31 @@ Custom webmail must not block the control-plane product.
 - Content Security Policy.
 - No unsafe HTML bypass.
 
+### Future optional message translation
+
+After the current release line is admitted, Web Mail may integrate the
+separately versioned `gotth-extension-translate` adapter and standalone
+`gotth-translate` service. This is not part of the v4 acceptance boundary and
+does not widen the alpha/beta recovery scope.
+
+Mail authorizes the mailbox and message, parses MIME, and selects only bounded
+decoded and sanitized visible body text. Raw MIME, attachments, credentials,
+hidden headers, remote-image URLs, and control-plane state never cross the
+translation interface. The original stored message remains canonical and is
+never rewritten. A translation is derived display data with explicit consent,
+provider disclosure, retention, audit, and failure behavior owned by Mail.
+
+Web Mail UI localization remains in core so login, errors, accessibility
+labels, administration, and basic mail use work without any extension.
+
 ## Non-goals
 
 - No custom webmail before v4.
 - No replacing IMAP/SMTP daemons.
 - No client-side SPA pile.
 - No pretending webmail is the control plane.
+- No automatic translation of every message or silent upload to a remote
+  provider.
 
 ## Acceptance criteria
 

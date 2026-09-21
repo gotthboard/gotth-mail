@@ -201,6 +201,29 @@ Attachment handling:
 
 If webmail exposes actions such as aliases, identities, forwarding, sieve/rules, password/app-password UI, or mailbox settings, those actions must route through core service/auth/audit paths. Webmail cannot write canonical state directly.
 
+## Future translation adapter contract
+
+This is planned post-release scope. It adds no current route, dependency,
+configuration field, process, release gate, or alpha/beta recovery work.
+
+Before calling `gotth-extension-translate`, Mail authenticates the user,
+authorizes the exact mailbox/message, parses raw MIME under the existing hard
+bounds, and selects only eligible visible decoded text. It sends ordered
+opaque-ID UTF-8 segments with canonical BCP 47 target, deadline, correlation
+ID, and explicit cache/retention class.
+
+The request contains no raw MIME, header block, attachment, private key,
+password, token, mailbox path, message-store locator, remote-image URL, or
+administrator session. Mail validates response segment identity/order, UTF-8,
+and expansion bounds and renders the result as escaped derived text beside the
+untouched original. Translation content is forbidden from logs, metrics,
+audit display fields, health, and workflow evidence.
+
+Remote translation requires a named egress/secret grant plus visible Mail-
+owned disclosure and user consent. Local `gotth-translate` remains supported.
+Timeout, cancellation, malformed output, unsupported language, or extension
+outage returns a fixed failure and does not affect ordinary message reading.
+
 ## Verification
 
 Required tests:
@@ -233,6 +256,12 @@ Required tests:
   millisecond page/template timing fields, shared styling, and narrow layout
 - webmail control-plane actions route through core service/auth/audit paths without bypass
 - `git diff --check`
+
+Any activated translation feature additionally requires mailbox/message
+authorization negatives, MIME/attachment/header exclusion, consent and remote-
+egress tests, segment/output bounds, cancellation, redaction, source
+immutability, local-backend integration, extension outage behavior, and exact
+artifact/manifest/grant/transport identity proof.
 - `go test ./...`
 
 ## Mandatory OpenPGP signing

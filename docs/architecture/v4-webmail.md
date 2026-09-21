@@ -100,12 +100,34 @@ Required hardening:
 
 HTML email is hostile input. Treat it as data, not UI code.
 
+## Future translation extension
+
+The optional post-release flow is:
+
+```text
+authorized message -> bounded MIME parser -> sanitized visible text segments
+  -> gotth-extension-translate -> gotth-translate
+  -> bounded derived text -> Mail-owned escaped presentation
+```
+
+The Mail process owns mailbox authorization, MIME parsing, consent, remote-
+provider disclosure, audit, retention, and rendering. The extension cannot
+read IMAP, mailbox storage, attachments, credentials, or control-plane state.
+It receives no HTML and returns no trusted markup. Translation failure leaves
+the original message readable.
+
+The extension is independently pinned and granted through `gotth-extensions`;
+its typed business RPC does not widen the generic handshake/health protocol.
+Long-running work may use a separately admitted jobs boundary. UI locale
+catalogs stay in Mail core.
+
 ## Non-goals
 
 - no custom webmail before v4
 - no replacing IMAP/SMTP daemons
 - no client-side SPA pile
 - no pretending webmail is the control plane
+- no automatic whole-mailbox translation or silent remote-provider egress
 
 ## Verification gates
 
