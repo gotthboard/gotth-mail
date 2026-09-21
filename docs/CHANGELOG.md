@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-21 17:48 CDT — Preserve existing domain identity during SCIM provisioning
+
+- Fixed new SCIM mailbox provisioning when the target domain already exists
+  with an operator/import-assigned UUID. The domain upsert now returns and uses
+  the authoritative stored ID instead of retaining a discarded derived ID.
+- Added a regression test that preloads `example.test` with a non-derived UUID,
+  provisions a SCIM user, and proves the mailbox references that exact existing
+  domain row.
+- The live alpha lifecycle exposed this failure safely as a PostgreSQL foreign
+  key conflict; the transaction rolled back and created no partial mailbox or
+  Authentik provider linkage.
+
+Verification:
+
+- `go test ./internal/api ./internal/scimstore` passed;
+- `go test -race ./internal/api ./internal/scimstore` passed;
+- `git diff --check` passed.
+
 ## 2026-09-20 19:59 CDT — Admit durable Authentik role-binding operations
 
 Implementation commit: `d29f0e18fe8437d30ed100788f2a9dbb65293539`

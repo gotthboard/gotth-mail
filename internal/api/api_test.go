@@ -452,6 +452,28 @@ func responseID(t *testing.T, body string) string {
 	return id
 }
 
+func TestSCIMUserCreateUsesExistingDomainID(t *testing.T) {
+	db, _, _, handler := scimTestHandler(t, nil)
+	const existingDomainID = "20000000-0000-4000-8000-000000000001"
+	if _, err := db.Exec(`UPDATE domains SET id=$1 WHERE name='example.test'`, existingDomainID); err != nil {
+		t.Fatal(err)
+	}
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, authed(http.MethodPost, "/scim/v2/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"externalId":"existing-domain-subject","userName":"member@example.test","active":true}`, "scim-secret-token"))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	var domainID string
+	if err := db.QueryRow(`SELECT domain_id::text FROM mailboxes WHERE scim_resource_id=$1`, responseID(t, response.Body.String())).Scan(&domainID); err != nil {
+		t.Fatal(err)
+	}
+	if domainID != existingDomainID {
+		t.Fatalf("mailbox domain_id=%q want existing %q", domainID, existingDomainID)
+	}
+}
+
 func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
 	db, _, d, h := scimTestHandler(t, nil)
 

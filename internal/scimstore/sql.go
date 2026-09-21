@@ -545,8 +545,8 @@ func (tx *transaction) persistMailbox(record gotthscim.Record, previousEmail str
 			return err
 		}
 	}
-	if _, err := tx.tx.ExecContext(tx.ctx, `INSERT INTO domains(id, name, enabled, created_at, updated_at) VALUES ($1,$2,true,$3,$4) ON CONFLICT (name) DO UPDATE SET updated_at=EXCLUDED.updated_at`, domainID, domain, mailbox.CreatedAt, mailbox.UpdatedAt); err != nil {
-		return err
+	if err := tx.tx.QueryRowContext(tx.ctx, `INSERT INTO domains(id, name, enabled, created_at, updated_at) VALUES ($1,$2,true,$3,$4) ON CONFLICT (name) DO UPDATE SET updated_at=EXCLUDED.updated_at RETURNING id`, domainID, domain, mailbox.CreatedAt, mailbox.UpdatedAt).Scan(&domainID); err != nil {
+		return fmt.Errorf("resolve SCIM mailbox domain: %w", err)
 	}
 	if _, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO mailboxes(id, domain_id, local_part, display_name, enabled, verifier, created_at, updated_at, scim_resource_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO UPDATE SET domain_id=EXCLUDED.domain_id, local_part=EXCLUDED.local_part, display_name=EXCLUDED.display_name, enabled=EXCLUDED.enabled, verifier=EXCLUDED.verifier, updated_at=EXCLUDED.updated_at, scim_resource_id=EXCLUDED.scim_resource_id`, mailboxID, domainID, local, nullableString(mailbox.DisplayName), mailbox.Active, nullableString(mailbox.Verifier), mailbox.CreatedAt, mailbox.UpdatedAt, record.ID); err != nil {
 		return mapStoreError(err)
