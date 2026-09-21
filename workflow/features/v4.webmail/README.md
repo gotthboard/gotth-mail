@@ -13,3 +13,7 @@ themes, keyboard/context action parity, session/CSRF boundaries, durable draft
 editing, stable UID actions, and real Chromium plus reference-stack proof.
 Earlier seam/model evidence remains historical; the 2026-09-19 evidence is the
 expanded interface admission record.
+
+The post-admission canonical-footer change is isolated on
+`workflow/feature/v4.webmail.canonical-footer`: it adds only the shared GOTTH
+product footer contract, renderer, styling, tests, and deployment evidence.

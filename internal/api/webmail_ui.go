@@ -1,6 +1,12 @@
 package api
 
-import "net/http"
+import (
+	"html"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+)
 
 func webmailSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; trusted-types 'none'; require-trusted-types-for 'script'")
@@ -18,6 +24,30 @@ func serveWebmailAsset(w http.ResponseWriter, r *http.Request, contentType, body
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(body))
+}
+
+func renderWebmailApp(pageStarted time.Time, release string) string {
+	templateStarted := time.Now()
+	var body strings.Builder
+	body.Grow(len(webmailAppHTML) + 320)
+	body.WriteString(webmailAppHTML)
+	templateMilliseconds := time.Since(templateStarted).Milliseconds()
+	pageMilliseconds := time.Since(pageStarted).Milliseconds()
+	body.WriteString(`  <footer class="gotth-footer" aria-label="Application information">
+    <span>Powered by <strong class="gotth-footer-product">GOTTH Mail</strong></span>
+    <span>Version: <strong>`)
+	body.WriteString(html.EscapeString(release))
+	body.WriteString(`</strong></span>
+    <span>Page: <strong>`)
+	body.WriteString(strconv.FormatInt(pageMilliseconds, 10))
+	body.WriteString(`ms</strong></span>
+    <span>Template: <strong>`)
+	body.WriteString(strconv.FormatInt(templateMilliseconds, 10))
+	body.WriteString(`ms</strong></span>
+  </footer>
+</body>
+</html>`)
+	return body.String()
 }
 
 const webmailAppHTML = `<!doctype html>
@@ -140,13 +170,12 @@ const webmailAppHTML = `<!doctype html>
   </dialog>
 
   <div id="status" role="status" aria-live="polite">Loading webmail…</div>
-</body>
-</html>`
+`
 
 const webmailAppCSS = `
 :root{--bg:#f4f6f9;--surface:#fff;--surface-2:#edf2f7;--text:#172033;--muted:#596579;--line:#c6cfdb;--accent:#175ea8;--accent-2:#0d4d8d;--focus:#ffb000;--danger:#a3212b;--folder-width:240px;--list-width:440px;color-scheme:light}
 html[data-theme="dark"]{--bg:#111722;--surface:#182230;--surface-2:#202d3d;--text:#eef4fb;--muted:#b0bfd0;--line:#405064;--accent:#69adf0;--accent-2:#8bc2f5;--focus:#ffd166;--danger:#ff8e96;color-scheme:dark}
-*{box-sizing:border-box}html,body{height:100%;margin:0}body{background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;overflow:hidden}button,input,select,textarea{font:inherit;color:inherit}button,.button-link{border:1px solid var(--line);background:var(--surface);padding:.45rem .7rem;border-radius:3px;text-decoration:none;cursor:pointer}button:hover,.button-link:hover{background:var(--surface-2)}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--focus);outline-offset:1px}button:disabled{opacity:.48;cursor:not-allowed}.primary{background:var(--accent);border-color:var(--accent);color:#fff}.primary:hover{background:var(--accent-2)}.quiet{background:transparent}.skip-link{position:fixed;left:.5rem;top:-4rem;background:var(--surface);padding:.6rem;z-index:50}.skip-link:focus{top:.5rem}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+*{box-sizing:border-box}html,body{height:100%;margin:0}body{background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto auto;overflow:hidden}button,input,select,textarea{font:inherit;color:inherit}button,.button-link{border:1px solid var(--line);background:var(--surface);padding:.45rem .7rem;border-radius:3px;text-decoration:none;cursor:pointer}button:hover,.button-link:hover{background:var(--surface-2)}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--focus);outline-offset:1px}button:disabled{opacity:.48;cursor:not-allowed}.primary{background:var(--accent);border-color:var(--accent);color:#fff}.primary:hover{background:var(--accent-2)}.quiet{background:transparent}.skip-link{position:fixed;left:.5rem;top:-4rem;background:var(--surface);padding:.6rem;z-index:50}.skip-link:focus{top:.5rem}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .topbar{height:48px;background:var(--accent-2);color:#fff;display:flex;align-items:center;padding:0 .75rem;gap:1rem}.brand{display:flex;align-items:center;gap:.55rem;font-size:16px}.brand-mark{display:grid;place-items:center;width:28px;height:28px;border:2px solid currentColor;border-radius:4px;font-weight:800}.account{display:flex;gap:.75rem;min-width:0;flex:1}.signature{opacity:.78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.top-actions{display:flex;align-items:center;gap:.5rem}.topbar .quiet,.topbar .button-link{border-color:#ffffff66;color:#fff}
 .commandbar{min-height:46px;display:flex;align-items:center;gap:.35rem;padding:.4rem .6rem;background:var(--surface);border-bottom:1px solid var(--line);overflow-x:auto}.commandbar form{margin-left:auto;display:flex;min-width:250px}.commandbar input{width:100%;border:1px solid var(--line);background:var(--surface);padding:.45rem}.viewbar{display:flex;gap:1.25rem;align-items:center;padding:.25rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--line);color:var(--muted)}.viewbar label{display:flex;align-items:center;gap:.4rem}.viewbar input[type="range"]{width:110px}
 .mail-app{min-height:0;display:grid;background:var(--surface)}.pane-right{grid-template-columns:var(--folder-width) var(--list-width) minmax(300px,1fr)}.pane-below{grid-template-columns:var(--folder-width) minmax(320px,1fr);grid-template-rows:minmax(220px,46%) minmax(250px,1fr)}.pane-below .folder-pane{grid-row:1/3}.pane-below .reader-pane{grid-column:2;grid-row:2}.pane-off{grid-template-columns:var(--folder-width) minmax(320px,1fr)}.pane-off .reader-pane{display:none}.folder-pane,.list-pane,.reader-pane{min-width:0;min-height:0;background:var(--surface);overflow:auto}.folder-pane,.list-pane{border-right:1px solid var(--line)}.pane-heading{height:42px;display:flex;align-items:center;gap:.5rem;padding:0 .75rem;border-bottom:1px solid var(--line);background:var(--surface-2)}.pane-heading h1{font-size:14px;margin:0}.mobile-heading button{display:none}
@@ -157,7 +186,8 @@ html[data-theme="dark"]{--bg:#111722;--surface:#182230;--surface-2:#202d3d;--tex
 dialog{width:min(760px,calc(100vw - 2rem));height:min(720px,calc(100vh - 2rem));border:1px solid var(--line);background:var(--surface);color:var(--text);padding:0;box-shadow:0 18px 60px #0007}dialog::backdrop{background:#08111dcc}#compose-form{height:100%;display:grid;grid-template-rows:auto repeat(5,auto) minmax(180px,1fr) auto auto auto;gap:.5rem;padding:1rem}#compose-form header,#compose-form footer{display:flex;justify-content:space-between;align-items:center}#compose-form h2{margin:0}#compose-form label{display:grid;grid-template-columns:76px 1fr;align-items:center;gap:.5rem}#compose-form input,#compose-form textarea{border:1px solid var(--line);background:var(--surface);padding:.45rem}.body-label{min-height:0;align-items:stretch!important}.body-label textarea{resize:none}.compose-note{color:var(--muted);font-size:12px;margin:.25rem 0}#compose-form footer{justify-content:flex-end;gap:.5rem}
 .draft-list{padding:1rem}.draft-list header{display:flex;justify-content:space-between;align-items:center}.draft-list h2{margin:0}.draft-list button[role="listitem"]{display:grid;width:100%;grid-template-columns:1fr 2fr auto;text-align:left;margin-top:.4rem}.draft-list .empty-state{height:auto}.draft-state{color:var(--muted)}#compose-existing{max-height:90px;overflow:auto;color:var(--muted)}#compose-existing ul{margin:.25rem 0}
 #status{min-height:28px;padding:.35rem .75rem;background:var(--surface-2);border-top:1px solid var(--line);color:var(--muted)}#status.error{color:var(--danger);font-weight:700}
-@media(max-width:760px){body{grid-template-rows:auto auto minmax(0,1fr) auto}.viewbar{display:none}.topbar{height:auto;min-height:48px;flex-wrap:wrap}.signature{display:none}.commandbar{padding:.35rem}.mail-app,.pane-right,.pane-below,.pane-off{display:block}.folder-pane,.list-pane,.reader-pane{height:100%;border:0}.mobile-heading button{display:inline-block}.list-columns{grid-template-columns:1fr 1.5fr 84px}.message-row{grid-template-columns:1fr 1.5fr 84px;min-height:52px}body[data-mobile-view="folders"] .list-pane,body[data-mobile-view="folders"] .reader-pane{display:none}body[data-mobile-view="messages"] .folder-pane,body[data-mobile-view="messages"] .reader-pane{display:none}body[data-mobile-view="reader"] .folder-pane,body[data-mobile-view="reader"] .list-pane{display:none}.commandbar{min-height:48px}.commandbar button{min-height:40px}.folder-button{min-height:44px}dialog{width:100vw;height:100vh;max-width:none;max-height:none}#compose-form label{grid-template-columns:1fr;gap:.15rem}}
+.gotth-footer{min-height:104px;display:flex;align-items:center;justify-content:flex-start;gap:.5rem 1.25rem;flex-wrap:wrap;padding:1.4rem clamp(1rem,10vw,7.5rem);background:#050817;border-top:1px solid #262b3b;color:#9da8bd}.gotth-footer strong{color:#f4f6fb}.gotth-footer .gotth-footer-product{color:#f28b8f}
+@media(max-width:760px){body{grid-template-rows:auto auto minmax(0,1fr) auto auto}.viewbar{display:none}.topbar{height:auto;min-height:48px;flex-wrap:wrap}.signature{display:none}.commandbar{padding:.35rem}.mail-app,.pane-right,.pane-below,.pane-off{display:block}.folder-pane,.list-pane,.reader-pane{height:100%;border:0}.mobile-heading button{display:inline-block}.list-columns{grid-template-columns:1fr 1.5fr 84px}.message-row{grid-template-columns:1fr 1.5fr 84px;min-height:52px}body[data-mobile-view="folders"] .list-pane,body[data-mobile-view="folders"] .reader-pane{display:none}body[data-mobile-view="messages"] .folder-pane,body[data-mobile-view="messages"] .reader-pane{display:none}body[data-mobile-view="reader"] .folder-pane,body[data-mobile-view="reader"] .list-pane{display:none}.commandbar{min-height:48px}.commandbar button{min-height:40px}.folder-button{min-height:44px}dialog{width:100vw;height:100vh;max-width:none;max-height:none}#compose-form label{grid-template-columns:1fr;gap:.15rem}.gotth-footer{min-height:72px;padding:.75rem 1rem;font-size:12px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 `
 

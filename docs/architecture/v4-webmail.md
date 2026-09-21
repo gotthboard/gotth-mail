@@ -77,6 +77,13 @@ CSS variables and rules supply the visual tokens without a runtime or build
 framework dependency. Bounded progressive enhancement updates panes and
 commands; it is not a client-side SPA state authority.
 
+The document shell ends with the shared GOTTH product footer. The server
+renders the exact admitted build version and bounded millisecond page/template
+timings into escaped markup. The footer exposes no commit hash, dirty-tree
+state, hostname, or other operational metadata. It uses the same fixed dark
+presentation in both application themes so the cross-product identity remains
+consistent.
+
 ## Security architecture
 
 Required hardening:
@@ -117,6 +124,8 @@ HTML email is hostile input. Treat it as data, not UI code.
 - every context-menu action has an equivalent visible and keyboard-accessible
   path
 - only original or appropriately licensed presentation assets ship
+- the canonical footer renders product, build version, page time, and template
+  time in desktop and narrow layouts without exposing internal build metadata
 - webmail control-plane actions route through core service/auth/audit paths without bypass
 
 ## Mandatory OpenPGP signing

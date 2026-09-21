@@ -8,21 +8,24 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/version"
 	"forgejo/gotthboard/gotth-mail/internal/webmail"
 )
 
 func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
 	mux.HandleFunc("/webmail", func(w http.ResponseWriter, r *http.Request) {
+		pageStarted := time.Now()
 		if !method(w, r, http.MethodGet) {
 			return
 		}
 		webmailSecurityHeaders(w)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write([]byte(webmailAppHTML))
+		_, _ = w.Write([]byte(renderWebmailApp(pageStarted, version.Version)))
 	})
 	mux.HandleFunc("/webmail/assets/app.css", func(w http.ResponseWriter, r *http.Request) {
 		serveWebmailAsset(w, r, "text/css; charset=utf-8", webmailAppCSS)

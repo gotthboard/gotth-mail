@@ -1158,7 +1158,7 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/webmail", nil))
 	body := rr.Body.String()
-	for _, want := range []string{"GOTTH Mail", "folder-pane", "message-list", "reader-pane", "composer", "/webmail/assets/app.js"} {
+	for _, want := range []string{"GOTTH Mail", "folder-pane", "message-list", "reader-pane", "composer", "/webmail/assets/app.js", "gotth-footer", "Powered by", "Version: <strong>dev</strong>", "Page: <strong>", "Template: <strong>"} {
 		if rr.Code != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("webmail shell status=%d missing %q body=%s", rr.Code, want, body)
 		}
@@ -1176,6 +1176,18 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 	}
 	if got := asset.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("webmail asset cache control=%q", got)
+	}
+	stylesheet := httptest.NewRecorder()
+	h.ServeHTTP(stylesheet, httptest.NewRequest(http.MethodGet, "/webmail/assets/app.css", nil))
+	if stylesheet.Code != http.StatusOK || !strings.Contains(stylesheet.Body.String(), ".gotth-footer") || !strings.Contains(stylesheet.Body.String(), ".gotth-footer-product") {
+		t.Fatalf("webmail CSS status=%d body=%s", stylesheet.Code, stylesheet.Body.String())
+	}
+}
+
+func TestWebmailFooterEscapesReleaseIdentity(t *testing.T) {
+	body := renderWebmailApp(time.Now(), `<script>alert("release")</script>`)
+	if strings.Contains(body, `<script>alert("release")</script>`) || !strings.Contains(body, `&lt;script&gt;alert(&#34;release&#34;)&lt;/script&gt;`) {
+		t.Fatalf("unsafe release identity in webmail footer: %s", body)
 	}
 }
 
