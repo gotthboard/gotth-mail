@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-20 19:35 CDT — Define durable role-binding operator boundary
+
+- Added the PRD, architecture, implementation specification, workflow state,
+  and verification contract for the missing preview/confirm operator path that
+  grants or revokes durable roles for exact verified Authentik identities.
+- Required schema-enforced global/scoped role cardinality, serializable stale
+  plan rejection, atomic redacted audit, existing-session projection, and
+  restart persistence.
+- No role row, live database, credential, deployment, DNS record, tag, release,
+  or external service changed.
+
 ## 2026-09-20 — Add the non-Telegram webhook extension runtime
 
 - Added the exact `gotth.mail.notification.webhook` production adapter for the
