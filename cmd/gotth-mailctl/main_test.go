@@ -216,6 +216,8 @@ func TestCLIRoleBindingRequestIsClosed(t *testing.T) {
 		append(append([]string(nil), args...), "--unknown", "value"),
 		{"identity", "role-binding", "preview", "--config", "config.yaml"},
 		append(append([]string(nil), args...), "--domain"),
+		append(append([]string(nil), args...), "--confirm", strings.Repeat("0", 64)),
+		append(append([]string(nil), args...), "--domain", ""),
 	}
 	for _, candidate := range bad {
 		if _, err := roleBindingRequest(candidate); err == nil {

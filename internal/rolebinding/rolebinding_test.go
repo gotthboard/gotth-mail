@@ -135,7 +135,9 @@ func TestRoleBindingRejectsInvalidExactAndDisabledState(t *testing.T) {
 	mutations := []func(*Request){
 		func(value *Request) { value.Operation = "replace" },
 		func(value *Request) { value.Issuer = "http://auth.example.test/application/o/gotth-mail/" },
+		func(value *Request) { value.Issuer = " " + value.Issuer },
 		func(value *Request) { value.Subject = "bad\nsubject" },
+		func(value *Request) { value.Subject = value.Subject + " " },
 		func(value *Request) { value.Mailbox = "not-mail" },
 		func(value *Request) { value.Role = "owner" },
 		func(value *Request) { value.Domain = "example.test" },

@@ -265,7 +265,7 @@ func roleBindingRequest(args []string) (rolebinding.Request, error) {
 	values := make(map[string]string, len(allowed))
 	seen := make(map[string]bool, len(allowed))
 	for index := 3; index < len(args); index += 2 {
-		if index+1 >= len(args) || !allowed[args[index]] || seen[args[index]] || strings.HasPrefix(args[index+1], "--") {
+		if index+1 >= len(args) || !allowed[args[index]] || seen[args[index]] || strings.HasPrefix(args[index+1], "--") || strings.TrimSpace(args[index+1]) == "" {
 			return rolebinding.Request{}, fmt.Errorf("invalid or duplicate role-binding flag")
 		}
 		seen[args[index]] = true
@@ -275,6 +275,9 @@ func roleBindingRequest(args []string) (rolebinding.Request, error) {
 		if strings.TrimSpace(values[required]) == "" {
 			return rolebinding.Request{}, fmt.Errorf("%s required", required)
 		}
+	}
+	if args[2] == "preview" && seen["--confirm"] {
+		return rolebinding.Request{}, fmt.Errorf("--confirm is valid only for apply")
 	}
 	return rolebinding.Request{Operation: values["--operation"], Issuer: values["--issuer"], Subject: values["--subject"], Mailbox: values["--mailbox"], Role: values["--role"], Domain: values["--domain"]}, nil
 }

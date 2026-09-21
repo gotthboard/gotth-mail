@@ -235,8 +235,9 @@ func buildPlan(request Request, current state) (Plan, error) {
 
 func normalize(request Request) (Request, error) {
 	request.Operation = strings.TrimSpace(request.Operation)
-	request.Issuer = strings.TrimSpace(request.Issuer)
-	request.Subject = strings.TrimSpace(request.Subject)
+	if request.Issuer != strings.TrimSpace(request.Issuer) || request.Subject != strings.TrimSpace(request.Subject) {
+		return Request{}, errors.New("role-binding identity is invalid")
+	}
 	request.Mailbox = strings.ToLower(strings.TrimSpace(request.Mailbox))
 	request.Role = strings.TrimSpace(request.Role)
 	request.Domain = strings.ToLower(strings.TrimSpace(request.Domain))
