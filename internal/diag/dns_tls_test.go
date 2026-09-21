@@ -6,14 +6,28 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
+	"net"
 	"testing"
 	"time"
 )
 
+func TestDNSLookupNotFoundIsARecordAbsence(t *testing.T) {
+	if err := dnsLookupError(&net.DNSError{Err: "no such host", Name: "missing.example", IsNotFound: true}); err != nil {
+		t.Fatalf("not-found DNS result was treated as resolver failure: %v", err)
+	}
+	want := &net.DNSError{Err: "temporary failure", Name: "example.test", IsTemporary: true}
+	if got := dnsLookupError(want); !errors.Is(got, want) {
+		t.Fatalf("temporary DNS failure was hidden: %v", got)
+	}
+}
+
 func TestDNSReadinessExactPresentMissingMismatchUnsupported(t *testing.T) {
-	plan := DomainDNSPlan{Domain: "example.test", MailHost: "mail.example.test", DKIMSelector: "mail", DKIMPublicKeyTXT: "v=DKIM1; k=rsa; p=abc", DMARCReportAddress: "mailto:dmarc@example.test", TLSRPTReportAddress: "mailto:tlsrpt@example.test"}
+	plan := DomainDNSPlan{Domain: "example.test", MailHost: "mail.example.test", MailIP: "192.0.2.10", PTRExpected: "mail.example.test", DKIMSelector: "mail", DKIMPublicKeyTXT: "v=DKIM1; k=rsa; p=abc", DMARCReportAddress: "mailto:dmarc@example.test", TLSRPTReportAddress: "mailto:tlsrpt@example.test"}
 	observed := StaticDNS{
+		key("A", "mail.example.test"):               {"192.0.2.10"},
+		key("PTR", "192.0.2.10"):                    {"mail.example.test."},
 		key("MX", "example.test"):                   {"10 mail.example.test."},
 		key("TXT", "example.test"):                  {"v=spf1 mx ~all"},
 		key("TXT", "mail._domainkey.example.test"):  {"v=DKIM1; k=rsa; p=abc"},
@@ -29,6 +43,9 @@ func TestDNSReadinessExactPresentMissingMismatchUnsupported(t *testing.T) {
 	}
 	if byFamily["MX"].Status != Present {
 		t.Fatalf("MX got %#v", byFamily["MX"])
+	}
+	if byFamily["A"].Status != Present || byFamily["PTR"].Status != Present {
+		t.Fatalf("address readiness got A=%#v PTR=%#v", byFamily["A"], byFamily["PTR"])
 	}
 	if byFamily["SPF"].Status != Mismatch || byFamily["SPF"].Remediation == "" || byFamily["SPF"].Observed[0] != "v=spf1 mx ~all" {
 		t.Fatalf("SPF got %#v", byFamily["SPF"])

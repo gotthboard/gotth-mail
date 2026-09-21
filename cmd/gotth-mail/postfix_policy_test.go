@@ -63,6 +63,44 @@ func TestPostfixPolicyBoundsInput(t *testing.T) {
 	}
 }
 
+func TestConfigurePostfixListenersBindsEveryConfiguredService(t *testing.T) {
+	for _, name := range []string{
+		"GOTTH_MAIL_POSTFIX_POLICY_LISTEN",
+		"GOTTH_MAIL_POSTFIX_DOMAIN_MAP_LISTEN",
+		"GOTTH_MAIL_POSTFIX_MAILBOX_MAP_LISTEN",
+		"GOTTH_MAIL_POSTFIX_ALIAS_MAP_LISTEN",
+	} {
+		t.Setenv(name, "127.0.0.1:0")
+	}
+	listeners, err := configurePostfixListenersFromEnv(daemon.Service{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listeners) != 4 {
+		t.Fatalf("listeners=%d", len(listeners))
+	}
+	for _, listener := range listeners {
+		if err := listener.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestConfigurePostfixListenersRejectsBindFailure(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	t.Setenv("GOTTH_MAIL_POSTFIX_POLICY_LISTEN", occupied.Addr().String())
+	if listeners, err := configurePostfixListenersFromEnv(daemon.Service{}); err == nil {
+		for _, listener := range listeners {
+			_ = listener.Close()
+		}
+		t.Fatal("required Postfix listener bind failure accepted")
+	}
+}
+
 func postfixPolicyExchange(t *testing.T, svc daemon.Service, request string) string {
 	t.Helper()
 	server, client := net.Pipe()

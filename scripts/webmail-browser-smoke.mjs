@@ -99,6 +99,8 @@ try {
   await waitFor(cdp, "document.querySelectorAll('.message-row').length===1 && document.getElementById('account-label').textContent==='browser@example.test'", 'authenticated message list');
   const panes = await evaluate(cdp, "['folder-pane','list-pane','reader-pane'].every(id=>!!document.getElementById(id))");
   if (!panes) throw new Error('three-pane structure missing');
+  const footer = await evaluate(cdp, "(function(){var el=document.querySelector('.gotth-footer');if(!el)return false;var style=getComputedStyle(el);return el.textContent.includes('Powered by GOTTH Mail')&&el.textContent.includes('Version: dev')&&/Page: \\d+ms/.test(el.textContent)&&/Template: \\d+ms/.test(el.textContent)&&style.display==='flex'&&style.justifyContent==='flex-start'&&style.minHeight==='104px'&&style.backgroundColor==='rgb(5, 8, 23)'&&style.borderTopWidth==='1px'})()");
+  if (!footer) throw new Error('canonical GOTTH footer missing or incorrectly styled');
   if (!(await evaluate(cdp, "document.querySelector('.folder-button').textContent.includes('2 unread') && document.querySelector('.message-row').classList.contains('has-attachment')"))) throw new Error('unread count or attachment state missing');
   const folderRequests = await evaluate(cdp, "performance.getEntriesByType('resource').filter(function(entry){return entry.name.endsWith('/api/v1/webmail/folders')}).length");
   await evaluate(cdp, "document.querySelector('.message-row').click()");
@@ -141,7 +143,7 @@ try {
   if (!preferences) throw new Error('pane placement or dark theme failed');
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await evaluate(cdp, "document.querySelector('.folder-button').click()");
-  const mobile = await evaluate(cdp, "document.body.dataset.mobileView==='messages' && getComputedStyle(document.getElementById('folder-pane')).display==='none' && getComputedStyle(document.querySelector('[data-command=reply]')).display!=='none' && getComputedStyle(document.getElementById('search-form')).display!=='none'");
+  const mobile = await evaluate(cdp, "document.body.dataset.mobileView==='messages' && getComputedStyle(document.getElementById('folder-pane')).display==='none' && getComputedStyle(document.querySelector('[data-command=reply]')).display!=='none' && getComputedStyle(document.getElementById('search-form')).display!=='none' && getComputedStyle(document.querySelector('.gotth-footer')).display==='flex'");
   if (!mobile) throw new Error('mobile folder-to-list drill-down failed');
   cdp.close();
   await fetch(base + '/__browser_done');

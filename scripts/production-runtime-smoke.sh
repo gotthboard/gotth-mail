@@ -13,6 +13,7 @@ if ! "${DOCKER[@]}" info >/dev/null 2>&1; then
 fi
 
 containers=(db control-plane front postfix dovecot rspamd)
+images=()
 cleanup() {
   local rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -24,6 +25,9 @@ cleanup() {
     "${DOCKER[@]}" rm -f "$PREFIX-$role" >/dev/null 2>&1 || true
   done
   "${DOCKER[@]}" network rm "$NETWORK" >/dev/null 2>&1 || true
+  for image in "${images[@]}"; do
+    "${DOCKER[@]}" image rm -f "$image" >/dev/null 2>&1 || true
+  done
   if command -v sudo >/dev/null 2>&1; then
     sudo -n chown -R "$(id -u):$(id -g)" "$WORK" >/dev/null 2>&1 || true
   fi
@@ -57,15 +61,14 @@ if command -v sudo >/dev/null 2>&1; then
   sudo -n chown -R 999:999 "$WORK/database" "$WORK/secrets/postgres-password"
 fi
 
-source_commit=${GOTTH_MAIL_SOURCE_COMMIT:-$(git -C "$ROOT" rev-parse HEAD)}
+source_commit=$(git -C "$ROOT" rev-parse HEAD)
+build_date_epoch=$(git -C "$ROOT" show -s --format=%ct HEAD)
+source_state=$("$ROOT/scripts/production-source-state.sh")
+image_repository_base="gotth-mail-production-smoke-${source_state:0:12}-$$"
 for role in control-plane front postfix dovecot rspamd; do
-  image="gotth-mail-production:$role"
-  if [ "${GOTTH_MAIL_SMOKE_BUILD:-0}" = 1 ] || ! "${DOCKER[@]}" image inspect "$image" >/dev/null 2>&1; then
-    "${DOCKER[@]}" build --platform linux/amd64 --target "$role" \
-      --build-arg VERSION=1.0.0-alpha.1 --build-arg SOURCE_COMMIT="$source_commit" \
-      -t "$image" -f "$ROOT/build/production/Dockerfile" "$ROOT"
-  fi
+  images+=("$image_repository_base-$role:dev")
 done
+"$ROOT/scripts/build-production-images.sh" dev "$source_commit" "$build_date_epoch" "$source_state" "$image_repository_base"
 
 "${DOCKER[@]}" network create "$NETWORK" >/dev/null
 
@@ -102,7 +105,7 @@ run_control() {
     -v "$WORK/secrets/oidc-client-secret:/run/secrets/oidc-client-secret:ro" \
     -v "$WORK/secrets/postfix-helper-token:/run/secrets/postfix-helper-token:ro" \
     -v "$WORK/secrets/postfix-release-token:/run/secrets/postfix-release-token:ro" \
-    gotth-mail-production:control-plane >/dev/null
+    "$image_repository_base-control-plane:dev" >/dev/null
 }
 
 wait_health() {
@@ -148,7 +151,7 @@ wait_health control-plane
   -v "$ROOT/configs/production:/etc/gotth-mail:ro" -v "$WORK/rspamd:/var/lib/rspamd" \
   -v "$WORK/dkim:/var/lib/gotth-mail/dkim:ro" \
   -v "$WORK/secrets/rspamd-controller-token:/run/secrets/controller-token:ro" \
-  gotth-mail-production:rspamd >/dev/null
+  "$image_repository_base-rspamd:dev" >/dev/null
 wait_health rspamd 120
 
 "${DOCKER[@]}" run -d --name "$PREFIX-dovecot" --network "$NETWORK" --network-alias dovecot \
@@ -158,7 +161,7 @@ wait_health rspamd 120
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=67108864 --tmpfs /run:rw,noexec,nosuid,nodev,size=16777216,uid=1000,gid=1000,mode=0700 \
   -v "$ROOT/configs/production:/etc/gotth-mail:ro" -v "$WORK/mail:/var/lib/gotth-mail/mail" \
   -v "$WORK/secrets/front-auth-token:/run/secrets/control-token:ro" \
-  gotth-mail-production:dovecot >/dev/null
+  "$image_repository_base-dovecot:dev" >/dev/null
 wait_health dovecot
 
 "${DOCKER[@]}" run -d --name "$PREFIX-postfix" --network "$NETWORK" --network-alias postfix \
@@ -169,7 +172,7 @@ wait_health dovecot
   -v "$ROOT/configs/production:/etc/gotth-mail:ro" -v "$WORK/queue:/var/spool/postfix" \
   -v "$WORK/secrets/postfix-helper-token:/run/secrets/postfix-helper-token:ro" \
   -v "$WORK/secrets/postfix-release-token:/run/secrets/postfix-release-token:ro" \
-  gotth-mail-production:postfix >/dev/null
+  "$image_repository_base-postfix:dev" >/dev/null
 wait_health postfix
 
 front_auth_status=$(curl -fsS -D - -o /dev/null \
@@ -187,7 +190,7 @@ test "$front_auth_status" = OK
   -v "$WORK/tls/certificate.pem:/run/gotth-mail/tls/certificate.pem:ro" \
   -v "$WORK/tls/private-key.pem:/run/gotth-mail/tls/private-key.pem:ro" \
   -v "$WORK/secrets/front-auth-token:/run/secrets/front-auth-token:ro" \
-  gotth-mail-production:front >/dev/null
+  "$image_repository_base-front:dev" >/dev/null
 wait_health front
 
 python3 - <<'PY'

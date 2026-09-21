@@ -48,10 +48,13 @@ func TestAuthenticatedIMAPAndSMTP(t *testing.T) {
 	for _, protocol := range []string{"imap", "smtp"} {
 		w := request(t, h, map[string]string{
 			"Auth-Protocol": protocol, "Auth-Method": "plain",
-			"Auth-User": "user@example.test", "Auth-Pass": "mail-secret",
+			"Auth-User": "User@Example.Test", "Auth-Pass": "mail-secret",
 		})
 		if w.Code != http.StatusOK || w.Header().Get("Auth-Status") != "OK" {
 			t.Fatalf("%s response: code=%d headers=%v", protocol, w.Code, w.Header())
+		}
+		if got := w.Header().Get("Auth-User"); got != "user@example.test" {
+			t.Fatalf("%s canonical user=%q", protocol, got)
 		}
 		wantServer := "172.30.0.4"
 		if protocol == "smtp" {
@@ -76,14 +79,14 @@ func TestUnauthenticatedSMTPChecksRecipient(t *testing.T) {
 	rejected := request(t, h, map[string]string{
 		"Auth-Protocol": "smtp", "Auth-Method": "none", "Auth-SMTP-To": "missing@example.test",
 	})
-	if rejected.Header().Get("Auth-Status") != "authentication failed" || rejected.Header().Get("Auth-Server") != "" {
+	if rejected.Header().Get("Auth-Status") != "authentication failed" || rejected.Header().Get("Auth-Error-Code") != "550 5.1.1" || rejected.Header().Get("Auth-Server") != "" {
 		t.Fatalf("rejected headers=%v", rejected.Header())
 	}
 	for _, malformed := range []string{"RCPT TO:user@example.test", "RCPT TO:<>", "RCPT TO:<user@example.test>garbage"} {
 		response := request(t, h, map[string]string{
 			"Auth-Protocol": "smtp", "Auth-Method": "none", "Auth-SMTP-To": malformed,
 		})
-		if response.Header().Get("Auth-Status") != "invalid recipient" {
+		if response.Header().Get("Auth-Status") != "invalid recipient" || response.Header().Get("Auth-Error-Code") != "501 5.1.3" {
 			t.Fatalf("malformed recipient=%q headers=%v", malformed, response.Header())
 		}
 	}
@@ -95,8 +98,24 @@ func TestBackendResolutionFailsClosed(t *testing.T) {
 	response := request(t, h, map[string]string{
 		"Auth-Protocol": "smtp", "Auth-Method": "none", "Auth-SMTP-To": "RCPT TO:<user@example.test>",
 	})
-	if response.Header().Get("Auth-Status") != "authentication temporarily unavailable" || response.Header().Get("Auth-Wait") != "3" || response.Header().Get("Auth-Server") != "" {
+	if response.Header().Get("Auth-Status") != "authentication temporarily unavailable" || response.Header().Get("Auth-Wait") != "3" || response.Header().Get("Auth-Error-Code") != "451 4.3.0" || response.Header().Get("Auth-Server") != "" {
 		t.Fatalf("headers=%v", response.Header())
+	}
+}
+
+func TestDaemonUnavailabilityReturnsTemporarySMTPFailure(t *testing.T) {
+	h := testHandler(t)
+	h.service.Unavailable = true
+	for _, headers := range []map[string]string{
+		{"Auth-Protocol": "smtp", "Auth-Method": "none", "Auth-SMTP-To": "user@example.test"},
+		{"Auth-Protocol": "smtp", "Auth-Method": "plain", "Auth-User": "user@example.test", "Auth-Pass": "mail-secret"},
+	} {
+		response := request(t, h, headers)
+		if response.Header().Get("Auth-Status") != "authentication temporarily unavailable" ||
+			response.Header().Get("Auth-Wait") != "3" ||
+			response.Header().Get("Auth-Error-Code") != "451 4.3.0" {
+			t.Fatalf("headers=%v", response.Header())
+		}
 	}
 }
 

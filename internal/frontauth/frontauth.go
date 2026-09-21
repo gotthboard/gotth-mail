@@ -87,6 +87,11 @@ func validToken(token string) bool {
 	return true
 }
 
+// ServeHTTP validates one bounded NGINX mail-auth request and returns only
+// fixed-backend routing data. Complexity: time O(n + V), Omega(1), with no
+// tight Theta established because password verification V is delegated and
+// protocol-dependent; auxiliary space O(n), Omega(1), with n bounded by the
+// admitted header limit.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet || !h.authorized(r.Header.Get(serviceTokenHeader)) {
@@ -112,20 +117,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			recipient, valid = smtpRecipient(recipient)
 		}
 		if !valid {
-			h.reject(w, "invalid recipient")
+			h.reject(w, "invalid recipient", "501 5.1.3")
 			return
 		}
 		response := h.service.PostfixRecipient(correlationID, recipient)
 		if response.Decision != daemon.OK {
-			h.rejectDecision(w, response.Decision)
+			h.rejectRecipientDecision(w, response.Decision)
 			return
 		}
-		h.accept(r.Context(), w, h.postfixServer, h.postfixPort)
+		h.accept(r.Context(), w, h.postfixServer, h.postfixPort, "")
 	case (protocol == "imap" || protocol == "smtp") && (method == "plain" || method == "login"):
 		username, userOK := boundedHeader(r, "Auth-User")
 		secret, secretOK := boundedHeader(r, "Auth-Pass")
-		if !userOK || !secretOK || username == "" || secret == "" {
-			h.reject(w, "invalid credentials")
+		canonicalUser, canonicalOK := canonicalUsername(username)
+		if !userOK || !secretOK || !canonicalOK || secret == "" {
+			h.reject(w, "invalid credentials", "535 5.7.8")
 			return
 		}
 		passProtocol := "imap"
@@ -135,15 +141,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			server, port = h.postfixServer, h.postfixPort
 		}
 		response := h.service.DovecotPassdb(correlationID, daemon.PassdbRequest{
-			Username: username, Secret: secret, Protocol: passProtocol,
+			Username: canonicalUser, Secret: secret, Protocol: passProtocol,
 		})
 		if response.Decision != daemon.OK {
-			h.rejectDecision(w, response.Decision)
+			h.rejectAuthDecision(w, response.Decision)
 			return
 		}
-		h.accept(r.Context(), w, server, port)
+		h.accept(r.Context(), w, server, port, canonicalUser)
 	default:
-		h.reject(w, "unsupported authentication")
+		h.reject(w, "unsupported authentication", "535 5.7.8")
 	}
 }
 
@@ -172,6 +178,22 @@ func smtpRecipient(value string) (string, bool) {
 	return parsed.Address, true
 }
 
+// canonicalUsername binds the backend login name to Mail's lowercase address
+// identity. Complexity: time O(n), Omega(n), tight Theta(n); auxiliary space
+// O(n), Omega(n), tight Theta(n), where n is the bounded username length and
+// delegated mail parsing is linear in n.
+func canonicalUsername(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, "<>\x00\r\n") {
+		return "", false
+	}
+	parsed, err := mail.ParseAddress(value)
+	if err != nil || !strings.EqualFold(parsed.Address, value) {
+		return "", false
+	}
+	return strings.ToLower(parsed.Address), true
+}
+
 func (h *Handler) authorized(token string) bool {
 	if !validToken(token) {
 		return false
@@ -188,16 +210,22 @@ func boundedHeader(r *http.Request, name string) (string, bool) {
 	return values[0], true
 }
 
-func (h *Handler) accept(ctx context.Context, w http.ResponseWriter, server, port string) {
+// accept resolves one fixed backend and emits the bounded NGINX success
+// contract. Complexity: time O(R), Omega(1), with no tight Theta established
+// because DNS is delegated; auxiliary space O(R), Omega(1), where R is the
+// bounded resolver result count.
+func (h *Handler) accept(ctx context.Context, w http.ResponseWriter, server, port, username string) {
 	address, err := h.resolveBackend(ctx, server)
 	if err != nil {
-		w.Header().Set("Auth-Wait", "3")
-		h.reject(w, "authentication temporarily unavailable")
+		h.temporary(w)
 		return
 	}
 	w.Header().Set("Auth-Status", "OK")
 	w.Header().Set("Auth-Server", address)
 	w.Header().Set("Auth-Port", port)
+	if username != "" {
+		w.Header().Set("Auth-User", username)
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -217,18 +245,40 @@ func resolvePrivateBackend(parent context.Context, host string) (string, error) 
 	return "", fmt.Errorf("backend did not resolve to private IPv4")
 }
 
-func (h *Handler) rejectDecision(w http.ResponseWriter, decision daemon.Decision) {
+// rejectAuthDecision maps a daemon decision to the documented NGINX SMTP
+// response contract. Complexity: time and auxiliary space O(1), Omega(1),
+// tight Theta(1).
+func (h *Handler) rejectAuthDecision(w http.ResponseWriter, decision daemon.Decision) {
 	if decision == daemon.Defer || decision == daemon.Error {
-		w.Header().Set("Auth-Wait", "3")
-		h.reject(w, "authentication temporarily unavailable")
+		h.temporary(w)
 		return
 	}
-	h.reject(w, "authentication failed")
+	h.reject(w, "authentication failed", "535 5.7.8")
 }
 
-func (h *Handler) reject(w http.ResponseWriter, status string) {
+// rejectRecipientDecision preserves temporary failures while returning a
+// recipient-specific permanent code for authoritative denial. Complexity:
+// time and auxiliary space O(1), Omega(1), tight Theta(1).
+func (h *Handler) rejectRecipientDecision(w http.ResponseWriter, decision daemon.Decision) {
+	if decision == daemon.Defer || decision == daemon.Error {
+		h.temporary(w)
+		return
+	}
+	h.reject(w, "authentication failed", "550 5.1.1")
+}
+
+// temporary emits a retryable NGINX mail-auth response. Complexity: time and
+// auxiliary space O(1), Omega(1), tight Theta(1).
+func (h *Handler) temporary(w http.ResponseWriter) {
+	w.Header().Set("Auth-Wait", "3")
+	h.reject(w, "authentication temporarily unavailable", "451 4.3.0")
+}
+
+// reject emits one explicit NGINX mail-auth failure. Complexity: time and
+// auxiliary space O(1), Omega(1), tight Theta(1).
+func (h *Handler) reject(w http.ResponseWriter, status, errorCode string) {
 	w.Header().Set("Auth-Status", status)
-	w.Header().Set("Auth-Error-Code", "535 5.7.8")
+	w.Header().Set("Auth-Error-Code", errorCode)
 	w.WriteHeader(http.StatusOK)
 }
 

@@ -1,11 +1,15 @@
 package diag
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,21 +34,25 @@ type DNSRecordCheck struct {
 }
 
 type DomainDNSPlan struct {
-	Domain                string
-	MailHost              string
-	DKIMSelector          string
-	DKIMPublicKeyTXT      string
-	DMARCReportAddress    string
-	AutoconfigHost        string
-	AutodiscoverHost      string
-	MTASTS                bool
-	TLSRPTReportAddress   string
-	TLSAExpected          string
-	TLSAEnabled           bool
-	UnsupportedRecordNote map[string]string
+	Domain                string            `json:"domain"`
+	MailHost              string            `json:"mail_host"`
+	MailIP                string            `json:"mail_ip,omitempty"`
+	PTRExpected           string            `json:"ptr_expected,omitempty"`
+	DKIMSelector          string            `json:"dkim_selector"`
+	DKIMPublicKeyTXT      string            `json:"dkim_public_key_txt,omitempty"`
+	DMARCReportAddress    string            `json:"dmarc_report_address,omitempty"`
+	AutoconfigHost        string            `json:"autoconfig_host,omitempty"`
+	AutodiscoverHost      string            `json:"autodiscover_host,omitempty"`
+	MTASTS                bool              `json:"mta_sts"`
+	TLSRPTReportAddress   string            `json:"tls_rpt_report_address,omitempty"`
+	TLSAExpected          string            `json:"tlsa_expected,omitempty"`
+	TLSAEnabled           bool              `json:"tlsa_enabled"`
+	UnsupportedRecordNote map[string]string `json:"unsupported_record_note,omitempty"`
 }
 
 type DNSResolver interface {
+	LookupA(name string) ([]string, error)
+	LookupPTR(address string) ([]string, error)
 	LookupTXT(name string) ([]string, error)
 	LookupMX(name string) ([]string, error)
 	LookupSRV(name string) ([]string, error)
@@ -53,6 +61,12 @@ type DNSResolver interface {
 
 type StaticDNS map[string][]string
 
+func (s StaticDNS) LookupA(name string) ([]string, error) {
+	return append([]string(nil), s[key("A", name)]...), nil
+}
+func (s StaticDNS) LookupPTR(address string) ([]string, error) {
+	return append([]string(nil), s[key("PTR", address)]...), nil
+}
 func (s StaticDNS) LookupTXT(name string) ([]string, error) {
 	return append([]string(nil), s[key("TXT", name)]...), nil
 }
@@ -66,6 +80,99 @@ func (s StaticDNS) LookupTLSA(name string) ([]string, error) {
 	return append([]string(nil), s[key("TLSA", name)]...), nil
 }
 func key(typ, name string) string { return typ + ":" + strings.ToLower(strings.TrimSuffix(name, ".")) }
+
+// NetDNS resolves public DNS with a bounded per-query timeout. It deliberately
+// implements only the record families used by the administrator readiness
+// view; TLSA remains an explicit unsupported boundary in the standard library.
+type NetDNS struct {
+	Resolver *net.Resolver
+	Timeout  time.Duration
+}
+
+func (r NetDNS) context() (context.Context, context.CancelFunc) {
+	timeout := r.Timeout
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	return context.WithTimeout(context.Background(), timeout)
+}
+
+func (r NetDNS) resolver() *net.Resolver {
+	if r.Resolver != nil {
+		return r.Resolver
+	}
+	return net.DefaultResolver
+}
+
+func (r NetDNS) LookupA(name string) ([]string, error) {
+	ctx, cancel := r.context()
+	defer cancel()
+	addresses, err := r.resolver().LookupHost(ctx, name)
+	if err != nil {
+		return nil, dnsLookupError(err)
+	}
+	out := make([]string, 0, len(addresses))
+	for _, address := range addresses {
+		if ip := net.ParseIP(address); ip != nil && ip.To4() != nil {
+			out = append(out, ip.String())
+		}
+	}
+	return out, nil
+}
+
+func (r NetDNS) LookupPTR(address string) ([]string, error) {
+	ctx, cancel := r.context()
+	defer cancel()
+	values, err := r.resolver().LookupAddr(ctx, address)
+	return values, dnsLookupError(err)
+}
+
+func (r NetDNS) LookupTXT(name string) ([]string, error) {
+	ctx, cancel := r.context()
+	defer cancel()
+	values, err := r.resolver().LookupTXT(ctx, name)
+	return values, dnsLookupError(err)
+}
+
+func (r NetDNS) LookupMX(name string) ([]string, error) {
+	ctx, cancel := r.context()
+	defer cancel()
+	records, err := r.resolver().LookupMX(ctx, name)
+	if err != nil {
+		return nil, dnsLookupError(err)
+	}
+	out := make([]string, 0, len(records))
+	for _, record := range records {
+		out = append(out, fmt.Sprintf("%d %s", record.Pref, record.Host))
+	}
+	return out, nil
+}
+
+func (r NetDNS) LookupSRV(name string) ([]string, error) {
+	ctx, cancel := r.context()
+	defer cancel()
+	_, records, err := r.resolver().LookupSRV(ctx, "", "", name)
+	if err != nil {
+		return nil, dnsLookupError(err)
+	}
+	out := make([]string, 0, len(records))
+	for _, record := range records {
+		out = append(out, fmt.Sprintf("%d %d %d %s", record.Priority, record.Weight, record.Port, record.Target))
+	}
+	return out, nil
+}
+
+func (NetDNS) LookupTLSA(string) ([]string, error) {
+	return nil, fmt.Errorf("TLSA lookup is unsupported by the configured resolver")
+}
+
+func dnsLookupError(err error) error {
+	var dnsError *net.DNSError
+	if errors.As(err, &dnsError) && dnsError.IsNotFound {
+		return nil
+	}
+	return err
+}
 
 func DNSReadiness(plan DomainDNSPlan, r DNSResolver) []DNSRecordCheck {
 	d := strings.ToLower(plan.Domain)
@@ -81,26 +188,66 @@ func DNSReadiness(plan DomainDNSPlan, r DNSResolver) []DNSRecordCheck {
 	if tlsRpt == "" {
 		tlsRpt = "mailto:tlsrpt@" + d
 	}
-	checks := []DNSRecordCheck{
-		check(r.LookupMX, "MX", d, "MX", []string{"10 " + mailHost + "."}),
-		check(r.LookupTXT, "SPF", d, "TXT", []string{"v=spf1 mx -all"}),
-		check(r.LookupTXT, "DKIM", plan.DKIMSelector+"._domainkey."+d, "TXT", []string{plan.DKIMPublicKeyTXT}),
-		check(r.LookupTXT, "DMARC", "_dmarc."+d, "TXT", []string{"v=DMARC1; p=quarantine; rua=" + dmarcReport}),
-		check(r.LookupSRV, "SRV/autoconfig", "_submission._tcp."+d, "SRV", []string{"0 1 587 " + mailHost + "."}),
-		check(r.LookupTXT, "MTA-STS", "_mta-sts."+d, "TXT", []string{"v=STSv1; id=1"}),
-		check(r.LookupTXT, "TLS-RPT", "_smtp._tls."+d, "TXT", []string{"v=TLSRPTv1; rua=" + tlsRpt}),
+	jobs := []func() DNSRecordCheck{
+		func() DNSRecordCheck { return check(r.LookupMX, "MX", d, "MX", []string{"10 " + mailHost + "."}) },
+		func() DNSRecordCheck { return check(r.LookupTXT, "SPF", d, "TXT", []string{"v=spf1 mx -all"}) },
+		func() DNSRecordCheck {
+			return check(r.LookupTXT, "DKIM", plan.DKIMSelector+"._domainkey."+d, "TXT", []string{plan.DKIMPublicKeyTXT})
+		},
+		func() DNSRecordCheck {
+			return check(r.LookupTXT, "DMARC", "_dmarc."+d, "TXT", []string{"v=DMARC1; p=quarantine; rua=" + dmarcReport})
+		},
+		func() DNSRecordCheck {
+			return check(r.LookupSRV, "SRV/autoconfig", "_submission._tcp."+d, "SRV", []string{"0 1 587 " + mailHost + "."})
+		},
+		func() DNSRecordCheck {
+			return check(r.LookupTXT, "TLS-RPT", "_smtp._tls."+d, "TXT", []string{"v=TLSRPTv1; rua=" + tlsRpt})
+		},
+	}
+	var fixed []DNSRecordCheck
+	if plan.MTASTS {
+		jobs = append(jobs, func() DNSRecordCheck {
+			return check(r.LookupTXT, "MTA-STS", "_mta-sts."+d, "TXT", []string{"v=STSv1; id=1"})
+		})
+	} else {
+		fixed = append(fixed, DNSRecordCheck{Family: "MTA-STS", Name: "_mta-sts." + d, Type: "TXT", Status: Unsupported, Remediation: "MTA-STS is not enabled for this deployment policy"})
+	}
+	if plan.MailIP != "" {
+		jobs = append(jobs, func() DNSRecordCheck { return check(r.LookupA, "A", mailHost, "A", []string{plan.MailIP}) })
+	}
+	if plan.MailIP != "" && plan.PTRExpected != "" {
+		jobs = append(jobs, func() DNSRecordCheck {
+			return check(r.LookupPTR, "PTR", plan.MailIP, "PTR", []string{strings.TrimSuffix(plan.PTRExpected, ".") + "."})
+		})
 	}
 	if plan.AutoconfigHost != "" {
-		checks = append(checks, check(r.LookupSRV, "SRV/autoconfig", "_autoconfig._tcp."+d, "SRV", []string{"0 1 443 " + plan.AutoconfigHost + "."}))
+		jobs = append(jobs, func() DNSRecordCheck {
+			return check(r.LookupSRV, "SRV/autoconfig", "_autoconfig._tcp."+d, "SRV", []string{"0 1 443 " + plan.AutoconfigHost + "."})
+		})
 	}
 	if plan.AutodiscoverHost != "" {
-		checks = append(checks, check(r.LookupSRV, "SRV/autodiscover", "_autodiscover._tcp."+d, "SRV", []string{"0 1 443 " + plan.AutodiscoverHost + "."}))
+		jobs = append(jobs, func() DNSRecordCheck {
+			return check(r.LookupSRV, "SRV/autodiscover", "_autodiscover._tcp."+d, "SRV", []string{"0 1 443 " + plan.AutodiscoverHost + "."})
+		})
 	}
 	if plan.TLSAEnabled {
-		checks = append(checks, check(r.LookupTLSA, "TLSA", "_25._tcp."+mailHost, "TLSA", []string{plan.TLSAExpected}))
+		jobs = append(jobs, func() DNSRecordCheck {
+			return check(r.LookupTLSA, "TLSA", "_25._tcp."+mailHost, "TLSA", []string{plan.TLSAExpected})
+		})
 	} else {
-		checks = append(checks, DNSRecordCheck{Family: "TLSA", Name: "_25._tcp." + mailHost, Type: "TLSA", Status: Unsupported, Remediation: "TLSA/DANE is not enabled for this deployment policy"})
+		fixed = append(fixed, DNSRecordCheck{Family: "TLSA", Name: "_25._tcp." + mailHost, Type: "TLSA", Status: Unsupported, Remediation: "TLSA/DANE is not enabled for this deployment policy"})
 	}
+	checks := make([]DNSRecordCheck, len(jobs))
+	var wait sync.WaitGroup
+	wait.Add(len(jobs))
+	for i := range jobs {
+		go func(index int) {
+			defer wait.Done()
+			checks[index] = jobs[index]()
+		}(i)
+	}
+	wait.Wait()
+	checks = append(checks, fixed...)
 	for i := range checks {
 		if checks[i].Status != Unsupported && (len(checks[i].Expected) == 0 || checks[i].Expected[0] == "") {
 			checks[i].Status = NotChecked

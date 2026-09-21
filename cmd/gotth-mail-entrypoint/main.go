@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"forgejo/gotthboard/gotth-mail/internal/version"
 )
 
 var role = "invalid"
@@ -40,6 +42,7 @@ var controlEnvironmentKeys = map[string]struct{}{
 	"GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE": {}, "GOTTH_MAIL_POSTFIX_RELEASE_TOKEN_FILE": {},
 	"GOTTH_MAIL_POSTFIX_POLICY_LISTEN": {}, "GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ADDRESS": {},
 	"GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ID": {}, "GOTTH_MAIL_WEBMAIL_RUNTIME_FILE": {},
+	"GOTTH_MAIL_DNS_PLAN_FILE":             {},
 	"GOTTH_MAIL_POSTFIX_DOMAIN_MAP_LISTEN": {}, "GOTTH_MAIL_POSTFIX_MAILBOX_MAP_LISTEN": {},
 	"GOTTH_MAIL_POSTFIX_ALIAS_MAP_LISTEN": {},
 }
@@ -51,6 +54,10 @@ var postfixEnvironmentKeys = map[string]struct{}{
 }
 
 func main() {
+	if err := validateBuildIdentity(version.Version); err != nil {
+		fmt.Fprintln(os.Stderr, "gotth-mail entrypoint:", err)
+		os.Exit(1)
+	}
 	if role == "postfix" {
 		if err := runPostfix(); err != nil {
 			fmt.Fprintln(os.Stderr, "gotth-mail entrypoint:", err)
@@ -67,6 +74,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "gotth-mail entrypoint: exec failed")
 		os.Exit(1)
 	}
+}
+
+func validateBuildIdentity(value string) error {
+	return version.Validate(value)
 }
 
 func runtimeCommand(selectedRole string) (string, []string, []string, error) {

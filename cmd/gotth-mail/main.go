@@ -58,6 +58,9 @@ func main() {
 	if db != nil {
 		defer db.Close()
 	}
+	if err := configureDNSPlansFromEnv(&server); err != nil {
+		log.Fatalf("configure DNS administrator: %v", err)
+	}
 	if err := configurePostfixHelperFromEnv(&server); err != nil {
 		log.Fatalf("configure Postfix helper: %v", err)
 	}
@@ -77,20 +80,12 @@ func main() {
 	if err := configureExtensionsFromEnv(&server); err != nil {
 		log.Fatalf("configure extension administrator: %v", err)
 	}
-	if policyAddr := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_POLICY_LISTEN")); policyAddr != "" {
-		go servePostfixPolicy(policyAddr, server.Daemon)
+	postfixListeners, err := configurePostfixListenersFromEnv(server.Daemon)
+	if err != nil {
+		log.Fatalf("configure Postfix listeners: %v", err)
 	}
-	for _, configured := range []struct {
-		environment string
-		kind        postfixMapKind
-	}{
-		{"GOTTH_MAIL_POSTFIX_DOMAIN_MAP_LISTEN", postfixDomainMap},
-		{"GOTTH_MAIL_POSTFIX_MAILBOX_MAP_LISTEN", postfixMailboxMap},
-		{"GOTTH_MAIL_POSTFIX_ALIAS_MAP_LISTEN", postfixAliasMap},
-	} {
-		if address := strings.TrimSpace(os.Getenv(configured.environment)); address != "" {
-			go servePostfixMap(address, configured.kind, server.Daemon)
-		}
+	for _, listener := range postfixListeners {
+		defer listener.Close()
 	}
 	if err := configureOIDCFromEnv(context.Background(), &server, http.DefaultClient); err != nil {
 		log.Fatalf("configure oidc: %v", err)
@@ -108,6 +103,57 @@ func main() {
 		addr = ":8080"
 	}
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+// configurePostfixListenersFromEnv binds every required policy/map listener
+// before starting any accept loop, so partial startup cannot look healthy.
+// Complexity: time O(k), Omega(k), tight Theta(k); auxiliary space O(k),
+// Omega(k), tight Theta(k), where k is the configured listener count (at most
+// four); each bind is delegated to the operating system.
+func configurePostfixListenersFromEnv(service daemon.Service) ([]net.Listener, error) {
+	type listenerSpec struct {
+		environment string
+		serve       func(net.Listener)
+	}
+	specs := []listenerSpec{
+		{"GOTTH_MAIL_POSTFIX_POLICY_LISTEN", func(listener net.Listener) {
+			servePostfixPolicy(listener, service)
+		}},
+		{"GOTTH_MAIL_POSTFIX_DOMAIN_MAP_LISTEN", func(listener net.Listener) {
+			servePostfixMap(listener, postfixDomainMap, service)
+		}},
+		{"GOTTH_MAIL_POSTFIX_MAILBOX_MAP_LISTEN", func(listener net.Listener) {
+			servePostfixMap(listener, postfixMailboxMap, service)
+		}},
+		{"GOTTH_MAIL_POSTFIX_ALIAS_MAP_LISTEN", func(listener net.Listener) {
+			servePostfixMap(listener, postfixAliasMap, service)
+		}},
+	}
+	type boundListener struct {
+		listener net.Listener
+		serve    func(net.Listener)
+	}
+	bound := make([]boundListener, 0, len(specs))
+	for _, spec := range specs {
+		address := strings.TrimSpace(os.Getenv(spec.environment))
+		if address == "" {
+			continue
+		}
+		listener, err := net.Listen("tcp", address)
+		if err != nil {
+			for _, current := range bound {
+				_ = current.listener.Close()
+			}
+			return nil, fmt.Errorf("%s: %w", spec.environment, err)
+		}
+		bound = append(bound, boundListener{listener: listener, serve: spec.serve})
+	}
+	listeners := make([]net.Listener, 0, len(bound))
+	for _, current := range bound {
+		listeners = append(listeners, current.listener)
+		go current.serve(current.listener)
+	}
+	return listeners, nil
 }
 
 func productionNotificationMonitor(server *api.Server, backend *notifyruntime.GRPCNotificationBackend, name string) notifyruntime.OperationalMonitor {
@@ -197,8 +243,83 @@ func runtimeMux(server api.Server) http.Handler {
 		mux.Handle("/internal/v1/notifications/telegram", server.NotificationReceiver)
 	}
 	sessions, _ := server.OIDCStore.(authn.IdentitySessionStore)
-	mux.Handle("/", httpui.HandlerWithAdminIdentitySessionsAndExtensions(referenceAdminStore(), server.Identity, server.Authz, sessions, server.OIDCNow, server.Extensions))
+	mux.Handle("/", httpui.HandlerWithAdminIdentitySessionsExtensionsAndDNS(referenceAdminStore(), server.Identity, server.Authz, sessions, server.OIDCNow, server.Extensions, httpui.DNSAdmin{Plans: server.DNSPlans, Resolver: diag.NetDNS{}}))
 	return mux
+}
+
+type dnsPlanFile struct {
+	Plans []diag.DomainDNSPlan `json:"plans"`
+}
+
+// configureDNSPlansFromEnv loads only public DNS expectations. The file is
+// deliberately separate from secret configuration so the administrator page
+// can never become a route for private key material.
+func configureDNSPlansFromEnv(server *api.Server) error {
+	path := strings.TrimSpace(os.Getenv("GOTTH_MAIL_DNS_PLAN_FILE"))
+	if path == "" {
+		return nil
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect DNS plan: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 64<<10 {
+		return fmt.Errorf("DNS plan must be a non-empty regular file no larger than 64 KiB")
+	}
+	handle, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open DNS plan: %w", err)
+	}
+	defer handle.Close()
+	decoder := json.NewDecoder(io.LimitReader(handle, 64<<10))
+	decoder.DisallowUnknownFields()
+	var document dnsPlanFile
+	if err := decoder.Decode(&document); err != nil {
+		return fmt.Errorf("decode DNS plan: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("DNS plan contains trailing data")
+	}
+	if len(document.Plans) == 0 || len(document.Plans) > 100 {
+		return fmt.Errorf("DNS plan must contain between 1 and 100 domains")
+	}
+	plans := make(map[string]diag.DomainDNSPlan, len(document.Plans))
+	for _, plan := range document.Plans {
+		domain, err := outboundpolicy.NormalizeDomain(plan.Domain)
+		if err != nil {
+			return fmt.Errorf("invalid DNS plan domain")
+		}
+		mailHost, err := outboundpolicy.NormalizeDomain(plan.MailHost)
+		if err != nil {
+			return fmt.Errorf("invalid DNS plan mail host for %s", domain)
+		}
+		if len(plan.DKIMSelector) == 0 || len(plan.DKIMSelector) > 63 || strings.ContainsAny(plan.DKIMSelector, ". \t\r\n") {
+			return fmt.Errorf("invalid DKIM selector for %s", domain)
+		}
+		if plan.MailIP != "" {
+			ip := net.ParseIP(plan.MailIP)
+			if ip == nil || ip.To4() == nil {
+				return fmt.Errorf("invalid IPv4 mail address for %s", domain)
+			}
+			plan.MailIP = ip.String()
+		}
+		if plan.PTRExpected != "" {
+			ptr, err := outboundpolicy.NormalizeDomain(plan.PTRExpected)
+			if err != nil {
+				return fmt.Errorf("invalid PTR expectation for %s", domain)
+			}
+			plan.PTRExpected = ptr
+		}
+		plan.Domain = domain
+		plan.MailHost = mailHost
+		plan.DKIMSelector = strings.ToLower(plan.DKIMSelector)
+		if _, exists := plans[domain]; exists {
+			return fmt.Errorf("duplicate DNS plan for %s", domain)
+		}
+		plans[domain] = plan
+	}
+	server.DNSPlans = plans
+	return nil
 }
 
 func configureFrontAuthFromEnv(server *api.Server) error {
@@ -754,17 +875,17 @@ func insecureLoopback(raw string) bool {
 	return host == "localhost" || (ip != nil && ip.IsLoopback())
 }
 
-func servePostfixPolicy(addr string, svc daemon.Service) {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Printf("postfix policy listen failed: %v", err)
-		return
-	}
+// servePostfixPolicy accepts an unbounded request stream on an already-bound
+// required listener. Per accepted connection, time and auxiliary space are
+// O(1), Omega(1), tight Theta(1), excluding the delegated request handler.
+func servePostfixPolicy(ln net.Listener, svc daemon.Service) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			log.Printf("postfix policy accept failed: %v", err)
-			continue
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			log.Fatalf("postfix policy accept failed: %v", err)
 		}
 		go handlePostfixPolicy(conn, svc)
 	}

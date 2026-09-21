@@ -13,3 +13,12 @@ func TestEveryProductionRoleHasBoundedHealthTargets(t *testing.T) {
 		t.Fatal("invalid role has health targets")
 	}
 }
+
+func TestHealthRejectsInvalidBuildIdentity(t *testing.T) {
+	if err := validateBuildIdentity("release-candidate"); err == nil {
+		t.Fatal("invalid health build identity accepted")
+	}
+	if err := validateBuildIdentity("1.0.0-beta.1"); err != nil {
+		t.Fatalf("valid health build identity rejected: %v", err)
+	}
+}

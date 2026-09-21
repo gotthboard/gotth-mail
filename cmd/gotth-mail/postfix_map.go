@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -19,17 +20,17 @@ const (
 	postfixAliasMap
 )
 
-func servePostfixMap(address string, kind postfixMapKind, service daemon.Service) {
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		log.Printf("Postfix map listen failed: %v", err)
-		return
-	}
+// servePostfixMap accepts an unbounded request stream on an already-bound
+// required listener. Per accepted connection, time and auxiliary space are
+// O(1), Omega(1), tight Theta(1), excluding the delegated request handler.
+func servePostfixMap(listener net.Listener, kind postfixMapKind, service daemon.Service) {
 	for {
 		connection, err := listener.Accept()
 		if err != nil {
-			log.Printf("Postfix map accept failed: %v", err)
-			continue
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			log.Fatalf("Postfix map accept failed: %v", err)
 		}
 		go handlePostfixMap(connection, kind, service)
 	}

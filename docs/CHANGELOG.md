@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-09-20 19:59 CDT — Admit durable Authentik role-binding operations
+
+Implementation commit: `d29f0e18fe8437d30ed100788f2a9dbb65293539`
+
+Affected files:
+
+- `cmd/gotth-mailctl/main.go` and its tests;
+- `internal/rolebinding/`;
+- migration `0018_role_binding_authority` and store migration parity tests;
+- role-binding workflow contract, evidence, reviews, state, and event log;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+- Added a preview/confirm CLI boundary for granting and revoking durable
+  `global_admin`, `domain_manager`, and `scoped_domain_access` bindings.
+- Selection is restricted to the exact verified Authentik issuer, opaque
+  subject, and canonical mailbox tuple. Padded issuer/subject values,
+  unknown/duplicate/empty flags, stale confirmations, invalid role/domain
+  combinations, and grants into disabled state fail closed.
+- Apply uses a serializable transaction, row locks, schema-enforced authority
+  cardinality, atomic redacted audit, and immediate projection into existing
+  sessions. Revoke remains available after the mailbox or domain is disabled.
+- No live role, credential, deployment, DNS record, tag, release, or external
+  service changed.
+
+Verification:
+
+- full `go test ./...`, `go test -race ./...`, `go vet ./...`, and
+  `go build ./cmd/...` passed on the exact candidate;
+- the changed packages passed a 20-run shuffled race repetition;
+- focused coverage was 86.7% for `internal/rolebinding` and 100% for the new
+  CLI request parser; uncovered statements are database/entropy failure paths,
+  while stale state, concurrency, audit rollback, disabled-state recovery, and
+  all requested behavior are exercised;
+- a clean clone of the exact candidate passed store, service, and CLI tests;
+- the production build contract and four cold review passes were clean.
+
+## 2026-09-20 19:35 CDT — Define durable role-binding operator boundary
+
+- Added the PRD, architecture, implementation specification, workflow state,
+  and verification contract for the missing preview/confirm operator path that
+  grants or revokes durable roles for exact verified Authentik identities.
+- Required schema-enforced global/scoped role cardinality, serializable stale
+  plan rejection, atomic redacted audit, existing-session projection, and
+  restart persistence.
+- No role row, live database, credential, deployment, DNS record, tag, release,
+  or external service changed.
+
 ## 2026-09-20 — Add the non-Telegram webhook extension runtime
 
 - Added the exact `gotth.mail.notification.webhook` production adapter for the
@@ -55,164 +104,151 @@ This changelog is operator-facing project history, not a replacement for workflo
 
 ## Unreleased
 
-### 2026-09-20 14:41 CDT — Keep production Bayes state inside the five-role boundary
+### 2026-09-21 16:32 CDT — Reconcile the admitted release histories
 
 Implementation commit: `current commit; hash assigned by Git after commit`
 
 Affected files:
 
-- `configs/production/rspamd/override.inc`;
-- `scripts/production-runtime-smoke.sh`;
+- repository ancestry for the alpha-integration and admitted production,
+  identity-role, webmail-footer, and DNS-administrator lines;
 - `docs/CHANGELOG.md`.
 
 Explanation:
 
-Replaced Rspamd 3.11's distribution-default Redis Bayes backend with its
-supported SQLite backend. The production contract runs one scanner worker and
-does not provision Redis, so retaining the default caused every message to
-attempt a nonexistent service. The two Bayes databases and learn cache now
-live on the existing durable `/var/lib/rspamd` volume. This preserves spam
-learning without adding an undeclared sixth role or silently disabling the
-classifier.
+Merged the preserved alpha-integration history with the later admitted
+production-artifact and identity/UI line. The histories diverged after the
+shared production-artifact design commit. The merge retains the admitted
+`12dbe59973cba53e52d56437f21424b2ec53f3c8` production implementation and
+records the earlier runtime-fix fork as historical ancestry without restoring
+its rejected source tree. The resulting product tree was byte-identical to
+`23fb7bb0cff9da86f38c3005afff610506a4401e` before this changelog entry.
+
+This is integration recovery only. Alpha publication remains blocked on its
+declared identity-library, public extension-distribution, live lifecycle, and
+immutable release gates. No alpha or beta tag, artifact, release, deployment,
+DNS change, or credential mutation is claimed by this merge.
 
 Verification:
 
-- Rspamd creates all three nonempty SQLite files on its durable volume;
-- the combined production smoke passes the complete SMTP-to-IMAPS path;
-- the smoke fails if Rspamd logs either missing Redis parameters or a failed
-  Redis call;
-- Mail's serial full tests, race tests, vet, and builds pass on the development
-  host, and the run leaves no test-owned SysV shared-memory segments behind.
+- `git diff --check --cached` passed after conflict resolution;
+- the initially parallel full suite exposed the known shared PostgreSQL test
+  database collision in `internal/notification`;
+- `go test -count=1 ./internal/notification` passed in isolation;
+- `go test -p=1 -count=1 ./...` passed;
+- `go test -race -p=1 -count=1 ./...` passed;
+- `go vet ./...` passed;
+- `go build ./cmd/...` passed.
 
-### 2026-09-20 14:24 CDT — Prove the combined production mail path
+### 2026-09-20 16:27 CDT — Admit the exact production artifact mechanism
 
 Implementation commit: `current commit; hash assigned by Git after commit`
 
 Affected files:
 
-- `cmd/gotth-mail/main.go` and its durable wiring test;
-- `internal/frontauth` and its tests;
-- `configs/production/front/nginx.conf`;
-- `configs/production/postfix/main.cf`;
-- `configs/production/dovecot/dovecot.conf`;
-- `scripts/production-runtime-smoke.sh`;
+- `workflow.toml` and `workflow.events.jsonl`;
+- production-artifact README, evidence, and two cold reviews;
+- alpha-integration and extension-administrator workflow notes;
 - `docs/CHANGELOG.md`.
 
 Explanation:
 
-Added a disposable production-boundary smoke that starts PostgreSQL and all
-five immutable Mail roles with read-only roots, dropped capabilities, fixed
-UIDs, file-mounted credentials, private runtime tmpfs paths, and no reference
-fixture. It provisions one real database mailbox, submits mail through NGINX
-STARTTLS, validates recipient policy, scans through Rspamd, delivers through
-Postfix and Dovecot LMTP, proves the Maildir object, and authenticates and
-reads it back through NGINX IMAPS.
+Closed the bounded production-artifact child against implementation commit
+`12dbe59973cba53e52d56437f21424b2ec53f3c8`. The final clean candidate has
+five reproducible exact role images, a deterministic configuration USTAR and
+canonical release manifest, a real combined SMTP/IMAP mail-flow smoke, and a
+real Stack Rspamd install/replacement/reopen/rollback proof. Forgejo and
+GitHub source refs agree for both the Mail producer and Stack consumer.
 
-The combined proof exposed and corrected four real protocol mistakes. Durable
-identity is now projected into the published daemon before private listeners
-or the NGINX auth handler copy it. The auth handler parses NGINX's complete
-`RCPT TO` command, resolves only its two fixed service aliases to private IPv4
-addresses because NGINX rejects names in `Auth-Server`, and fails closed on
-resolution errors. NGINX sends only the HAProxy PROXY header instead of also
-sending an unauthorized SMTP `XCLIENT`. Postfix now distinguishes local
-recipient admission from unauthenticated relay rejection and permits an
-accepted policy result. Dovecot accepts HAProxy input only from private
-network ranges and uses the documented Dovecot 2.4 `nopassword` passdb field
-after the control plane has already authenticated the client.
+The proof manifest intentionally has no extension entry and is not called an
+integrated alpha. The workflow resumes the non-Telegram webhook distribution
+boundary; live identity, recovery, and release publication remain blocked.
 
 Verification:
 
-- focused control-plane and front-auth tests pass;
-- Dovecot 2.4 native configuration expansion passes;
-- the combined production smoke passes control-plane startup, NGINX
-  STARTTLS/auth, Postfix maps and policy, Rspamd milter scanning, Dovecot LMTP,
-  persistent Maildir delivery, and authenticated IMAPS readback;
-- `bash -n scripts/production-runtime-smoke.sh` and `git diff --check` pass.
+- final-commit full normal and race suites and vet pass;
+- two no-cache production builds have identical image and embedded-binary
+  digests;
+- the exact-source five-role mail-flow smoke passes;
+- two release-assembler runs have identical archive/manifest bytes;
+- Stack consumes the exact artifact and passes replacement/rollback in 50.70
+  seconds;
+- two fresh cold reviews are clean;
+- TOML/JSONL parsing and `git diff --check` pass.
 
-### 2026-09-20 13:42 CDT — Correct native-daemon production startup
+### 2026-09-20 15:55 CDT — Implement and prove the five-role production artifact mechanism
 
-Implementation commit: `current commit; hash assigned by Git after commit`
-
-Affected files:
-
-- `cmd/gotth-mail-entrypoint/main.go`;
-- `configs/production/control/environment`;
-- `configs/production/postfix/main.cf`;
-- `configs/production/rspamd/override.inc`;
-- `docs/CHANGELOG.md`.
-
-Explanation:
-
-Corrected defects found by starting the exact production containers under the
-documented read-only-root and capability boundary. Postfix now keeps its
-mutable data directory on the writable spool volume. The control plane calls
-the helper supervisor actually embedded in the Postfix role instead of a
-nonexistent service. Rspamd creates its tmpfs-backed control-socket directory
-before dropping into the daemon and uses one worker per role in this bounded
-deployment instead of inheriting the host CPU count.
-
-Verification:
-
-- Postfix starts with a read-only root and only the documented capabilities;
-- its master process and helper listener remain live and the SMTP health probe
-  passes;
-- Rspamd configuration expansion binds the intended proxy, normal, and
-  controller listeners with the mounted controller credential;
-- `git diff --check` passes.
-
-### 2026-09-20 13:29 CDT — Implement the production Mail artifact foundation
-
-Implementation commit: `current commit; hash assigned by Git after commit`
+Implementation commit: `12dbe59973cba53e52d56437f21424b2ec53f3c8`
 
 Affected files:
 
-- `build/production/Dockerfile` and `configs/production/**`;
-- `cmd/gotth-mail-entrypoint` and `cmd/gotth-mail-health`;
-- `cmd/gotth-mail-release`;
-- `cmd/gotth-mail/main.go`, its front-auth and Postfix-map tests, and
+- `build/production/Dockerfile`, `.dockerignore`, and
+  `configs/production/**`;
+- `cmd/gotth-mail-entrypoint`, `cmd/gotth-mail-health`, and
+  `cmd/gotth-mail-release`;
+- `cmd/gotth-mail/main.go`, its front-auth/Postfix map tests, and
   `internal/api/api.go`;
 - `internal/frontauth`;
+- production build, source-state, reproducibility, runtime-smoke, and contract
+  scripts;
 - `docs/CHANGELOG.md`.
 
 Explanation:
 
-Implemented the first complete production artifact boundary instead of
-shipping the reference Compose image. Five digest-based Linux/amd64 build
-targets now contain fixed compiled roles, exact preinstalled daemon packages,
-fixed entrypoint/health binaries, OCI identity labels, and no runtime package
-installation or source build. Added the private NGINX mail-auth adapter with a
-file-only service credential, bounded documented headers, fixed private
-backends, canonical passdb authentication, unauthenticated recipient checks,
-and directive-injection rejection. Added Postfix TCP maps backed by the
-authoritative control-plane domain/mailbox/alias services. The shipped NGINX,
-Postfix, Dovecot/Pigeonhole, and Rspamd configurations use private native
-daemon ports, STARTTLS/implicit TLS, PROXY protocol, policy/map services,
-LMTP, Sieve/quota plugins, and an authenticated Rspamd controller secret.
+Implemented the production artifact boundary instead of shipping the reference
+Compose image. Five Linux/amd64 targets contain fixed compiled roles, pinned
+daemon packages, fixed entrypoint and health binaries, role/source identity
+labels, and no runtime package installation or source build. Builds verify the
+exact Git commit, commit epoch, and complete tracked/staged/untracked source
+state. Non-development builds reject dirty source. The deterministic exporter
+rewrites filesystem timestamps to `SOURCE_DATE_EPOCH`, disables provenance
+mutation, and emits the five repositories required by the release manifest
+rather than hiding roles behind mutable tags in one repository. The gate also
+checks the fixed image user and exact installed package versions, and every
+shipped entrypoint/health binary rejects an invalid linked release identity.
 
-The new release assembler accepts one closed typed specification and exact
-eight-member configuration set, emits sorted deterministic USTAR with mode
-0440/UID 0/GID 0/epoch metadata, and writes the Stack-compatible canonical
-manifest atomically. Unknown files, unknown specification fields, floating or
-missing image identities, malformed release identity, symlinks, oversized
-members, and pre-existing output are rejected.
+Added native NGINX, Postfix, Dovecot/Pigeonhole, and Rspamd configuration.
+The private front-auth endpoint canonicalizes mailbox identity, distinguishes
+permanent authentication/recipient rejection from retryable service failure,
+uses fixed private backends, and never returns credentials. All four Postfix
+policy/map listeners bind synchronously so address conflicts fail startup
+instead of leaving a superficially healthy but unenforced control plane.
+Rspamd keeps Bayes and its learn cache on the existing durable volume using
+SQLite; no undeclared Redis role is smuggled into the topology.
+
+The release assembler emits a sorted deterministic eight-member USTAR and a
+Stack-compatible manifest bound to source, five image digests, schema,
+extensions, exact Go toolchain, platform, and build epoch. It rejects unknown
+files/fields, symlinks, malformed identity, fixture domains, Mailu, Roundcube,
+Telegram, private keys, literal front/Rspamd credentials, and environment
+secret slots that are not immutable `/run/secrets` file references. Artifact
+publication uses no-replace hard links plus directory synchronization, so a
+concurrent or repeated run cannot overwrite an existing output.
+
+The first apparent container smoke and Stack proof reused an image labeled
+with nonexistent commit `acd1100`; that evidence was invalid and is not used.
+Fresh builds from the actual source found and fixed transient SMTP semantics,
+listener startup, manifest toolchain drift, repository naming, and Docker
+filesystem timestamp nondeterminism.
 
 Verification:
 
-- focused serial, race, and vet checks pass for the new release assembler,
-  entrypoint, health, front-auth, control-plane, and Postfix gate surfaces;
-- all five exact package-pinned targets build on the development host;
-- NGINX starts as UID/GID 1000 with a read-only root and all five listeners;
-- Dovecot 2.4 native configuration validation and read-only/capability-profile
-  startup pass with IMAP, LMTP, and Postfix-auth listeners;
-- Postfix native configuration validation passes and its master remains live
-  under the required explicit network-bind capability;
-- Rspamd native configuration validation passes; full combined-role and Stack
-  replacement proof remains open;
+- full normal and race suites, vet, focused hostile configuration tests,
+  shell syntax, build-contract rejection checks, and `git diff --check` pass;
+- two independent no-cache builds produced identical image IDs and executable
+  digests after the deterministic exporter correction;
+- a fresh exact-source combined smoke passes NGINX TLS/STARTTLS/auth, Postfix
+  policy/maps/queueing, Rspamd milter and durable Bayes state, Dovecot LMTP,
+  Maildir persistence, and authenticated IMAPS readback under the bounded
+  users/capabilities/read-only-root profile;
+- the final clean candidate reproducibility and Stack replacement/rollback
+  proof remain open and will bind the implementation commit rather than this
+  dirty development tree;
 - `git diff --check` passes.
 
 ### 2026-09-20 13:02 CDT — Define the five-role production artifact boundary
 
-Implementation commit: `current commit; hash assigned by Git after commit`
+Implementation commit: `5e7228249c175b716e191fde36bf0ae889574fcb`
 
 Affected files:
 
@@ -246,7 +282,7 @@ Verification:
 
 ### 2026-09-20 12:05 CDT — Start alpha integration and reconcile main ancestry
 
-Implementation commit: `current commit; hash assigned by Git after commit`
+Implementation commit: `764a48d3f40f5a2b3240b8c7fe12e0923e293964`
 
 Affected files:
 

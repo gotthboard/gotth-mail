@@ -19,6 +19,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/ops"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/render"
+	"forgejo/gotthboard/gotth-mail/internal/rolebinding"
 	"forgejo/gotthboard/gotth-mail/internal/scimtoken"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/version"
@@ -228,13 +229,57 @@ func runIdentity(args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(result)
+	case "role-binding":
+		request, err := roleBindingRequest(args)
+		if err != nil {
+			return err
+		}
+		service := rolebinding.Service{DB: db}
+		if args[2] == "preview" {
+			plan, err := service.Preview(ctx, request)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(plan)
+		}
+		confirmation, ok := flagValue(args, "--confirm")
+		if !ok || confirmation == "" {
+			return fmt.Errorf("--confirm <preview-digest> required")
+		}
+		result, err := service.Apply(ctx, request, confirmation)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
 	default:
 		return identityUsage()
 	}
 }
 
 func identityUsage() error {
-	return fmt.Errorf("usage: gotth-mailctl identity adopt <preview|apply> --config <file> --mailbox <address> --subject <subject> --scope <scope> --manager <manager> [--confirm <digest>] | gotth-mailctl identity scim-token <preview|apply> --config <file> --id <stable-actor-id> --secret-file <owner-only-file> [--confirm <digest>]")
+	return fmt.Errorf("usage: gotth-mailctl identity adopt <preview|apply> --config <file> --mailbox <address> --subject <subject> --scope <scope> --manager <manager> [--confirm <digest>] | gotth-mailctl identity scim-token <preview|apply> --config <file> --id <stable-actor-id> --secret-file <owner-only-file> [--confirm <digest>] | gotth-mailctl identity role-binding <preview|apply> --config <file> --operation <grant|revoke> --issuer <url> --subject <subject> --mailbox <address> --role <role> [--domain <domain>] [--confirm <digest>]")
+}
+
+func roleBindingRequest(args []string) (rolebinding.Request, error) {
+	allowed := map[string]bool{"--config": true, "--operation": true, "--issuer": true, "--subject": true, "--mailbox": true, "--role": true, "--domain": true, "--confirm": true}
+	values := make(map[string]string, len(allowed))
+	seen := make(map[string]bool, len(allowed))
+	for index := 3; index < len(args); index += 2 {
+		if index+1 >= len(args) || !allowed[args[index]] || seen[args[index]] || strings.HasPrefix(args[index+1], "--") || strings.TrimSpace(args[index+1]) == "" {
+			return rolebinding.Request{}, fmt.Errorf("invalid or duplicate role-binding flag")
+		}
+		seen[args[index]] = true
+		values[args[index]] = args[index+1]
+	}
+	for _, required := range []string{"--config", "--operation", "--issuer", "--subject", "--mailbox", "--role"} {
+		if strings.TrimSpace(values[required]) == "" {
+			return rolebinding.Request{}, fmt.Errorf("%s required", required)
+		}
+	}
+	if args[2] == "preview" && seen["--confirm"] {
+		return rolebinding.Request{}, fmt.Errorf("--confirm is valid only for apply")
+	}
+	return rolebinding.Request{Operation: values["--operation"], Issuer: values["--issuer"], Subject: values["--subject"], Mailbox: values["--mailbox"], Role: values["--role"], Domain: values["--domain"]}, nil
 }
 
 func scimTokenRequest(args []string) (string, string, error) {

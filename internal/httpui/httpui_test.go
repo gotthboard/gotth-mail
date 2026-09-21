@@ -15,6 +15,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/admin"
 	"forgejo/gotthboard/gotth-mail/internal/authn"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/diag"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 )
 
@@ -190,6 +191,76 @@ func TestBoundIdentityAppPasswordUIRequiresCSRFAndShowsSecretOnce(t *testing.T) 
 	}
 	if current := ids.ListAppPasswords("user@example.test"); len(current) != 1 || current[0].RevokedAt == nil {
 		t.Fatalf("credential not revoked: %#v", current)
+	}
+}
+
+func TestDNSAdminRequiresDomainRoleAndRendersLiveReadiness(t *testing.T) {
+	now := time.Date(2026, 9, 21, 20, 0, 0, 0, time.UTC)
+	const sessionID = "dns-admin-session"
+	const csrf = "dns-admin-csrf"
+	bound := authn.BoundSession{
+		Session: authn.Session{ID: sessionID, IdentityRefID: "dns-identity", CreatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), CSRFSecretHash: csrfHash(csrf)},
+		Issuer:  "https://auth.example.test/", Subject: "dns-subject", Mailbox: "admin@example.test",
+	}
+	plan := diag.DomainDNSPlan{Domain: "example.test", MailHost: "mail.example.test", MailIP: "192.0.2.10", PTRExpected: "mail.example.test", DKIMSelector: "mail", DKIMPublicKeyTXT: "v=DKIM1; k=rsa; p=public-value", MTASTS: true}
+	resolver := diag.StaticDNS{
+		"A:mail.example.test":     {"192.0.2.10"},
+		"MX:example.test":         {"10 mail.example.test."},
+		"PTR:192.0.2.10":          {"mail.example.test."},
+		"TXT:example.test":        {"v=spf1 mx -all"},
+		"TXT:_dmarc.example.test": {"v=DMARC1; p=quarantine; rua=mailto:dmarc@example.test"},
+	}
+	handler := func(session authn.BoundSession) http.Handler {
+		return HandlerWithAdminIdentitySessionsExtensionsAndDNS(admin.NewStore(), identity.NewService("example.test"), authz.StaticAuthorizer{}, uiSessionStore{bound: session}, func() time.Time { return now }, nil, DNSAdmin{Plans: map[string]diag.DomainDNSPlan{"example.test": plan}, Resolver: resolver})
+	}
+
+	w := httptest.NewRecorder()
+	handler(bound).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/dns", nil))
+	if w.Code != http.StatusSeeOther || !strings.Contains(w.Header().Get("Location"), "redirect=/admin/dns") {
+		t.Fatalf("unauthenticated DNS admin status=%d location=%q", w.Code, w.Header().Get("Location"))
+	}
+
+	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/dns", nil)
+	withIdentityCookies(req, sessionID, csrf)
+	handler(bound).ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("unprivileged DNS admin status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	bound.Roles = []authz.RoleAssignment{{Role: authz.RoleDomainManager, Domain: "example.test"}}
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/admin/dns", nil)
+	withIdentityCookies(req, sessionID, csrf)
+	handler(bound).ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("authorized DNS admin status=%d body=%s", w.Code, body)
+	}
+	for _, want := range []string{"DNS Administration", "example.test", "192.0.2.10", "v=DKIM1; k=rsa; p=public-value", "Powered by", "Page: <strong>", "Template: <strong>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("DNS admin missing %q in %s", want, body)
+		}
+	}
+	for _, header := range []string{"Cache-Control", "Content-Security-Policy", "X-Frame-Options"} {
+		if w.Header().Get(header) == "" {
+			t.Fatalf("DNS admin missing security header %s", header)
+		}
+	}
+}
+
+func TestDNSAdminRejectsCrossDomainManager(t *testing.T) {
+	now := time.Now().UTC()
+	const csrf = "cross-domain-csrf"
+	bound := authn.BoundSession{Session: authn.Session{ID: "cross-domain-session", IdentityRefID: "identity", CreatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), CSRFSecretHash: csrfHash(csrf)}, Mailbox: "admin@example.test", Roles: []authz.RoleAssignment{{Role: authz.RoleDomainManager, Domain: "other.test"}}}
+	plan := diag.DomainDNSPlan{Domain: "example.test", MailHost: "mail.example.test", DKIMSelector: "mail"}
+	h := HandlerWithAdminIdentitySessionsExtensionsAndDNS(admin.NewStore(), identity.NewService("example.test"), authz.StaticAuthorizer{}, uiSessionStore{bound: bound}, func() time.Time { return now }, nil, DNSAdmin{Plans: map[string]diag.DomainDNSPlan{"example.test": plan}, Resolver: diag.StaticDNS{}})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/dns", nil)
+	withIdentityCookies(req, bound.ID, csrf)
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("cross-domain role status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

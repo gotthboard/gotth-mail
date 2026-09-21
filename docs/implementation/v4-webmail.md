@@ -121,6 +121,15 @@ Rules
 are visibly unavailable when no Sieve service is configured rather than being
 represented as working.
 
+The server-rendered shell ends with the canonical GOTTH footer:
+`Powered by GOTTH Mail`, `Version: <build>`, `Page: <milliseconds>`, and
+`Template: <milliseconds>`. The build value comes from the validated
+`internal/version` identity and is HTML-escaped before rendering. Page timing
+starts at entry to the `/webmail` handler; template timing covers assembly of
+the document shell up to the footer. Both values are emitted as non-negative
+whole milliseconds. The footer is repository-owned CSS, fixed-dark in both
+themes, responsive at narrow widths, and contains no commit hash or host data.
+
 The UI implements the
 [GOTTH Mail classic interface language](../reference/classic-interface-language.md)
 with Go-rendered semantic markup, project-owned CSS tokens, and bounded
@@ -220,6 +229,8 @@ Required tests:
   flag, attachment, success, warning, and error cues
 - asset provenance check proving shipped icons and artwork are original or
   appropriately licensed and contain no Microsoft branding
+- canonical-footer checks for product identity, escaped exact build version,
+  millisecond page/template timing fields, shared styling, and narrow layout
 - webmail control-plane actions route through core service/auth/audit paths without bypass
 - `git diff --check`
 - `go test ./...`

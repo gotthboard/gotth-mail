@@ -9,7 +9,7 @@ import (
 
 func TestControlEnvironmentClosedAndDeterministic(t *testing.T) {
 	path := t.TempDir() + "/environment"
-	if err := os.WriteFile(path, []byte("GOTTH_MAIL_LISTEN=:8080\nGOTTH_MAIL_DATABASE_URL_FILE=/run/secrets/database-url\n"), 0o440); err != nil {
+	if err := os.WriteFile(path, []byte("GOTTH_MAIL_LISTEN=:8080\nGOTTH_MAIL_DATABASE_URL_FILE=/run/secrets/database-url\nGOTTH_MAIL_DNS_PLAN_FILE=/etc/gotth-mail/control/dns-plan.json\n"), 0o440); err != nil {
 		t.Fatal(err)
 	}
 	first, err := controlEnvironment(path)
@@ -19,6 +19,9 @@ func TestControlEnvironmentClosedAndDeterministic(t *testing.T) {
 	second, err := controlEnvironment(path)
 	if err != nil || !slices.Equal(first, second) {
 		t.Fatalf("environment is not deterministic: first=%v second=%v err=%v", first, second, err)
+	}
+	if !slices.Contains(first, "GOTTH_MAIL_DNS_PLAN_FILE=/etc/gotth-mail/control/dns-plan.json") {
+		t.Fatalf("DNS plan path missing from control environment: %v", first)
 	}
 	badPath := t.TempDir() + "/environment"
 	if err := os.WriteFile(badPath, []byte("PATH=/attacker\n"), 0o440); err != nil {
@@ -58,6 +61,15 @@ func TestRenderFrontConfigKeepsCredentialOutOfArguments(t *testing.T) {
 func TestRuntimeCommandRejectsRuntimeRoleSelection(t *testing.T) {
 	if _, _, _, err := runtimeCommand("attacker"); err == nil {
 		t.Fatal("unknown compiled role accepted")
+	}
+}
+
+func TestEntrypointRejectsInvalidBuildIdentity(t *testing.T) {
+	if err := validateBuildIdentity("1.0.0-alpha.0"); err == nil {
+		t.Fatal("invalid entrypoint build identity accepted")
+	}
+	if err := validateBuildIdentity("1.0.0-alpha.1"); err != nil {
+		t.Fatalf("valid entrypoint build identity rejected: %v", err)
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"net"
 	"os"
 	"time"
+
+	"forgejo/gotthboard/gotth-mail/internal/version"
 )
 
 var role = "invalid"
@@ -18,6 +20,10 @@ var rolePorts = map[string][]string{
 }
 
 func main() {
+	if err := validateBuildIdentity(version.Version); err != nil {
+		fmt.Fprintln(os.Stderr, "gotth-mail health: invalid build identity")
+		os.Exit(2)
+	}
 	if len(os.Args) != 2 || os.Args[1] != role {
 		fmt.Fprintln(os.Stderr, "gotth-mail health: role mismatch")
 		os.Exit(2)
@@ -35,4 +41,8 @@ func main() {
 		}
 		connection.Close()
 	}
+}
+
+func validateBuildIdentity(value string) error {
+	return version.Validate(value)
 }

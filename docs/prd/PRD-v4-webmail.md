@@ -49,6 +49,8 @@ Custom webmail must not block the control-plane product.
   composer rather than a squeezed desktop layout.
 - Restrained blue/gray light and dark themes using original or appropriately
   licensed assets.
+- The canonical GOTTH product footer showing product identity, release
+  version, page-render time, and template-render time.
 - A shared visual language with the administration GUI without merging
   webmail and control-plane authority.
 
@@ -89,6 +91,9 @@ Custom webmail must not block the control-plane product.
 - The interface uses GOTTH Mail branding and original or appropriately
   licensed assets; it does not copy Microsoft trademarks, copyrighted icons,
   product artwork, or exact branding.
+- The canonical dark GOTTH footer remains visible in both themes and reports
+  `Powered by GOTTH Mail`, the exact build version, page time, and template
+  time without exposing source revisions or other internal build metadata.
 - Webmail UI does not bypass core authorization/audit paths for control-plane actions.
 
 ## Mandatory OpenPGP signing
