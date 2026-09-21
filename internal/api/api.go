@@ -39,6 +39,7 @@ type Server struct {
 	Queue                *ops.Queue
 	NotificationQueue    notifyruntime.QueueController
 	DNSChecks            []diag.DNSRecordCheck
+	DNSPlans             map[string]diag.DomainDNSPlan
 	CertCheck            diag.CertCheck
 	WebmailOK            bool
 	OIDCClient           authn.OIDCClient

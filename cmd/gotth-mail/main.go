@@ -58,6 +58,9 @@ func main() {
 	if db != nil {
 		defer db.Close()
 	}
+	if err := configureDNSPlansFromEnv(&server); err != nil {
+		log.Fatalf("configure DNS administrator: %v", err)
+	}
 	if err := configurePostfixHelperFromEnv(&server); err != nil {
 		log.Fatalf("configure Postfix helper: %v", err)
 	}
@@ -240,8 +243,83 @@ func runtimeMux(server api.Server) http.Handler {
 		mux.Handle("/internal/v1/notifications/telegram", server.NotificationReceiver)
 	}
 	sessions, _ := server.OIDCStore.(authn.IdentitySessionStore)
-	mux.Handle("/", httpui.HandlerWithAdminIdentitySessionsAndExtensions(referenceAdminStore(), server.Identity, server.Authz, sessions, server.OIDCNow, server.Extensions))
+	mux.Handle("/", httpui.HandlerWithAdminIdentitySessionsExtensionsAndDNS(referenceAdminStore(), server.Identity, server.Authz, sessions, server.OIDCNow, server.Extensions, httpui.DNSAdmin{Plans: server.DNSPlans, Resolver: diag.NetDNS{}}))
 	return mux
+}
+
+type dnsPlanFile struct {
+	Plans []diag.DomainDNSPlan `json:"plans"`
+}
+
+// configureDNSPlansFromEnv loads only public DNS expectations. The file is
+// deliberately separate from secret configuration so the administrator page
+// can never become a route for private key material.
+func configureDNSPlansFromEnv(server *api.Server) error {
+	path := strings.TrimSpace(os.Getenv("GOTTH_MAIL_DNS_PLAN_FILE"))
+	if path == "" {
+		return nil
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect DNS plan: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 64<<10 {
+		return fmt.Errorf("DNS plan must be a non-empty regular file no larger than 64 KiB")
+	}
+	handle, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open DNS plan: %w", err)
+	}
+	defer handle.Close()
+	decoder := json.NewDecoder(io.LimitReader(handle, 64<<10))
+	decoder.DisallowUnknownFields()
+	var document dnsPlanFile
+	if err := decoder.Decode(&document); err != nil {
+		return fmt.Errorf("decode DNS plan: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("DNS plan contains trailing data")
+	}
+	if len(document.Plans) == 0 || len(document.Plans) > 100 {
+		return fmt.Errorf("DNS plan must contain between 1 and 100 domains")
+	}
+	plans := make(map[string]diag.DomainDNSPlan, len(document.Plans))
+	for _, plan := range document.Plans {
+		domain, err := outboundpolicy.NormalizeDomain(plan.Domain)
+		if err != nil {
+			return fmt.Errorf("invalid DNS plan domain")
+		}
+		mailHost, err := outboundpolicy.NormalizeDomain(plan.MailHost)
+		if err != nil {
+			return fmt.Errorf("invalid DNS plan mail host for %s", domain)
+		}
+		if len(plan.DKIMSelector) == 0 || len(plan.DKIMSelector) > 63 || strings.ContainsAny(plan.DKIMSelector, ". \t\r\n") {
+			return fmt.Errorf("invalid DKIM selector for %s", domain)
+		}
+		if plan.MailIP != "" {
+			ip := net.ParseIP(plan.MailIP)
+			if ip == nil || ip.To4() == nil {
+				return fmt.Errorf("invalid IPv4 mail address for %s", domain)
+			}
+			plan.MailIP = ip.String()
+		}
+		if plan.PTRExpected != "" {
+			ptr, err := outboundpolicy.NormalizeDomain(plan.PTRExpected)
+			if err != nil {
+				return fmt.Errorf("invalid PTR expectation for %s", domain)
+			}
+			plan.PTRExpected = ptr
+		}
+		plan.Domain = domain
+		plan.MailHost = mailHost
+		plan.DKIMSelector = strings.ToLower(plan.DKIMSelector)
+		if _, exists := plans[domain]; exists {
+			return fmt.Errorf("duplicate DNS plan for %s", domain)
+		}
+		plans[domain] = plan
+	}
+	server.DNSPlans = plans
+	return nil
 }
 
 func configureFrontAuthFromEnv(server *api.Server) error {
