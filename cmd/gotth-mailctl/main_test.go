@@ -205,6 +205,111 @@ plugins:
 	}
 }
 
+func TestCLIRoleBindingRequestIsClosed(t *testing.T) {
+	args := []string{"identity", "role-binding", "preview", "--config", "config.yaml", "--operation", "grant", "--issuer", "https://auth.example.test/application/o/gotth-mail/", "--subject", "subject", "--mailbox", "admin@example.test", "--role", "global_admin"}
+	request, err := roleBindingRequest(args)
+	if err != nil || request.Operation != "grant" || request.Role != "global_admin" || request.Mailbox != "admin@example.test" {
+		t.Fatalf("request=%#v err=%v", request, err)
+	}
+	bad := [][]string{
+		append(append([]string(nil), args...), "--role", "domain_manager"),
+		append(append([]string(nil), args...), "--unknown", "value"),
+		{"identity", "role-binding", "preview", "--config", "config.yaml"},
+		append(append([]string(nil), args...), "--domain"),
+	}
+	for _, candidate := range bad {
+		if _, err := roleBindingRequest(candidate); err == nil {
+			t.Fatalf("invalid arguments accepted: %v", candidate)
+		}
+	}
+}
+
+func TestCLIRoleBindingPreviewApplyEndToEnd(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	statements := []string{
+		`INSERT INTO domains(id,name,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000281','example.test',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+		`INSERT INTO mailboxes(id,domain_id,local_part,display_name,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000282','00000000-0000-4000-8000-000000000281','admin','Admin',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+		`INSERT INTO identity_refs(id,provider,issuer,subject,mailbox_id,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000283','authentik','https://auth.example.test/application/o/gotth-mail/','cli-subject','00000000-0000-4000-8000-000000000282',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var port string
+	if err := db.QueryRowContext(context.Background(), `SHOW port`).Scan(&port); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	cfg := filepath.Join(root, "config.yaml")
+	configBody := fmt.Sprintf(`server:
+  public_url: "https://mail.example.test"
+  listen: ":8080"
+  environment: "development"
+database:
+  dsn: "postgres://gotth_mail@127.0.0.1:%s/gotth_mail?sslmode=disable"
+tls:
+  mode: "manual"
+  cert_path: "cert.pem"
+  key_path: "key.pem"
+authentik:
+  enabled: true
+  base_url: "https://auth.example.test"
+  oidc_client_id: "gotth-mail"
+  scim_base_url: "https://auth.example.test/scim"
+roles:
+  global_admin_group: "admins"
+  domain_manager_group: "managers"
+  scoped_domain_group_prefix: "domain-"
+render:
+  staging_dir: %q
+  applied_dir: %q
+plugins:
+  - name: "stub-dns"
+    seam: "dns"
+    image: "stub:v0"
+    endpoint: "dns:9443"
+`, port, filepath.Join(root, "staged"), filepath.Join(root, "applied"))
+	if err := os.WriteFile(cfg, []byte(configBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := []string{"identity", "role-binding", "preview", "--config", cfg, "--operation", "grant", "--issuer", "https://auth.example.test/application/o/gotth-mail/", "--subject", "cli-subject", "--mailbox", "admin@example.test", "--role", "global_admin"}
+	previewOutput, err := captureStdout(t, func() error { return run(base) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan struct {
+		PlanID    string `json:"plan_id"`
+		Operation string `json:"operation"`
+	}
+	if err := json.Unmarshal([]byte(previewOutput), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.PlanID == "" || plan.Operation != "grant" || strings.Contains(previewOutput, "cli-subject") || strings.Contains(previewOutput, "auth.example.test") {
+		t.Fatalf("unsafe preview %q", previewOutput)
+	}
+	apply := append([]string(nil), base...)
+	apply[2] = "apply"
+	apply = append(apply, "--confirm", plan.PlanID)
+	applyOutput, err := captureStdout(t, func() error { return run(apply) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(applyOutput, `"changed":true`) || strings.Contains(applyOutput, "cli-subject") || strings.Contains(applyOutput, "auth.example.test") {
+		t.Fatalf("unsafe apply %q", applyOutput)
+	}
+	var bindings, audits int
+	if err := db.QueryRow(`SELECT count(*) FROM role_bindings WHERE identity_ref_id='00000000-0000-4000-8000-000000000283' AND role='global_admin' AND domain_id IS NULL`).Scan(&bindings); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM audit_events WHERE action='identity.role_binding.grant' AND resource_id='00000000-0000-4000-8000-000000000283'`).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if bindings != 1 || audits != 1 {
+		t.Fatalf("bindings=%d audits=%d", bindings, audits)
+	}
+}
+
 func captureStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
 	reader, writer, err := os.Pipe()
