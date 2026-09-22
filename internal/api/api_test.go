@@ -1213,7 +1213,7 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 	stylesheet := httptest.NewRecorder()
 	h.ServeHTTP(stylesheet, httptest.NewRequest(http.MethodGet, "/webmail/assets/app.css", nil))
 	css := stylesheet.Body.String()
-	for _, want := range []string{".gotth-footer", ".gotth-footer-product", ".command-actions", "@media(max-width:1024px)", "min(var(--folder-width),28vw)", "grid-template-columns:max-content minmax(0,1fr)", "#compose-form{height:auto;min-height:100%;overflow:auto"} {
+	for _, want := range []string{"[hidden]{display:none!important}", ".gotth-footer", ".gotth-footer-product", ".command-actions", "@media(max-width:1024px)", "min(var(--folder-width),28vw)", "grid-template-columns:max-content minmax(0,1fr)", "#compose-form{height:auto;min-height:100%;overflow:auto"} {
 		if stylesheet.Code != http.StatusOK || !strings.Contains(css, want) {
 			t.Fatalf("webmail CSS status=%d missing %q body=%s", stylesheet.Code, want, css)
 		}

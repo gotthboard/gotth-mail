@@ -105,7 +105,7 @@ try {
   if (!(await evaluate(cdp, "document.querySelector('.folder-button').textContent.includes('2 unread') && document.querySelector('.message-row').classList.contains('has-attachment')"))) throw new Error('unread count or attachment state missing');
   const folderRequests = await evaluate(cdp, "performance.getEntriesByType('resource').filter(function(entry){return entry.name.endsWith('/api/v1/webmail/folders')}).length");
   await evaluate(cdp, "document.querySelector('.message-row').click()");
-  await waitFor(cdp, "!document.getElementById('message-reader').hidden && document.getElementById('message-body').textContent.includes('Safe browser message body')", 'message reader');
+  await waitFor(cdp, "getComputedStyle(document.getElementById('empty-reader')).display==='none' && getComputedStyle(document.getElementById('message-reader')).display!=='none' && document.getElementById('message-body').textContent.includes('Safe browser message body')", 'message reader without stale placeholder');
   await waitFor(cdp, "performance.getEntriesByType('resource').filter(function(entry){return entry.name.endsWith('/api/v1/webmail/folders')}).length>" + folderRequests, 'folder state refresh after mark read');
   await evaluate(cdp, "document.querySelector('[data-command=forward]').click()");
   if (!(await evaluate(cdp, "document.getElementById('composer').open && document.querySelectorAll('#compose-existing-list button').length===1"))) throw new Error('forward attachment state missing');
@@ -160,7 +160,9 @@ try {
     var reader=document.getElementById('reader-pane');
     var box=reader.getBoundingClientRect();
     var fragmentRequests=performance.getEntriesByType('resource').filter(function(entry){return entry.name.includes('/webmail/fragments/message?')}).length;
-    return fragmentRequests>${mobileFragmentRequestsBefore} && document.getElementById('empty-reader').hidden && getComputedStyle(list).display==='none' && getComputedStyle(reader).display!=='none' && box.top>=0 && box.left>=0 && box.right<=innerWidth && scrollY===${mobileScrollBeforeOpen} && document.documentElement.scrollWidth===document.documentElement.clientWidth;
+    var empty=document.getElementById('empty-reader');
+    var message=document.getElementById('message-reader');
+    return fragmentRequests>${mobileFragmentRequestsBefore} && empty.hidden && getComputedStyle(empty).display==='none' && empty.getClientRects().length===0 && getComputedStyle(message).display!=='none' && message.getClientRects().length===1 && getComputedStyle(list).display==='none' && getComputedStyle(reader).display!=='none' && box.top>=0 && box.left>=0 && box.right<=innerWidth && scrollY===${mobileScrollBeforeOpen} && document.documentElement.scrollWidth===document.documentElement.clientWidth;
   })()`);
   if (!mobileReader) throw new Error('message reader was not swapped into the bounded mobile viewport');
   await evaluate(cdp, "document.querySelector('#reader-pane [data-mobile-back=messages]').click()");
