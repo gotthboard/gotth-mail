@@ -52,6 +52,8 @@ SMTP submission, identity state, DNS state, or immutable release tag changed.
   `sha256:9448ce7c669fe51e98e28394383ec0582a0d0018eb480abb8bda2446443e8535`.
 - Image archive SHA-256:
   `16c88a1df836c0c443bd58a29b16b1468af6fc717b1e2ced0629d478e7e53934`.
+- Retained image archive:
+  `/opt/gotth-mail-test/artifacts/control-plane-dev-0bdb230.tar`.
 - Release path:
   `/opt/gotth-mail-test/releases/dev-reader-hidden-fix-0bdb230-20260922T030000Z`.
 - Immediate rollback:
