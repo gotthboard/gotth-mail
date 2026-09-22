@@ -30,8 +30,12 @@ Verification:
 
 - focused `internal/api` and `internal/httpui` tests passed with constrained
   local parallelism;
-- exact desktop, tablet, mobile, and live-deployment browser evidence is
-  recorded separately after development-host and deployed verification.
+- the complete Go suite and focused race tests for `internal/api` and
+  `internal/httpui` passed on the development host;
+- the repo-owned Chromium smoke passed at 1280x900, 768x1024, and 390x844,
+  including bounded overflow, drill-down, search, and composer assertions;
+- the live candidate passed Web Mail and DNS-administration browser checks at
+  phone, tablet, and desktop widths with all six services healthy.
 
 ## 2026-09-21 18:35 CDT — Pin immutable identity releases and admit the live lifecycle
 
