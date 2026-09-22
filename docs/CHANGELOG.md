@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-09-21 22:04 CDT — Hide the swapped reader placeholder correctly
+
+Implementation commit: `0bdb230de53a8a819851a16d190cf5c15d0f47f3`
+
+Affected files:
+
+- `internal/api/webmail_ui.go` and its focused API assertion;
+- `scripts/webmail-browser-smoke.mjs`;
+- responsive-reader verification evidence.
+
+Explanation:
+
+- Restored the HTML `hidden` contract with a global author-level rule. The
+  reader fragment already marked its empty placeholder hidden, but the
+  `.empty-state` grid declaration overrode the browser's user-agent rule and
+  left that placeholder visibly occupying the reader above the real message.
+- Kept the HTMX target, fragment, retained-list Back behavior, authorization,
+  mail state, and immutable release tag unchanged.
+
+Verification:
+
+- the API package and focused race tests passed on the development host;
+- the real-Chromium smoke now requires the placeholder to have computed
+  `display: none` and zero layout rectangles while the message has a rendered
+  layout rectangle;
+- authenticated live Chromium at 390 by 844 CSS pixels showed only the opened
+  message, one HTMX fragment request, no page scroll or overflow, and correct
+  Back restoration of the selected list row and keyboard focus.
+
 ## 2026-09-21 20:47 CDT — Swap messages into the responsive reader with HTMX
 
 Implementation commit: `74717b87e5ce8f28f3b951c2c3507c86dd4ac411`
