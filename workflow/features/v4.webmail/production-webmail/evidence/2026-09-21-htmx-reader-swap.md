@@ -67,3 +67,20 @@ exact inert wrapper plus server marker, and the context template now reads the
 already-rendered visible body. A later review also caught the swapped reader's
 missing empty-state nodes and an accidental change to sanitized-HTML text
 presentation; both were corrected before admission.
+
+## Live candidate
+
+- Source commit: `74717b87e5ce8f28f3b951c2c3507c86dd4ac411`
+- Source-state SHA-256:
+  `ad3d720d1978d2dd1770b4de002bebb538d5d55c1b5d9d7397bb2f862a6a40d7`
+- Control-plane image:
+  `sha256:c23222bf05e185fe4d195651595acfd57d72bc28df3bf6edf8fb177cfc28bf0a`
+- Release path:
+  `/opt/gotth-mail-test/releases/dev-htmx-reader-74717b8-20260922T023920Z`
+- Authenticated live Chromium proved the 390-pixel in-place swap, zero page
+  scroll and overflow, retained-list Back behavior, selected-row focus, and
+  the unchanged 1280-pixel desktop panes. All six containers are healthy and
+  every public mail port remains reachable.
+
+The footer deliberately remains `Version: dev`. This candidate does not alter
+the immutable `v1.0.0-alpha.1` tag or its retained deployment.

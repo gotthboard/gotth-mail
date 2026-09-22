@@ -2,7 +2,7 @@
 
 ## 2026-09-21 20:47 CDT — Swap messages into the responsive reader with HTMX
 
-Implementation commit: `current commit; hash assigned by Git after commit`
+Implementation commit: `74717b87e5ce8f28f3b951c2c3507c86dd4ac411`
 
 Affected files:
 
