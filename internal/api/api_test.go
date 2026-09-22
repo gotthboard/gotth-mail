@@ -455,7 +455,7 @@ func responseID(t *testing.T, body string) string {
 func TestSCIMUserCreateUsesExistingDomainID(t *testing.T) {
 	db, _, _, handler := scimTestHandler(t, nil)
 	const existingDomainID = "20000000-0000-4000-8000-000000000001"
-	if _, err := db.Exec(`UPDATE domains SET id=$1 WHERE name='example.test'`, existingDomainID); err != nil {
+	if _, err := db.Exec(`INSERT INTO domains(id,name,enabled,created_at,updated_at) VALUES ($1,'example.test',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, existingDomainID); err != nil {
 		t.Fatal(err)
 	}
 

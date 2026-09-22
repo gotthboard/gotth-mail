@@ -23,9 +23,9 @@ and removes runtime secrets only after confirmed stop. Static notification
 configuration conflicts fail startup rather than silently changing routing.
 
 The feature has resumed at its only remaining boundary: distribution
-admission. The canonical private Forgejo `gotth-extension-webhook` repository
-and real cross-process lifecycle exist, but the required public GitHub
-repository, one-way mirror, immutable extension tag/artifact, and
-Forgejo/GitHub release parity do not yet exist. Production install/enable
-remains closed until those exact public artifact identities are published and
-pinned. Telegram is explicitly outside this resumed work.
+admission. Canonical Forgejo and public GitHub now advertise the same annotated
+`v1.0.0-alpha.1` tag object and the same peeled tested commit. Two independent
+builds produced the same Linux/amd64 archive SHA-256. Release objects and
+uploaded archive/checksum parity have not yet been proved, so production
+install/enable remains closed until those exact public artifact identities are
+published and pinned. Telegram is explicitly outside this resumed work.

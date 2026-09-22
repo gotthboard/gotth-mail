@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-09-21 18:35 CDT — Pin immutable identity releases and admit the live lifecycle
+
+Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `go.mod` and `go.sum`;
+- identity-library release, alpha-integration, extension-administrator, and
+  coverage workflow records;
+- live lifecycle and release evidence;
+- `docs/CHANGELOG.md`.
+
+Explanation:
+
+- Replaced the reviewed identity pseudo-version pins with the first immutable
+  public releases: `gotth-oidc v0.1.0` and `gotth-scim v0.1.0`.
+- Recorded exact annotated-tag and peeled-commit parity between Forgejo and
+  GitHub and clean public-consumer resolution of both versions.
+- Admitted the live Authentik/Mail identity lifecycle: OIDC login, exact
+  subject/mailbox binding, scoped role grant, SCIM disable, atomic mailbox
+  disable and session revocation, restore without session resurrection,
+  app-password IMAPS authentication, restart persistence, backup, and isolated
+  restore of both databases.
+- Recorded the webhook's immutable `v1.0.0-alpha.1` ref parity and reproducible
+  archive while leaving release-object/upload parity explicitly open.
+
+Verification:
+
+- both identity libraries passed format, vet, race, and 90.1% coverage gates;
+- clean public consumer tests resolved and tested both `v0.1.0` modules;
+- real browser OIDC/PKCE login and domain-manager authorization passed;
+- SCIM provision/disable/restore and old-session invalidation passed;
+- IMAPS app-password authentication passed before and after restart;
+- Authentik and Mail PostgreSQL dumps restored and were queried in isolated
+  temporary PostgreSQL 16 instances;
+- exact Forgejo/GitHub identity-library and webhook tag parity passed.
+
 ## 2026-09-21 17:48 CDT — Preserve existing domain identity during SCIM provisioning
 
 - Fixed new SCIM mailbox provisioning when the target domain already exists
