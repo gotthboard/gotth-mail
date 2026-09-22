@@ -237,7 +237,7 @@ func TestDNSAdminRequiresDomainRoleAndRendersLiveReadiness(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("authorized DNS admin status=%d body=%s", w.Code, body)
 	}
-	for _, want := range []string{"DNS Administration", "example.test", "192.0.2.10", "v=DKIM1; k=rsa; p=public-value", "Powered by", "Page: <strong>", "Template: <strong>"} {
+	for _, want := range []string{"DNS Administration", "example.test", "192.0.2.10", "v=DKIM1; k=rsa; p=public-value", `data-label="Expected"`, "@media(max-width:900px)", "grid-template-columns:repeat(auto-fit", "Powered by", "Page: <strong>", "Template: <strong>"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("DNS admin missing %q in %s", want, body)
 		}

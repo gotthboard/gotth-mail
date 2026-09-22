@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-09-21 20:20 CDT — Repair Web Mail and DNS administration reflow
+
+Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `internal/api/webmail_ui.go` and focused API tests;
+- `internal/httpui/httpui.go` and focused DNS-administration tests;
+- `scripts/webmail-browser-smoke.mjs`;
+- responsive verification evidence.
+
+Explanation:
+
+- Kept desktop Web Mail as a dense three-pane client while bounding saved pane
+  widths to the available viewport instead of allowing user preferences to
+  squeeze or clip the reader.
+- Split the command strip into an independently scrollable action group and a
+  search form that remains visible on narrow screens.
+- Extended deterministic folder -> list -> reader drill-down through portrait
+  tablet widths, reflowed the account header, and made the full-screen mobile
+  composer bounded and vertically scrollable on short screens.
+- Reflowed DNS administration records into labelled cards below the same
+  breakpoint while preserving the existing read-only provider boundary.
+- Did not alter authentication, authorization, mail transport, DNS mutation,
+  or release-tag behavior.
+
+Verification:
+
+- focused `internal/api` and `internal/httpui` tests passed with constrained
+  local parallelism;
+- exact desktop, tablet, mobile, and live-deployment browser evidence is
+  recorded separately after development-host and deployed verification.
+
 ## 2026-09-21 18:35 CDT — Pin immutable identity releases and admit the live lifecycle
 
 Implementation commit: `current commit; hash assigned by Git after commit`

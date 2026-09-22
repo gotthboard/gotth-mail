@@ -1180,7 +1180,7 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/webmail", nil))
 	body := rr.Body.String()
-	for _, want := range []string{"GOTTH Mail", "folder-pane", "message-list", "reader-pane", "composer", "/webmail/assets/app.js", "gotth-footer", "Powered by", "Version: <strong>dev</strong>", "Page: <strong>", "Template: <strong>"} {
+	for _, want := range []string{"GOTTH Mail", "command-actions", "folder-pane", "message-list", "reader-pane", "composer", "/webmail/assets/app.js", "gotth-footer", "Powered by", "Version: <strong>dev</strong>", "Page: <strong>", "Template: <strong>"} {
 		if rr.Code != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("webmail shell status=%d missing %q body=%s", rr.Code, want, body)
 		}
@@ -1201,8 +1201,11 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 	}
 	stylesheet := httptest.NewRecorder()
 	h.ServeHTTP(stylesheet, httptest.NewRequest(http.MethodGet, "/webmail/assets/app.css", nil))
-	if stylesheet.Code != http.StatusOK || !strings.Contains(stylesheet.Body.String(), ".gotth-footer") || !strings.Contains(stylesheet.Body.String(), ".gotth-footer-product") {
-		t.Fatalf("webmail CSS status=%d body=%s", stylesheet.Code, stylesheet.Body.String())
+	css := stylesheet.Body.String()
+	for _, want := range []string{".gotth-footer", ".gotth-footer-product", ".command-actions", "@media(max-width:900px)", "min(var(--folder-width),28vw)", "#compose-form{height:auto;min-height:100%;overflow:auto"} {
+		if stylesheet.Code != http.StatusOK || !strings.Contains(css, want) {
+			t.Fatalf("webmail CSS status=%d missing %q body=%s", stylesheet.Code, want, css)
+		}
 	}
 }
 

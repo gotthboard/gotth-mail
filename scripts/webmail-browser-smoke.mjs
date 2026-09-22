@@ -93,6 +93,7 @@ try {
   await cdp.ready();
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   const loaded = cdp.event('Page.loadEventFired');
   await cdp.send('Page.navigate', { url: base + '/__browser_start' });
   await loaded;
@@ -141,10 +142,16 @@ try {
   await evaluate(cdp, "var p=document.getElementById('pane-placement');p.value='below';p.dispatchEvent(new Event('change',{bubbles:true}));document.getElementById('theme-toggle').click()");
   const preferences = await evaluate(cdp, "document.getElementById('mail-app').classList.contains('pane-below') && document.documentElement.dataset.theme==='dark'");
   if (!preferences) throw new Error('pane placement or dark theme failed');
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 768, height: 1024, deviceScaleFactor: 1, mobile: true });
+  const tablet = await evaluate(cdp, "matchMedia('(max-width:900px)').matches && getComputedStyle(document.querySelector('.viewbar')).display==='none' && getComputedStyle(document.querySelector('.mobile-heading button')).display!=='none' && document.documentElement.scrollWidth===document.documentElement.clientWidth");
+  if (!tablet) throw new Error('tablet layout did not collapse to bounded drill-down');
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await evaluate(cdp, "document.querySelector('.folder-button').click()");
-  const mobile = await evaluate(cdp, "document.body.dataset.mobileView==='messages' && getComputedStyle(document.getElementById('folder-pane')).display==='none' && getComputedStyle(document.querySelector('[data-command=reply]')).display!=='none' && getComputedStyle(document.getElementById('search-form')).display!=='none' && getComputedStyle(document.querySelector('.gotth-footer')).display==='flex'");
+  const mobile = await evaluate(cdp, "(function(){var search=document.getElementById('search-form').getBoundingClientRect();var account=document.querySelector('.account').getBoundingClientRect();var brand=document.querySelector('.brand').getBoundingClientRect();return document.body.dataset.mobileView==='messages' && getComputedStyle(document.getElementById('folder-pane')).display==='none' && getComputedStyle(document.querySelector('[data-command=reply]')).display!=='none' && getComputedStyle(document.getElementById('search-form')).display!=='none' && search.left>=0 && search.right<=innerWidth && account.top>=brand.bottom && document.documentElement.scrollWidth===document.documentElement.clientWidth && getComputedStyle(document.querySelector('.gotth-footer')).display==='flex'})()");
   if (!mobile) throw new Error('mobile folder-to-list drill-down failed');
+  await evaluate(cdp, "document.querySelector('[data-command=new]').click()");
+  const composer = await evaluate(cdp, "(function(){var dialog=document.getElementById('composer').getBoundingClientRect();var form=document.getElementById('compose-form');return document.getElementById('composer').open && dialog.left>=0 && dialog.right<=innerWidth && dialog.top>=0 && dialog.bottom<=innerHeight && ['auto','scroll'].includes(getComputedStyle(form).overflowY)})()");
+  if (!composer) throw new Error('mobile composer did not stay bounded and scrollable');
   cdp.close();
   await fetch(base + '/__browser_done');
   const code = await new Promise(resolve => goTest.once('exit', resolve));
