@@ -33,6 +33,12 @@ func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
 	mux.HandleFunc("/webmail/assets/app.js", func(w http.ResponseWriter, r *http.Request) {
 		serveWebmailAsset(w, r, "text/javascript; charset=utf-8", webmailAppJS)
 	})
+	mux.HandleFunc("/webmail/assets/trusted-html.js", func(w http.ResponseWriter, r *http.Request) {
+		serveWebmailAsset(w, r, "text/javascript; charset=utf-8", webmailTrustedHTMLJS)
+	})
+	mux.HandleFunc("/webmail/assets/htmx-2.0.10.min.js", func(w http.ResponseWriter, r *http.Request) {
+		serveWebmailAsset(w, r, "text/javascript; charset=utf-8", webmailHTMX)
+	})
 	require := func(w http.ResponseWriter, r *http.Request, mutation bool) (authz.Actor, string, bool) {
 		var a authz.Actor
 		var mailbox string
@@ -78,6 +84,43 @@ func (s Server) registerWebmail(mux *http.ServeMux, ids *identity.Service) {
 	if sender != nil && sender.Store == nil && s.AuditDB != nil {
 		sender.Store = webmail.SQLDraftStore{DB: s.AuditDB}
 	}
+	mux.HandleFunc("/webmail/fragments/message", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, http.MethodGet) {
+			return
+		}
+		_, mailbox, ok := require(w, r, false)
+		if !ok {
+			return
+		}
+		if r.Header.Get("HX-Request") != "true" {
+			http.Error(w, "HTMX request required", http.StatusBadRequest)
+			return
+		}
+		if client == nil {
+			http.Error(w, "webmail client unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		folder, id := r.URL.Query().Get("folder"), r.URL.Query().Get("id")
+		if folder == "" || id == "" {
+			http.Error(w, "folder and message id required", http.StatusBadRequest)
+			return
+		}
+		msg, err := client.Read(r.Context(), mailbox, folder, id)
+		if err != nil {
+			http.Error(w, "message unavailable", http.StatusNotFound)
+			return
+		}
+		fragment, err := renderWebmailMessageFragment(msg, folder)
+		if err != nil {
+			http.Error(w, "message rendering failed", http.StatusInternalServerError)
+			return
+		}
+		webmailSecurityHeaders(w)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Add("Vary", "HX-Request")
+		_, _ = w.Write([]byte(fragment))
+	})
 	mux.HandleFunc("/api/v1/webmail/identity", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, http.MethodGet) {
 			return

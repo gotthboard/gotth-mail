@@ -164,6 +164,17 @@ into accounts/folders, message list, then reader or composer. Back navigation
 retains the previous folder and safe list window. No mobile workflow depends
 on hover, a secondary mouse button, or a squeezed desktop table.
 
+Message activation uses a same-origin authenticated HTMX fragment request. The
+fragment swaps the reading-pane content, then the narrow-width state exposes
+that pane in the same viewport position while retaining the message list in the
+DOM for immediate Back navigation. The fragment route accepts only an exact
+`HX-Request: true`, returns escaped conservative message text, remains subject
+to the existing mailbox authorization, and cannot carry executable message
+markup. HTMX is pinned and self-hosted; evaluation, script tags, history, and
+injected indicator styles are disabled. A narrow Trusted Types default policy
+admits only HTMX's inert internal template wrapper when it begins with the
+server-owned message-fragment marker; every other HTML sink assignment fails.
+
 The admin GUI reuses applicable tokens, navigation, table, command, focus, and
 status patterns. Administrative actions remain visually explicit and continue
 through core service/auth/audit paths. Shared CSS or templates must not combine

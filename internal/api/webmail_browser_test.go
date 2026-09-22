@@ -51,7 +51,7 @@ func TestWebmailBrowserFixture(t *testing.T) {
 	}}
 	ids := identity.NewService("example.test")
 	client := &webmail.Client{IMAP: apiFakeIMAP{messages: []webmail.Message{{
-		ID: "1", Folder: "INBOX", From: "Sender <sender@example.test>", To: "browser@example.test", Cc: "colleague@example.test", Subject: "Browser smoke message", BodyText: "Safe browser message body", Date: now, Flags: []string{},
+		ID: "1", Folder: "INBOX", From: "Sender <sender@example.test>", To: "browser@example.test", Cc: "colleague@example.test", Subject: "Browser smoke message", BodyText: "Safe browser message body; literal onclick= remains ordinary text", Date: now, Flags: []string{},
 		Attachments: []webmail.Attachment{{Filename: "proof.txt", ContentType: "text/plain", Size: 5, Content: []byte("proof")}},
 	}}}}
 	smtp := &apiFakeSMTP{}

@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-21 20:47 CDT — Swap messages into the responsive reader with HTMX
+
+Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `internal/api/webmail.go`, `webmail_ui.go`, and the embedded Web Mail assets;
+- focused API and real-Chromium browser tests;
+- the v4 implementation contract and responsive-reader evidence.
+
+Explanation:
+
+- Replaced the client-rendered message-open path with one authenticated,
+  same-origin HTMX fragment read. At widths through 1024 CSS pixels, opening a
+  message now exposes the reader in the same bounded viewport position while
+  retaining the list for immediate Back navigation.
+- Pinned and self-hosted HTMX 2.0.10 at exact SHA-256
+  `71ea67185bfa8c98c39d31717c6fce5d852370fcdfd129db4543774d3145c0de`
+  with its 0BSD license. Evaluation, response scripts, history, and injected
+  indicator styles are disabled.
+- Preserved `require-trusted-types-for 'script'`. The page's narrow default
+  policy admits only HTMX's inert internal template wrapper carrying the exact
+  server-owned message-fragment marker; every other HTML sink assignment fails.
+  The policy does not inspect or falsely reject harmless message text.
+- Bounded long message headers and bodies so opening a real message cannot
+  widen a 390-pixel viewport or force horizontal scrolling.
+- Did not alter mailbox authorization, CSRF mutation enforcement, IMAP
+  semantics, transport, DNS state, or the immutable `v1.0.0-alpha.1` tag.
+
+Verification:
+
+- exact-red browser regression failed before implementation because HTMX and
+  the message fragment request did not exist;
+- focused API tests cover exact HTMX admission, authentication, escaping,
+  no-store response behavior, the pinned asset digest, and Trusted Types
+  configuration;
+- real Chromium proves desktop reading plus 980- and 390-pixel drill-down,
+  in-place reader exposure, preserved list Back navigation, zero page-level
+  overflow, and the existing compose/send/draft paths.
+
 ## 2026-09-21 20:20 CDT — Repair Web Mail and DNS administration reflow
 
 Implementation commit: `current commit; hash assigned by Git after commit`

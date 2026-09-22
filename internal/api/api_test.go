@@ -1180,12 +1180,12 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/webmail", nil))
 	body := rr.Body.String()
-	for _, want := range []string{"GOTTH Mail", "command-actions", "folder-pane", "message-list", "reader-pane", "composer", "/webmail/assets/app.js", "gotth-footer", "Powered by", "Version: <strong>dev</strong>", "Page: <strong>", "Template: <strong>"} {
+	for _, want := range []string{"GOTTH Mail", "command-actions", "folder-pane", "message-list", "reader-pane", "composer", "/webmail/assets/trusted-html.js", "/webmail/assets/htmx-2.0.10.min.js", "/webmail/assets/app.js", "allowEval", "gotth-footer", "Powered by", "Version: <strong>dev</strong>", "Page: <strong>", "Template: <strong>"} {
 		if rr.Code != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("webmail shell status=%d missing %q body=%s", rr.Code, want, body)
 		}
 	}
-	if got := rr.Header().Get("Content-Security-Policy"); !strings.Contains(got, "default-src 'none'") || !strings.Contains(got, "script-src 'self'") || !strings.Contains(got, "trusted-types 'none'") {
+	if got := rr.Header().Get("Content-Security-Policy"); !strings.Contains(got, "default-src 'none'") || !strings.Contains(got, "script-src 'self'") || !strings.Contains(got, "trusted-types default") || !strings.Contains(got, "require-trusted-types-for 'script'") {
 		t.Fatalf("webmail CSP=%q", got)
 	}
 	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
@@ -1199,10 +1199,21 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 	if got := asset.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("webmail asset cache control=%q", got)
 	}
+	htmx := httptest.NewRecorder()
+	h.ServeHTTP(htmx, httptest.NewRequest(http.MethodGet, "/webmail/assets/htmx-2.0.10.min.js", nil))
+	htmxDigest := fmt.Sprintf("%x", sha256.Sum256(htmx.Body.Bytes()))
+	if htmx.Code != http.StatusOK || !strings.Contains(htmx.Body.String(), `version:"2.0.10"`) || htmxDigest != "71ea67185bfa8c98c39d31717c6fce5d852370fcdfd129db4543774d3145c0de" {
+		t.Fatalf("HTMX asset status=%d body=%s", htmx.Code, htmx.Body.String())
+	}
+	trustedHTML := httptest.NewRecorder()
+	h.ServeHTTP(trustedHTML, httptest.NewRequest(http.MethodGet, "/webmail/assets/trusted-html.js", nil))
+	if trustedHTML.Code != http.StatusOK || !strings.Contains(trustedHTML.Body.String(), "Rejected untrusted HTMX fragment") || strings.Contains(trustedHTML.Body.String(), "createHTML:function(value){return value}") {
+		t.Fatalf("trusted HTML policy status=%d body=%s", trustedHTML.Code, trustedHTML.Body.String())
+	}
 	stylesheet := httptest.NewRecorder()
 	h.ServeHTTP(stylesheet, httptest.NewRequest(http.MethodGet, "/webmail/assets/app.css", nil))
 	css := stylesheet.Body.String()
-	for _, want := range []string{".gotth-footer", ".gotth-footer-product", ".command-actions", "@media(max-width:900px)", "min(var(--folder-width),28vw)", "#compose-form{height:auto;min-height:100%;overflow:auto"} {
+	for _, want := range []string{".gotth-footer", ".gotth-footer-product", ".command-actions", "@media(max-width:1024px)", "min(var(--folder-width),28vw)", "grid-template-columns:max-content minmax(0,1fr)", "#compose-form{height:auto;min-height:100%;overflow:auto"} {
 		if stylesheet.Code != http.StatusOK || !strings.Contains(css, want) {
 			t.Fatalf("webmail CSS status=%d missing %q body=%s", stylesheet.Code, want, css)
 		}
@@ -1296,6 +1307,27 @@ func TestWebmailAPIRoutesRequireAuthAndReachClientSender(t *testing.T) {
 	}
 	if rr.Code != http.StatusOK || queryMessage.From != "A User <a@example.test>" {
 		t.Fatalf("query read status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = v3Req(http.MethodGet, "/webmail/fragments/message?folder=INBOX&id=m1", "")
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("non-HTMX fragment status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = v3Req(http.MethodGet, "/webmail/fragments/message?folder=INBOX&id=m1", "")
+	req.Header.Set("Authorization", "Bearer web-secret-token")
+	req.Header.Set("HX-Request", "true")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	fragment := rr.Body.String()
+	for _, want := range []string{`<!--gotth-mail-message-fragment-->`, `id="empty-reader"`, `id="message-reader"`, `id="message-context"`, `data-mobile-back="messages"`, `&amp;lt;b&amp;gt;safe&amp;lt;/b&amp;gt;`, `note.txt (5 bytes)`} {
+		if rr.Code != http.StatusOK || !strings.Contains(fragment, want) {
+			t.Fatalf("message fragment status=%d missing %q body=%s", rr.Code, want, fragment)
+		}
+	}
+	if strings.Contains(fragment, "<script>x</script>") || rr.Header().Get("Cache-Control") != "private, no-store" || rr.Header().Get("Vary") != "HX-Request" {
+		t.Fatalf("unsafe fragment response status=%d headers=%v body=%s", rr.Code, rr.Header(), fragment)
 	}
 	req = v3Req(http.MethodGet, "/api/v1/webmail/attachment?folder=INBOX&id=m1&index=0", "")
 	req.Header.Set("Authorization", "Bearer web-secret-token")
