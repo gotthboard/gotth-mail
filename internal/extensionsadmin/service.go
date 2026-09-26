@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -31,11 +32,15 @@ var (
 )
 
 type Service struct {
-	DB      *sql.DB
-	Runtime Runtime
-	Now     func() time.Time
-	Rand    io.Reader
-	key     []byte
+	lifecycleMu sync.Mutex
+	DB          *sql.DB
+	Runtime     Runtime
+	// RuntimeBlockReason is an optional read-only supervisor observation, wired
+	// before serving requests. It never grants lifecycle authority.
+	RuntimeBlockReason func() string
+	Now                func() time.Time
+	Rand               io.Reader
+	key                []byte
 }
 
 func NewService(db *sql.DB, key []byte, runtime Runtime) (*Service, error) {
@@ -516,7 +521,13 @@ func (s *Service) consumeAndAudit(ctx context.Context, tx *sql.Tx, p storedPrevi
 	return audit.WriteSQL(ctx, tx, audit.Event{Actor: actor, Action: action, Resource: audit.ResourceRef{Type: "extension", ID: p.InstanceID}, AfterRedacted: after, Result: "success"})
 }
 
+// Complexity: time O(B+Q+R+W), Omega(1); tight Theta not established across
+// error paths. Auxiliary space O(B+M), Omega(1); tight Theta not established.
+// B is instance/secret bytes, Q SQL work, R runtime work, W lifecycle lock wait,
+// M delegated memory. Existing lifecycle semantics are serialized, not changed.
 func (s *Service) Test(ctx context.Context, actor audit.ActorRef, id string) (Instance, error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	if err := validateActor(actor); err != nil {
 		return Instance{}, err
 	}
@@ -571,7 +582,14 @@ func (s *Service) Test(ctx context.Context, actor audit.ActorRef, id string) (In
 	return s.Get(ctx, id)
 }
 
-func (s *Service) Enable(ctx context.Context, actor audit.ActorRef, id string) (Instance, error) {
+// Enable revalidates the exact runtime even when durable flags say ready.
+// Complexity: successful path time O(B+Q+R+W), Omega(B+Q+R+W), Theta(B+Q+R+W);
+// auxiliary space O(B+M), Omega(B+M), Theta(B+M). B is bounded configuration
+// and secret bytes, Q total SQL cost, R runtime cost, W lock wait, and M
+// delegated memory. Early errors pay only the executed prefix of those costs.
+func (s *Service) Enable(ctx context.Context, actor audit.ActorRef, id string) (out Instance, retErr error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	if err := validateActor(actor); err != nil {
 		return Instance{}, err
 	}
@@ -582,11 +600,29 @@ func (s *Service) Enable(ctx context.Context, actor audit.ActorRef, id string) (
 	if err != nil {
 		return Instance{}, err
 	}
-	if instance.Enabled && instance.Routed {
-		return instance, nil
-	}
-	if instance.Enabled || instance.Routed || instance.TestedRevision != instance.ConfigurationRev || !requiredSecretsConfigured(instance) {
+	started, admitted := false, false
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if admitted || instance.Enabled || instance.Routed {
+			revokeErr := s.Runtime.RevokeRouting(cleanupCtx, instance)
+			retErr = errors.Join(retErr, revokeErr)
+			if revokeErr != nil {
+				return
+			}
+		}
+		if started || instance.Enabled || instance.Routed {
+			retErr = errors.Join(retErr, s.Runtime.Stop(cleanupCtx, instance))
+		}
+	}()
+	if instance.Routed && !instance.Enabled || instance.TestedRevision != instance.ConfigurationRev || !requiredSecretsConfigured(instance) {
 		return Instance{}, ErrConflict
+	}
+	if _, err := ValidateConfiguration(instance.Metadata, instance.Configuration, instance.SecretSlots); err != nil {
+		return Instance{}, err
 	}
 	secrets, err := s.readSecrets(ctx, instance)
 	if err != nil {
@@ -596,44 +632,52 @@ func (s *Service) Enable(ctx context.Context, actor audit.ActorRef, id string) (
 	if err := s.Runtime.Start(ctx, instance, secrets); err != nil {
 		return Instance{}, err
 	}
+	started = true
 	health, err := s.Runtime.Probe(ctx, instance)
-	if err != nil || !health.Healthy || !validDottedToken(health.Code) {
-		_ = s.Runtime.Stop(ctx, instance)
-		if err != nil {
-			return Instance{}, err
-		}
+	if err != nil {
+		return Instance{}, err
+	}
+	if !health.Healthy || !validDottedToken(health.Code) {
 		return Instance{}, ErrUnhealthy
 	}
+	// Admission can fail after a partial effect: always attempt revocation.
+	admitted = true
 	if err := s.Runtime.AdmitRouting(ctx, instance); err != nil {
-		_ = s.Runtime.Stop(ctx, instance)
 		return Instance{}, err
 	}
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
-	if err == nil {
-		defer tx.Rollback()
-		var result sql.Result
-		result, err = tx.ExecContext(ctx, `UPDATE extension_instances SET enabled=true, routed=true, lifecycle='ready', health_code=$1, updated_at=$2 WHERE instance_id=$3 AND product=$4 AND configuration_revision=$5 AND tested_revision=$5 AND enabled=false AND routed=false`, health.Code, s.now(), id, Product, instance.ConfigurationRev)
-		if err == nil {
-			if n, _ := result.RowsAffected(); n != 1 {
-				err = ErrConflict
-			}
-		}
-		if err == nil {
-			err = audit.WriteSQL(ctx, tx, audit.Event{Actor: actor, Action: "extension.enable", Resource: audit.ResourceRef{Type: "extension", ID: id}, AfterRedacted: map[string]any{"routed": true, "health_code": health.Code}, Result: "success"})
-		}
-		if err == nil {
-			err = tx.Commit()
-		}
-	}
 	if err != nil {
-		_ = s.Runtime.RevokeRouting(ctx, instance)
-		_ = s.Runtime.Stop(ctx, instance)
 		return Instance{}, err
 	}
-	return s.Get(ctx, id)
+	defer tx.Rollback()
+	now := s.now()
+	result, err := tx.ExecContext(ctx,
+		`UPDATE extension_instances SET enabled=true, routed=true, lifecycle='ready', health_code=$1, updated_at=$2 WHERE instance_id=$3 AND product=$4 AND configuration_revision=$5 AND tested_revision=$5 AND enabled=$6 AND routed=$7`,
+		health.Code, now, id, Product, instance.ConfigurationRev, instance.Enabled, instance.Routed)
+	if err != nil {
+		return Instance{}, err
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return Instance{}, ErrConflict
+	}
+	if err := audit.WriteSQL(ctx, tx, audit.Event{Actor: actor, Action: "extension.enable", Resource: audit.ResourceRef{Type: "extension", ID: id}, AfterRedacted: map[string]any{"routed": true, "health_code": health.Code}, Result: "success"}); err != nil {
+		return Instance{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Instance{}, err
+	}
+	instance.Enabled, instance.Routed = true, true
+	instance.Lifecycle, instance.HealthCode, instance.UpdatedAt = "ready", health.Code, now
+	return instance, nil
 }
 
+// Complexity: time O(B+Q+R+W), Omega(1); tight Theta not established across
+// error paths. Auxiliary space O(B+M), Omega(1); tight Theta not established.
+// B is instance/secret bytes, Q SQL work, R runtime work, W lifecycle lock wait,
+// M delegated memory. Failed disable stays revoked for explicit reconciliation.
 func (s *Service) Disable(ctx context.Context, actor audit.ActorRef, id string) (Instance, error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	if err := validateActor(actor); err != nil {
 		return Instance{}, err
 	}
@@ -653,9 +697,7 @@ func (s *Service) Disable(ctx context.Context, actor audit.ActorRef, id string) 
 		}
 	}
 	if err := s.Runtime.Stop(ctx, instance); err != nil {
-		if instance.Routed {
-			_ = s.Runtime.AdmitRouting(ctx, instance)
-		}
+		// A partially stopped process is not a verified routing target.
 		return Instance{}, err
 	}
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
@@ -676,11 +718,8 @@ func (s *Service) Disable(ctx context.Context, actor audit.ActorRef, id string) 
 		}
 	}
 	if err != nil {
-		secrets, readErr := s.readSecrets(ctx, instance)
-		if readErr == nil && s.Runtime.Start(ctx, instance, secrets) == nil && instance.Routed {
-			_ = s.Runtime.AdmitRouting(ctx, instance)
-		}
-		clearSecrets(secrets)
+		// Do not undo a requested disable by launching a replacement process.
+		// Durable state may be ambiguous; an authorized Enable reconciles it.
 		return Instance{}, err
 	}
 	return s.Get(ctx, id)
@@ -996,4 +1035,51 @@ func postgresTextArray(values []string) string {
 		escaped[i] = `"` + strings.ReplaceAll(strings.ReplaceAll(value, `\`, `\\`), `"`, `\"`) + `"`
 	}
 	return `{` + strings.Join(escaped, ",") + `}`
+}
+
+// ReconcileRestart invalidates observations from a previous supervisor. Call
+// only before serving requests, with a newly constructed empty runtime. It
+// retains enable intent but grants no runtime authority; explicit Enable recovers.
+// Complexity: time O(N+Q), Omega(N+Q), Theta(N+Q) on success; auxiliary space
+// O(N+M), Omega(N+M), Theta(N+M). N is affected IDs, Q SQL/audit work and M
+// delegated database memory. Errors abort all observations and audit writes.
+func (s *Service) ReconcileRestart(ctx context.Context) error {
+	if s.Runtime == nil {
+		return ErrUnavailable
+	}
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	healthCode := "extension.restart-required"
+	if s.RuntimeBlockReason != nil && s.RuntimeBlockReason() != "" {
+		healthCode = "extension.runtime-blocked"
+	}
+	rows, err := tx.QueryContext(ctx, "UPDATE extension_instances SET routed=false,lifecycle='degraded',health_code=$3,updated_at=$1 WHERE product=$2 AND (enabled OR routed) AND (routed OR lifecycle<>'degraded' OR health_code<>$3) RETURNING instance_id", s.now(), Product, healthCode)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := audit.WriteSQL(ctx, tx, audit.Event{Actor: audit.ActorRef{Type: "system", ID: "extension-supervisor-startup"}, Action: "extension.reconcile", Resource: audit.ResourceRef{Type: "extension", ID: id}, AfterRedacted: map[string]any{"routed": false, "health_code": healthCode}, Result: "success"}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

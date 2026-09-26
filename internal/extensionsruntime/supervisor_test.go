@@ -118,11 +118,29 @@ func TestWebhookProcessLifecycle(t *testing.T) {
 		Configuration: map[string]any{"webhook.endpoint": "https://127.0.0.1:1/hook", "webhook.timeout-seconds": float64(1)}, ConfigurationRev: 2,
 	}
 	secrets := map[string][]byte{SecretSlot: []byte(strings.Repeat("k", 32))}
+	duplicate, err := New(artifactRoot, runtimeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := supervisor.Start(context.Background(), instance, secrets); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
+	if err := duplicate.Start(context.Background(), instance, secrets); err == nil {
+		duplicate.RevokeRouting(context.Background(), instance)
+		duplicate.Stop(context.Background(), instance)
+		t.Fatal("duplicate supervisor activated shared root")
+	}
 	if health, err := supervisor.Probe(context.Background(), instance); err != nil || !health.Healthy || health.Code != "extension.ready" {
 		t.Fatalf("probe failed: %#v %v", health, err)
+	}
+	original := supervisor.processes[instance.InstanceID]
+	if err := supervisor.Start(context.Background(), instance, secrets); err != nil || supervisor.processes[instance.InstanceID] != original {
+		t.Fatalf("idempotent start replaced process: %v", err)
+	}
+	stale := instance
+	stale.GrantDigest = strings.Repeat("9", 64)
+	if err := supervisor.AdmitRouting(context.Background(), stale); err == nil {
+		t.Fatal("stale grant admitted")
 	}
 	if err := supervisor.AdmitRouting(context.Background(), instance); err != nil {
 		t.Fatalf("routing admission failed: %v", err)
@@ -143,6 +161,30 @@ func TestWebhookProcessLifecycle(t *testing.T) {
 	if err := supervisor.Stop(context.Background(), instance); err != nil {
 		t.Fatalf("stop failed: %v", err)
 	}
+	// A fresh supervisor cannot inherit an observed route; the same authorized
+	// instance can be explicitly restored after a clean parent shutdown.
+	fresh, err := New(artifactRoot, runtimeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fresh.AdmitRouting(context.Background(), instance); err == nil {
+		t.Fatal("fresh supervisor inferred route")
+	}
+	if err := fresh.Start(context.Background(), instance, secrets); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fresh.Probe(context.Background(), instance); err != nil {
+		t.Fatal(err)
+	}
+	if err := fresh.AdmitRouting(context.Background(), instance); err != nil {
+		t.Fatal(err)
+	}
+	if err := fresh.RevokeRouting(context.Background(), instance); err != nil {
+		t.Fatal(err)
+	}
+	if err := fresh.Stop(context.Background(), instance); err != nil {
+		t.Fatal(err)
+	}
 	entries, err := os.ReadDir(runtimeRoot)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("runtime secrets were not removed: %v entries=%d", err, len(entries))
@@ -157,4 +199,46 @@ func webhookMetadata() extensionsadmin.Metadata {
 		{Name: "webhook.timeout-seconds", Label: "Request timeout in seconds", Kind: extensionsadmin.FieldInteger, Required: true, Min: &minimumTimeout, Max: &maximumTimeout, Default: float64(10)},
 		{Name: SecretSlot, Label: "Webhook HMAC key", Kind: extensionsadmin.FieldSecret, Required: true},
 	}}
+}
+
+func TestAdmissionRequiresProbe(t *testing.T) {
+	instance := extensionsadmin.Instance{InstanceID: "id", ArtifactPin: "sha256:" + strings.Repeat("1", 64), ConfigurationRev: 2}
+	p := &process{instance: instance, done: make(chan struct{})}
+	s := &Supervisor{processes: map[string]*process{"id": p}}
+	if err := s.AdmitRouting(context.Background(), instance); err == nil {
+		t.Fatal("unprobed process admitted")
+	}
+}
+
+func TestStartRejectsStaleIdentity(t *testing.T) {
+	instance := extensionsadmin.Instance{InstanceID: "id", ExtensionID: ExtensionID, Repository: Repository, ArtifactPin: "sha256:" + strings.Repeat("1", 64), ManifestDigest: strings.Repeat("2", 64), GrantDigest: strings.Repeat("3", 64), SessionDigest: strings.Repeat("4", 64), Capabilities: capabilities, Interfaces: []string{Interface}, SecretSlots: []string{SecretSlot}, Metadata: webhookMetadata(), Configuration: map[string]any{"webhook.endpoint": "https://example.test", "webhook.timeout-seconds": float64(10)}, ConfigurationRev: 2}
+	for _, field := range []string{"manifest", "grant", "session", "config"} {
+		t.Run(field, func(t *testing.T) {
+			stale := instance
+			switch field {
+			case "manifest":
+				stale.ManifestDigest = strings.Repeat("5", 64)
+			case "grant":
+				stale.GrantDigest = strings.Repeat("5", 64)
+			case "session":
+				stale.SessionDigest = strings.Repeat("5", 64)
+			case "config":
+				stale.Configuration = map[string]any{"webhook.endpoint": "https://other.test", "webhook.timeout-seconds": float64(10)}
+			}
+			s := &Supervisor{processes: map[string]*process{"id": {instance: stale, done: make(chan struct{})}}}
+			if err := s.Start(context.Background(), instance, map[string][]byte{SecretSlot: []byte(strings.Repeat("k", 32))}); err == nil {
+				t.Fatal("stale process identity reused")
+			}
+		})
+	}
+}
+
+func TestRevokeOtherRoute(t *testing.T) {
+	s := &Supervisor{active: "a", processes: map[string]*process{}}
+	if err := s.RevokeRouting(context.Background(), extensionsadmin.Instance{InstanceID: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if s.active != "a" {
+		t.Fatal("unrelated route revoked")
+	}
 }

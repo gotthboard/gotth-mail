@@ -22,14 +22,19 @@ type extensionFieldView struct {
 }
 
 type extensionPageView struct {
-	Items   []extensionsadmin.Instance
-	Item    extensionsadmin.Instance
-	Fields  []extensionFieldView
-	Preview extensionsadmin.Preview
-	Message string
-	CSRF    string
+	Items         []extensionsadmin.Instance
+	Item          extensionsadmin.Instance
+	Fields        []extensionFieldView
+	Preview       extensionsadmin.Preview
+	Message       string
+	BlockedReason string
+	CSRF          string
 }
 
+// Complexity: route registration time/space O(1), Omega(1), Theta(1).
+// Per request, existing auth/SQL/render costs are delegated; quarantine adds
+// O(P+F+W) time, Omega(1), and O(P) space, Omega(1), tight Theta not established
+// across errors: P tracked runtime dirs, F filesystem work, W lock wait.
 func registerExtensionUI(mux *http.ServeMux, ids *identity.Service, az authz.Authorizer, sessions authn.IdentitySessionStore, now func() time.Time, service *extensionsadmin.Service) {
 	mux.HandleFunc("/admin/extensions", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/admin/extensions" || r.Method != http.MethodGet {
@@ -49,7 +54,11 @@ func registerExtensionUI(mux *http.ServeMux, ids *identity.Service, az authz.Aut
 			http.Error(w, "extension inventory unavailable", http.StatusInternalServerError)
 			return
 		}
-		renderExtensionPage(w, extensionPageView{Items: items, CSRF: csrf})
+		view := extensionPageView{Items: items, CSRF: csrf}
+		if service.RuntimeBlockReason != nil {
+			view.BlockedReason = service.RuntimeBlockReason()
+		}
+		renderExtensionPage(w, view)
 	})
 
 	mux.HandleFunc("/admin/extensions/", func(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +96,9 @@ func registerExtensionUI(mux *http.ServeMux, ids *identity.Service, az authz.Aut
 				view.Fields = extensionFields(item, nil)
 				view.Message = err.Error()
 			}
+		}
+		if service.RuntimeBlockReason != nil {
+			view.BlockedReason = service.RuntimeBlockReason()
 		}
 		renderExtensionPage(w, view)
 	})
@@ -266,10 +278,11 @@ func renderExtensionPage(w http.ResponseWriter, view extensionPageView) {
 var extensionPage = template.Must(template.New("extensions").Funcs(template.FuncMap{"join": strings.Join}).Parse(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>GOTTH Mail Extensions</title><style>body{font:1rem system-ui;max-width:72rem;margin:auto;padding:1rem}nav,section{margin-block:1rem}label{display:block;margin:.5rem 0}input,select,button{font:inherit;max-width:100%}input:focus,select:focus,button:focus,a:focus{outline:3px solid Highlight;outline-offset:2px}@media(max-width:40rem){form{display:grid;gap:.5rem}button{min-height:2.75rem}}</style></head><body><main>
 <p><a href="/">GOTTH Mail</a> / <a href="/admin/extensions">Extensions</a></p>
 {{if .Message}}<p role="status">{{.Message}}</p>{{end}}
+{{if .BlockedReason}}<p role="alert">{{.BlockedReason}}</p>{{end}}
 {{if .Item.InstanceID}}
 <h1>{{.Item.ExtensionID}}</h1>
 <nav><a href="#overview">Overview</a> <a href="#configuration">Configuration</a> <a href="#secrets">Secrets</a> <a href="#permissions">Permissions</a> <a href="#health">Health</a> <a href="#audit">Audit</a> <a href="#versions">Versions</a> <a href="#rollback">Rollback</a></nav>
-<section id="overview"><h2>Overview</h2><dl><dt>Repository</dt><dd>{{.Item.Repository}}</dd><dt>Artifact</dt><dd><code>{{.Item.ArtifactPin}}</code></dd><dt>Manifest</dt><dd><code>{{.Item.ManifestDigest}}</code></dd><dt>Lifecycle</dt><dd>{{.Item.Lifecycle}}</dd><dt>Enabled / routed</dt><dd>{{.Item.Enabled}} / {{.Item.Routed}}</dd></dl><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button name="action" value="test">Test</button>{{if .Item.Enabled}}<button name="action" value="disable">Disable</button>{{else}}<button name="action" value="enable">Enable</button>{{end}}</form></section>
+<section id="overview"><h2>Overview</h2><dl><dt>Repository</dt><dd>{{.Item.Repository}}</dd><dt>Artifact</dt><dd><code>{{.Item.ArtifactPin}}</code></dd><dt>Manifest</dt><dd><code>{{.Item.ManifestDigest}}</code></dd><dt>Lifecycle</dt><dd>{{.Item.Lifecycle}}</dd><dt>Enabled / routed</dt><dd>{{.Item.Enabled}} / {{.Item.Routed}}</dd></dl><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button name="action" value="test">Test</button>{{if .Item.Enabled}}<button name="action" value="enable" aria-describedby="extension-recovery-help">Recover / revalidate</button><button name="action" value="disable">Disable</button>{{else}}<button name="action" value="enable">Enable</button>{{end}}</form><p id="extension-recovery-help">Stored lifecycle is not proof of a live runtime. Recover / revalidate explicitly checks the existing approved configuration, secrets, identity and health before routing. It grants no new permissions. Disable remains available.</p></section>
 <section id="configuration"><h2>Configuration</h2><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}">{{range .Fields}}<label>{{.Label}} {{if eq .Kind "boolean"}}<input type="checkbox" name="field.{{.Name}}" {{if .Checked}}checked{{end}}>{{else if eq .Kind "enum"}}<select name="field.{{.Name}}" {{if .Required}}required{{end}}>{{range .Options}}<option>{{.}}</option>{{end}}</select>{{else}}<input name="field.{{.Name}}" value="{{.Value}}" {{if eq .Kind "secret"}}type="password" autocomplete="new-password"{{else if eq .Kind "integer"}}type="number"{{end}} {{if .Required}}required{{end}}>{{end}}</label>{{end}}<button name="action" value="configure-preview">Preview configuration</button>{{if eq .Preview.Operation "configure"}}<input type="hidden" name="preview_id" value="{{.Preview.ID}}"><p>Re-enter all changed secrets, then type <code>{{.Preview.Confirmation}}</code>.</p><input name="confirmation" autocomplete="off" required><button name="action" value="configure-apply">Apply configuration</button>{{end}}</form></section>
 <section id="secrets"><h2>Secrets</h2><ul>{{range .Item.Secrets}}<li>{{.Slot}}: {{if .Configured}}configured (value hidden){{else}}not configured{{end}}</li>{{end}}</ul><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button name="action" value="secrets-delete-preview">Preview deletion of all secrets</button>{{if eq .Preview.Operation "delete_secrets"}}<input type="hidden" name="preview_id" value="{{.Preview.ID}}"><p>Type <code>{{.Preview.Confirmation}}</code>.</p><input name="confirmation" required><button name="action" value="secrets-delete-apply">Delete secrets</button>{{end}}</form></section>
 <section id="permissions"><h2>Permissions</h2><p>Capabilities: <code>{{join .Item.Capabilities ", "}}</code></p><p>Interfaces: <code>{{join .Item.Interfaces ", "}}</code></p><p>Granted secret slots: <code>{{join .Item.SecretSlots ", "}}</code></p></section>

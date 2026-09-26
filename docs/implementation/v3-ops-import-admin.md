@@ -226,6 +226,42 @@ health, then admit routing. Disable ordering is revoke grant, remove routing,
 stop, then record final state. Retried and ambiguous operations reconcile by
 the bound configuration/session identities rather than guessing success.
 
+With a fresh empty supervisor, startup transactionally invalidates historical
+routing observations for enabled instances and audits each changed observation.
+It preserves enabled intent, configuration/test revision, pins, grants and secrets,
+but projects unrouted/degraded with `extension.restart-required` until an
+explicit authorized Enable revalidates Start, authenticated Probe and routing
+admission. Startup does not approve new grants or automatically launch an
+extension. Reconciliation/audit failure fails startup rather than serving stale
+ready state. Disabled instances remain disabled. Repeated Enable never treats
+persisted enabled/routed flags as proof; current tested revision and scoped
+secrets remain mandatory. A failed Enable revokes any previous route before
+stopping, and propagates cleanup errors; persisted state can remain ambiguous
+on audit failure and must not be treated as live runtime evidence. Test, Enable
+and Disable are serialized by the single administrator service; no multi-process
+controller guarantee is introduced. Failed Disable SQL/audit leaves the process
+stopped and route revoked rather than launching an unaudited replacement;
+retry Disable to record that state or explicitly Enable to recover. The native
+HTML Recover / revalidate button uses that same enable action, with the existing
+administrator role and CSRF checks and ordinary no-JavaScript POST; Disable
+remains available. Observational health checks authenticate and report health
+but never clear or grant lifecycle admission readiness. A failed explicit Probe
+still invalidates readiness before another admission can succeed.
+
+A valid protected runtime root containing unowned leftovers quarantines only
+the managed extension mechanism. Mail HTTP, administrator inventory and Postfix
+listeners remain available; historical enabled/routed instances become audited
+unrouted/degraded with `extension.runtime-blocked` and retain enabled intent.
+No leftover process, directory, socket or secret is adopted, deleted or signalled.
+The administrator receives an actionable blocker: verify prior processes stopped,
+clean only exact protected leftovers, then restart Mail and explicitly recover.
+Unknown-state quarantine is latched; deleting files alone never unblocks it.
+Invalid root ownership, permissions, symlinks or conflicting configuration still
+fail closed. A nonblocking directory flock serializes cooperating supervisors'
+root inspection and process-directory publication; local lifecycle locking keeps
+Start/Stop/root observations coherent. This is not a multi-controller protocol
+or protection against a malicious process with Mail's own filesystem authority.
+
 Production runtime is enabled only when all three protected settings exist:
 
 ```text

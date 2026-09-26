@@ -343,6 +343,9 @@ func configureFrontAuthFromEnv(server *api.Server) error {
 // offline configuration remain available with only the master key. Runtime
 // lifecycle is enabled only when both protected artifact and runtime roots are
 // explicitly configured.
+// Complexity: time O(N+Q+F), Omega(1); space O(N+M), Omega(1); tight Theta
+// not established across configuration/error paths. N is reconciled instance
+// count, Q SQL/audit cost, F protected-file I/O, M delegated memory.
 func configureExtensionsFromEnv(server *api.Server) error {
 	path := strings.TrimSpace(os.Getenv("GOTTH_MAIL_EXTENSION_MASTER_KEY_FILE"))
 	artifactRoot := strings.TrimSpace(os.Getenv("GOTTH_MAIL_EXTENSION_ARTIFACT_ROOT"))
@@ -419,6 +422,16 @@ func configureExtensionsFromEnv(server *api.Server) error {
 	}
 	if err != nil {
 		return err
+	}
+	if supervisor, ok := runtime.(*extensionsruntime.Supervisor); ok {
+		service.RuntimeBlockReason = supervisor.BlockedReason
+	}
+	if runtime != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := service.ReconcileRestart(ctx); err != nil {
+			return fmt.Errorf("reconcile extension runtime: %w", err)
+		}
 	}
 	server.Extensions = service
 	return nil

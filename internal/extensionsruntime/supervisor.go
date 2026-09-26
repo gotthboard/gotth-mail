@@ -1,6 +1,7 @@
 package extensionsruntime
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -51,6 +52,8 @@ type Supervisor struct {
 	runtimeRoot  string
 	rand         io.Reader
 
+	lifecycle sync.Mutex
+	blocked   bool
 	mu        sync.RWMutex
 	processes map[string]*process
 	active    string
@@ -64,8 +67,13 @@ type process struct {
 	socket   string
 	runDir   string
 	done     chan struct{}
+	ready    bool
 }
 
+// New validates configuration, but quarantines unowned runtime contents without
+// failing the host service. Complexity: time O(L+F), Omega(1), tight Theta not
+// established across failures; space O(L), Omega(1), tight Theta not established.
+// L root path bytes, F bounded root inspection/syscalls (at most one entry).
 func New(artifactRoot, runtimeRoot string) (*Supervisor, error) {
 	artifactRoot = filepath.Clean(strings.TrimSpace(artifactRoot))
 	runtimeRoot = filepath.Clean(strings.TrimSpace(runtimeRoot))
@@ -78,13 +86,23 @@ func New(artifactRoot, runtimeRoot string) (*Supervisor, error) {
 	if err := validateDirectory(runtimeRoot, true); err != nil {
 		return nil, fmt.Errorf("runtime root: %w", err)
 	}
-	return &Supervisor{artifactRoot: artifactRoot, runtimeRoot: runtimeRoot, rand: rand.Reader, processes: map[string]*process{}}, nil
+	s := &Supervisor{artifactRoot: artifactRoot, runtimeRoot: runtimeRoot, rand: rand.Reader, processes: map[string]*process{}}
+	_ = s.BlockedReason() // Quarantine the extension only; Mail remains available.
+	return s, nil
 }
 
+// Complexity: time O(L+F), Omega(1); space O(L), Omega(1); tight Theta not
+// established across filesystem errors. L path bytes, F filesystem lookup cost.
 func validateDirectory(path string, private bool) error {
 	info, err := os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return errors.New("regular directory required")
+	}
+	if private {
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || st.Uid != uint32(os.Geteuid()) {
+			return errors.New("runtime directory must be owned by Mail user")
+		}
 	}
 	if private && info.Mode().Perm()&0o077 != 0 || !private && info.Mode().Perm()&0o022 != 0 {
 		return errors.New("unsafe directory permissions")
@@ -92,7 +110,14 @@ func validateDirectory(path string, private bool) error {
 	return nil
 }
 
+// Complexity: time O(B+A+R+W), Omega(1); tight Theta not established across
+// reuse/failure paths; space O(B+M), Omega(1), tight Theta not established.
+// B is encoded binding/config bytes, A artifact I/O, R process/transport cost,
+// W lock wait, M delegated memory. Also O(P+F) time/space for P tracked runtime
+// entries and F filesystem root checks; startup waits retain existing bounds.
 func (s *Supervisor) Start(ctx context.Context, instance extensionsadmin.Instance, secrets map[string][]byte) error {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 	if err := validateInstance(instance, secrets); err != nil {
 		return err
 	}
@@ -103,11 +128,21 @@ func (s *Supervisor) Start(ctx context.Context, instance extensionsadmin.Instanc
 	existing := s.processes[instance.InstanceID]
 	s.mu.RUnlock()
 	if existing != nil {
-		if existing.instance.ArtifactPin == instance.ArtifactPin && existing.instance.ConfigurationRev == instance.ConfigurationRev && !processExited(existing) {
+		if sameBinding(existing.instance, instance) && !processExited(existing) {
+			guard, err := s.guardRoot()
+			if err != nil {
+				return err
+			}
+			guard.Close()
 			return nil
 		}
 		return extensionsadmin.ErrConflict
 	}
+	guard, err := s.guardRoot()
+	if err != nil {
+		return err
+	}
+	defer guard.Close()
 	artifactDir := filepath.Join(s.artifactRoot, strings.TrimPrefix(instance.ArtifactPin, "sha256:"))
 	if err := validateArtifact(artifactDir, instance.ArtifactPin); err != nil {
 		return err
@@ -338,12 +373,34 @@ func processExited(p *process) bool {
 	}
 }
 
+// Complexity: time O(B+R+W), Omega(1); space O(B+M), Omega(1); tight Theta
+// not established across failure paths. B is binding bytes, R bounded RPC work,
+// W lock wait and M delegated memory; includes O(P+F) time/O(P) space root
+// check, P tracked entries and F filesystem work. A successful probe attests this process only.
 func (s *Supervisor) Probe(ctx context.Context, instance extensionsadmin.Instance) (extensionsadmin.Health, error) {
+	return s.probe(ctx, instance, true)
+}
+
+// probe authenticates and observes the bound process. Only lifecycle callers
+// may invalidate or establish readiness; concurrent health reads cannot change
+// admission between an explicit Probe and AdmitRouting.
+// Complexity: time O(B+R+W+P+F), Omega(1); space O(B+M+P), Omega(1);
+// tight Theta not established across errors. B binding bytes, R bounded RPC
+// work, W lock wait, P tracked dirs, F filesystem work, M transport memory.
+func (s *Supervisor) probe(ctx context.Context, instance extensionsadmin.Instance, attest bool) (extensionsadmin.Health, error) {
+	if reason := s.BlockedReason(); reason != "" {
+		return extensionsadmin.Health{Code: "extension.runtime-blocked"}, errors.New(reason)
+	}
 	s.mu.RLock()
 	p := s.processes[instance.InstanceID]
 	s.mu.RUnlock()
-	if p == nil || p.conn == nil || p.instance.ArtifactPin != instance.ArtifactPin || p.instance.ConfigurationRev != instance.ConfigurationRev || processExited(p) {
+	if p == nil || p.conn == nil || !sameBinding(p.instance, instance) || processExited(p) {
 		return extensionsadmin.Health{}, errors.New("extension process unavailable")
+	}
+	if attest {
+		s.mu.Lock()
+		p.ready = false
+		s.mu.Unlock()
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
@@ -361,6 +418,14 @@ func (s *Supervisor) Probe(ctx context.Context, instance extensionsadmin.Instanc
 	health, err := control.Health(probeCtx, &extensionsv1.HealthRequest{CorrelationId: "extension-probe", SessionSha256: instance.SessionDigest})
 	if err != nil || health.GetState() != extensionsv1.HealthState_HEALTH_STATE_READY || health.GetCode() != "extension.ready" {
 		return extensionsadmin.Health{}, extensionsadmin.ErrUnhealthy
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.processes[instance.InstanceID] != p || processExited(p) {
+		return extensionsadmin.Health{}, extensionsadmin.ErrConflict
+	}
+	if attest {
+		p.ready = true
 	}
 	return extensionsadmin.Health{Healthy: true, Code: health.GetCode()}, nil
 }
@@ -390,10 +455,22 @@ func equalStrings(left, right []string) bool {
 	return true
 }
 
-func (s *Supervisor) AdmitRouting(_ context.Context, instance extensionsadmin.Instance) error {
+// Complexity: time O(B+W), Omega(1); space O(B), Omega(1); tight Theta not
+// established across mismatch paths. B is binding bytes, W mutex wait; added
+// root check costs O(P+F) time and O(P) space, P tracked dirs and F filesystem work.
+func (s *Supervisor) AdmitRouting(ctx context.Context, instance extensionsadmin.Instance) error {
+	if reason := s.BlockedReason(); reason != "" {
+		return errors.New(reason)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if p := s.processes[instance.InstanceID]; p == nil || processExited(p) {
+	if s.blocked {
+		return errors.New(blockedReason)
+	}
+	if p := s.processes[instance.InstanceID]; p == nil || !p.ready || !sameBinding(p.instance, instance) || processExited(p) {
 		return errors.New("extension process unavailable")
 	}
 	if s.active != "" && s.active != instance.InstanceID {
@@ -403,6 +480,9 @@ func (s *Supervisor) AdmitRouting(_ context.Context, instance extensionsadmin.In
 	return nil
 }
 
+// Complexity: time O(L+W), Omega(1); space O(1), Omega(1), Theta(1).
+// L is instance-ID length, W lock wait; time Theta not established with wait.
+// Revoking an absent route must not interfere with another active instance.
 func (s *Supervisor) RevokeRouting(_ context.Context, instance extensionsadmin.Instance) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -410,13 +490,17 @@ func (s *Supervisor) RevokeRouting(_ context.Context, instance extensionsadmin.I
 		return nil
 	}
 	if s.active != instance.InstanceID {
-		return extensionsadmin.ErrConflict
+		return nil
 	}
 	s.active = ""
 	return nil
 }
 
+// Complexity: time O(D+R+W), Omega(1); space O(D+M), Omega(1); tight Theta not
+// established. D runtime tree entries, R termination/I/O, W locks, M OS memory.
 func (s *Supervisor) Stop(_ context.Context, instance extensionsadmin.Instance) error {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 	s.mu.Lock()
 	if s.active == instance.InstanceID {
 		s.mu.Unlock()
@@ -459,9 +543,15 @@ func terminate(p *process) error {
 	return nil
 }
 
+// Complexity: time O(B+R+W), Omega(1); space O(B+M), Omega(1); tight Theta not
+// established across failures. B alert bytes, R RPC, W lock wait, M transport memory.
+// Quarantine adds one locked boolean check, no filesystem work on delivery.
 func (s *Supervisor) SendAlert(ctx context.Context, alert notification.Alert) (notification.DeliveryResult, error) {
 	s.mu.RLock()
 	p := s.processes[s.active]
+	if s.blocked {
+		p = nil
+	}
 	s.mu.RUnlock()
 	if p == nil || p.conn == nil || processExited(p) {
 		return notification.DeliveryResult{Status: notification.StatusFailedRetryable, Reason: "notification_plugin_unavailable"}, errors.New("notification extension unavailable")
@@ -490,13 +580,100 @@ func (s *Supervisor) SendAlert(ctx context.Context, alert notification.Alert) (n
 	return result, nil
 }
 
+// Complexity: time O(B+P+F+R+W), Omega(1); space O(B+P+M), Omega(1); tight Theta
+// not established. B binding bytes, P tracked dirs, F filesystem work, R RPC,
+// W locks, M transport memory; errors fail only the extension mechanism.
 func (s *Supervisor) Health(ctx context.Context, requested string) (plugin.HealthResponse, error) {
+	if reason := s.BlockedReason(); reason != "" {
+		return plugin.HealthResponse{Message: "extension.runtime-blocked"}, errors.New(reason)
+	}
 	s.mu.RLock()
 	p := s.processes[s.active]
 	s.mu.RUnlock()
 	if p == nil || requested != ExtensionID {
 		return plugin.HealthResponse{}, errors.New("configured extension not found")
 	}
-	health, err := s.Probe(ctx, p.instance)
+	health, err := s.probe(ctx, p.instance, false)
 	return plugin.HealthResponse{Healthy: err == nil && health.Healthy, Message: health.Code}, err
+}
+
+// sameBinding compares immutable runtime inputs, excluding lifecycle projections.
+// Complexity: time O(B), Omega(1), tight Theta(B) for equal inputs; auxiliary
+// space O(B), Omega(B), Theta(B) on successful encoding. B is JSON binding bytes.
+// JSON canonicalizes map ordering and numeric representations across SQL reads.
+func sameBinding(a, b extensionsadmin.Instance) bool {
+	if a.InstanceID != b.InstanceID || a.Product != b.Product || a.ExtensionID != b.ExtensionID || a.Repository != b.Repository || a.ArtifactPin != b.ArtifactPin || a.ManifestDigest != b.ManifestDigest || a.GrantDigest != b.GrantDigest || a.SessionDigest != b.SessionDigest || a.ConfigurationRev != b.ConfigurationRev {
+		return false
+	}
+	left, err := json.Marshal([]any{a.Capabilities, a.Interfaces, a.SecretSlots, a.Metadata, a.Configuration})
+	if err != nil {
+		return false
+	}
+	right, err := json.Marshal([]any{b.Capabilities, b.Interfaces, b.SecretSlots, b.Metadata, b.Configuration})
+	return err == nil && bytes.Equal(left, right)
+}
+
+const blockedReason = "extension runtime blocked: protected runtime root contains unowned state or is in use; operator must verify prior processes stopped, clean only exact leftover runtime files, then restart Mail before recovery"
+
+// BlockedReason may latch quarantine, but never grants readiness, adopts or
+// removes files.
+// Complexity: time O(N+P+F+W), Omega(1), tight Theta not established across errors;
+// space O(N+P), Omega(1), tight Theta not established. N is up to P+1 entries,
+// P tracked processes, F filesystem work and W mutex wait. Unknown state latches.
+func (s *Supervisor) BlockedReason() string {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+	guard, err := s.guardRoot()
+	if err != nil {
+		return blockedReason
+	}
+	guard.Close()
+	return ""
+}
+
+// guardRoot serializes cooperating supervisors through the directory inode,
+// without lockfiles or deletion. Caller closes the returned descriptor only
+// after publishing its new process directory. No filesystem scan on delivery.
+// Complexity: time O(P+N+F+W), Omega(1); space O(P+N), Omega(1); tight Theta
+// not established across errors. P tracked processes, N<=P+1 directory entries,
+// F filesystem/syscall work, W mutex wait; kernel directory enumeration bounded.
+func (s *Supervisor) guardRoot() (*os.File, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.blocked {
+		return nil, errors.New(blockedReason)
+	}
+	fd, err := syscall.Open(s.runtimeRoot, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		s.blocked = true
+		return nil, errors.New(blockedReason)
+	}
+	root := os.NewFile(uintptr(fd), s.runtimeRoot)
+	fail := func() (*os.File, error) { root.Close(); s.blocked = true; return nil, errors.New(blockedReason) }
+	info, err := root.Stat()
+	if err != nil || info.Mode().Perm()&0077 != 0 {
+		return fail()
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || st.Uid != uint32(os.Geteuid()) {
+		return fail()
+	}
+	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		root.Close()
+		return nil, errors.New(blockedReason)
+	}
+	owned := make(map[string]bool, len(s.processes))
+	for _, p := range s.processes {
+		owned[filepath.Base(p.runDir)] = true
+	}
+	names, err := root.Readdirnames(len(owned) + 1)
+	if err != nil && err != io.EOF {
+		return fail()
+	}
+	for _, name := range names {
+		if !owned[name] {
+			return fail()
+		}
+	}
+	return root, nil
 }

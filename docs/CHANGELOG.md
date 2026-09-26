@@ -1,5 +1,55 @@
 # Changelog
 
+## Unreleased
+
+### 2026-09-26 15:21 CDT — Reconcile extension runtime after restart
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/extensionsadmin/{service.go,restart_test.go}`
+- `internal/extensionsruntime/{supervisor.go,supervisor_test.go,crash_test.go,health_interleaving_test.go}`
+- `internal/httpui/{extensions.go,extensions_recovery_test.go}`
+- `cmd/gotth-mail/{main.go,extensions_env_test.go}`
+- `docs/implementation/v3-ops-import-admin.md`
+
+Explanation:
+
+- Fresh-supervisor startup atomically audits and invalidates stale routing
+  observations without automatically enabling or approving an extension.
+  Configuration, secrets, grants, tested revision and enabled intent survive.
+- Explicit Enable now revalidates configuration, scoped secrets, bound process
+  identity, authenticated handshake and health even for persisted ready state.
+  Failed or stale transitions revoke/stop, propagate cleanup errors, and cannot
+  claim success. A committed success is not undone by a later response read.
+- Serialize runtime lifecycle operations within the administrator; require an
+  observed Probe before routing; revoke a non-active instance harmlessly.
+  Failed Disable no longer starts or re-admits a replacement implicitly.
+- Native Recover / revalidate retains Disable and existing role/CSRF/no-JS
+  admission. Protected crash leftovers quarantine the extension only, preserve
+  files and enabled intent, and expose operator reconciliation instructions.
+- Observational authenticated health no longer changes lifecycle readiness.
+  A deterministic held-RPC test proves it cannot invalidate explicit recovery
+  admission or grant readiness after failed explicit revalidation.
+
+Verification:
+
+- Test-first repeated-enable, identity and startup regressions proved red.
+- Development-host focused, wiring, real webhook process lifecycle and API/UI
+  authorization/redaction checks passed. Complete affected-package tests passed
+  with PostgreSQL 18.4 and Go 1.26.6; follow-up review/race evidence is retained
+  in the scoped repair handoff rather than claimed as release admission here.
+
+Risks / non-goals:
+
+- No auto-enable, new grant authority, schema migration, release/distribution
+  admission, production deployment, or full real-artifact beta matrix claim.
+- Quarantine requires operator-verified process/file cleanup and Mail restart;
+  no automatic scavenging, adoption or secret-removal guarantee after SIGKILL.
+- Multi-controller deployments, PostgreSQL 16 validation and full repository
+  acceptance are not proved by these scoped tests.
+
 ## 2026-09-26 13:45 CDT — Release and deploy v1.0.0-alpha.3
 
 Implementation commit: `5dd9a6ec0ca196f311cc9c37d29db4f7a91af948`
