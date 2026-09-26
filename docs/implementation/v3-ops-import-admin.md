@@ -218,6 +218,15 @@ lifecycle and health codes, enabled state, timestamps, and audit correlation.
 Secret values live only in a Mail-owned encrypted installation secret store
 that this feature must define and verify before the first extension can be
 enabled; projections contain slot IDs and configured/rotated status only.
+A metadata secret field uses its exact field name as its granted slot ID; there
+is no separate alias mapping. A required secret field keeps its native required
+constraint until that slot is configured; optional fields remain optional.
+Once configured, blank input retains the secret for configuration-only
+preview/apply without changing ciphertext or rotation
+time. This is presentation, not authority: an explicitly previewed new secret
+still requires identical re-entry on apply under the existing secret binding,
+confirmation and CSRF checks. Missing required initial secrets may be staged
+but cannot pass readiness or enable.
 
 Configuration metadata admits only a closed set of bounded scalar field kinds,
 labels, validation constraints, defaults, and named secret slots. It admits no

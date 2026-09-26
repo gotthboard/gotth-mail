@@ -226,6 +226,13 @@ func extensionConfigurationInput(item extensionsadmin.Instance, r *http.Request)
 	return input, nil
 }
 
+// Complexity: time O(F+K*S+O+B), Omega(F+O); auxiliary space O(F+O+B),
+// Omega(F+O). Tight Theta is not established across status hits and value types.
+// F fields, K required secret fields, S statuses, O copied option entries,
+// B total name/value bytes inspected or formatted (including repeated comparisons).
+// toUIString/TrimSpace delegate scalar formatting/scanning; option slices copy
+// string headers, not backing bytes. Assumes expected constant-time configuration
+// map lookup with hashing/comparison bytes included in B. No I/O; field names are slot IDs.
 func extensionFields(item extensionsadmin.Instance, override map[string]any) []extensionFieldView {
 	configuration := item.Configuration
 	if override != nil {
@@ -234,6 +241,14 @@ func extensionFields(item extensionsadmin.Instance, override map[string]any) []e
 	result := make([]extensionFieldView, 0, len(item.Metadata.Fields))
 	for _, field := range item.Metadata.Fields {
 		view := extensionFieldView{Name: field.Name, Label: field.Label, Kind: string(field.Kind), Required: field.Required, Options: append([]string(nil), field.Options...)}
+		if field.Kind == extensionsadmin.FieldSecret && view.Required {
+			for _, status := range item.Secrets {
+				if status.Slot == field.Name && status.Configured {
+					view.Required = false // Blank retains; previewed rotations still bind re-entry in the service.
+					break
+				}
+			}
+		}
 		if field.Kind != extensionsadmin.FieldSecret {
 			if value, ok := configuration[field.Name]; ok {
 				if boolean, ok := value.(bool); ok {

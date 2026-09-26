@@ -2,9 +2,49 @@
 
 ## Unreleased
 
-### 2026-09-26 17:47 CDT — Exercise immutable webhook A-to-B-to-A update and rollback
+### 2026-09-26 18:06 CDT — Permit native configuration edits to retain configured secrets
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/httpui/extensions.go`
+- `internal/httpui/extensions_secret_test.go`
+- `scripts/extensions-secret-constraint-proof.mjs`
+- `docs/implementation/v3-ops-import-admin.md`
+
+Explanation:
+
+- Relax only the native required constraint for a required secret field whose
+  exact field-name slot is already configured. Blank still means retain, not
+  clear. Optional fields stay optional; missing/unrelated status cannot relax
+  an initial required secret. Values remain write-only and backend unchanged.
+- Preserve preview-bound rotation re-entry, configuration/confirmation/CSRF
+  denial, and initial-secret readiness/enable checks. Document bounded
+  projection cost including status scans, option copies and value conversion.
+
+Verification:
+
+- Test-first PostgreSQL16.14 red proved required configured inputs blocked
+  native forms while routed backend retention/rotation checks already passed.
+  Focused race green proves encrypted-row and rotation-time preservation.
+- Chromium151 with its default sandbox: captured actual route detail/preview
+  HTML blocked before the fix and valid afterward with blank secret. Browser
+  instrumentation does not alter validation attributes; the production fix
+  changes only the required projection. SQL mutation is separately proven by real
+  authenticated/CSRF route POSTs.
+- Commands, hashes, package race/vet and cleanup evidence recorded in
+  `workflow/features/v3.ops-import-admin/extension-management-ui/evidence/2026-09-26-configured-secret-retention.md`.
+
+Risks / non-goals:
+
+- Browser proof uses bounded test-only click/submit instrumentation on captured
+  HTML, not a live login or full browser/no-JS/accessibility acceptance.
+  No secret alias mapping, backend permission change, release or deployment.
+
+### 2026-09-26 17:47 CDT — Exercise immutable webhook A-to-B-to-A update and rollback
+
+Commit: `1eaac1ad449ec9ae09245ccd9f968e4f786f278d`
 
 Affected files:
 
