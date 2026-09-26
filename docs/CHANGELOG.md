@@ -2,7 +2,7 @@
 
 ## 2026-09-26 09:32 CDT — Replace the signed-out mailbox shell with a sign-in state
 
-Implementation commit: `current commit; hash assigned by Git after commit`
+Implementation commit: `ca14f0117764cd8f19c88a55cae4fcd906d3f8a3`
 
 Affected files:
 
