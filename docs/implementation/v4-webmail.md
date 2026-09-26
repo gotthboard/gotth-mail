@@ -62,7 +62,10 @@ Message list response shape:
 
 ## Compose/send
 
-Sending uses SMTP submission. The production transport adapter is `webmail.NetSMTPSubmitter`, which submits already-built/already-signed MIME bytes over TCP SMTP; signing, sender identity binding, and policy remain in `webmail.Sender`, not in the transport adapter.
+Sending uses SMTP submission. The production transport adapter is
+`webmail.NetSMTPSubmitter`, which submits already-built/already-signed MIME
+bytes over certificate-verified STARTTLS SMTP; signing, sender identity
+binding, and policy remain in `webmail.Sender`, not in the transport adapter.
 
 State machine:
 
@@ -88,10 +91,15 @@ registry contains private-service IMAP/SMTP addresses and, per mailbox, paths
 to distinct owner-only IMAP password, SMTP password, and OpenPGP private-key
 files plus the required fingerprint. Password and key files are reloaded on
 use, making rotation visible without storing cleartext credentials in the
-database. SMTP uses CRAM-MD5 with the exact mailbox address as its
-authenticated identity; that same identity is rechecked by outbound policy at
-submission and final transport. Startup fails on partial, unsafe, duplicate,
-or mismatched configuration.
+database. The runtime declares the SMTP authentication mechanism explicitly.
+Production uses PLAIN only after certificate-verified STARTTLS through the
+private mail-front submission listener; PLAIN without STARTTLS is rejected at
+startup. CRAM-MD5 remains available for bounded private test transports that
+advertise it. Both mechanisms authenticate with the exact mailbox address;
+that same identity is rechecked by outbound policy at submission and final
+transport. Raw Postfix listeners requiring a HAProxy PROXY preamble are not
+valid application submission endpoints. Startup fails on partial, unsafe,
+duplicate, or mismatched configuration.
 
 An active OIDC session bound to exactly one mailbox authorizes browser
 webmail reads. Browser mutations additionally require the separate same-origin

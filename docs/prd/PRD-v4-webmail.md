@@ -75,6 +75,8 @@ Custom webmail must not block the control-plane product.
 - External webmail remains usable until custom webmail is production-ready.
 - Custom webmail can read folders/messages through IMAP safely.
 - Custom webmail can compose, save drafts, and submit messages.
+- Production submission uses the authenticated TLS SMTP boundary; it does not
+  bypass the mail front or inject directly into the Postfix queue.
 - Search works across the supported mailbox scope declared for v4.
 - Identities/signatures work for compose/send flows.
 - HTML email rendering is XSS-hardened with CSP and no unsafe HTML bypass.

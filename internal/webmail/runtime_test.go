@@ -26,7 +26,8 @@ func TestRuntimeRegistryLoadsExactMailboxAndReloadsSigningMaterial(t *testing.T)
 	imapSecret := writeRuntimeFile(t, dir, "imap.secret", []byte("imap-password\n"), 0o600)
 	smtpSecret := writeRuntimeFile(t, dir, "smtp.secret", []byte("smtp-password\n"), 0o600)
 	configPath := writeRuntimeConfig(t, dir, RuntimeConfig{
-		IMAPAddr: "127.0.0.1:1143", SMTPAddr: "postfix:25",
+		IMAPAddr: "127.0.0.1:1143", SMTPAddr: "front:1587", SMTPAuthMechanism: "plain",
+		SMTPStartTLS: true, SMTPTLSServerName: "mail.example.test",
 		Mailboxes: []RuntimeMailbox{{
 			Address: "User@Example.Test", IMAPPasswordFile: imapSecret,
 			SMTPPasswordFile: smtpSecret, SigningFingerprint: strings.ToLower(fingerprint),
@@ -84,6 +85,11 @@ func TestRuntimeRegistryRejectsUnsafeOrAmbiguousConfiguration(t *testing.T) {
 		{"public endpoint", RuntimeConfig{IMAPAddr: "203.0.113.4:143", SMTPAddr: "postfix:25", Mailboxes: []RuntimeMailbox{mailbox}}},
 		{"duplicate mailbox", RuntimeConfig{IMAPAddr: "dovecot:143", SMTPAddr: "postfix:25", Mailboxes: []RuntimeMailbox{mailbox, mailbox}}},
 		{"missing mailbox", RuntimeConfig{IMAPAddr: "dovecot:143", SMTPAddr: "postfix:25"}},
+		{"missing auth mechanism", RuntimeConfig{IMAPAddr: "dovecot:143", SMTPAddr: "postfix:25", Mailboxes: []RuntimeMailbox{mailbox}}},
+		{"unknown auth mechanism", RuntimeConfig{IMAPAddr: "dovecot:143", SMTPAddr: "postfix:25", SMTPAuthMechanism: "login", Mailboxes: []RuntimeMailbox{mailbox}}},
+		{"plain without STARTTLS", RuntimeConfig{IMAPAddr: "dovecot:143", SMTPAddr: "front:1587", SMTPAuthMechanism: "plain", Mailboxes: []RuntimeMailbox{mailbox}}},
+		{"STARTTLS without server name", RuntimeConfig{IMAPAddr: "dovecot:143", SMTPAddr: "front:1587", SMTPAuthMechanism: "plain", SMTPStartTLS: true, Mailboxes: []RuntimeMailbox{mailbox}}},
+		{"TLS name without STARTTLS", RuntimeConfig{IMAPAddr: "dovecot:143", SMTPAddr: "front:1587", SMTPAuthMechanism: "cram-md5", SMTPTLSServerName: "mail.example.test", Mailboxes: []RuntimeMailbox{mailbox}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -96,7 +102,7 @@ func TestRuntimeRegistryRejectsUnsafeOrAmbiguousConfiguration(t *testing.T) {
 	if err := os.Chmod(secret, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewRuntimeRegistry(RuntimeConfig{IMAPAddr: "dovecot:143", SMTPAddr: "postfix:25", Mailboxes: []RuntimeMailbox{mailbox}}); err == nil {
+	if _, err := NewRuntimeRegistry(RuntimeConfig{IMAPAddr: "dovecot:143", SMTPAddr: "postfix:25", SMTPAuthMechanism: "cram-md5", Mailboxes: []RuntimeMailbox{mailbox}}); err == nil {
 		t.Fatal("world-readable credential accepted")
 	}
 }

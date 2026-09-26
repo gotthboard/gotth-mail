@@ -3,6 +3,7 @@ package webmail
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -30,10 +31,13 @@ const (
 // for each connection so rotation does not require putting secrets in JSON or
 // restarting the control plane.
 type RuntimeConfig struct {
-	IMAPAddr      string           `json:"imap_addr"`
-	SMTPAddr      string           `json:"smtp_addr"`
-	SMTPHelloName string           `json:"smtp_hello_name"`
-	Mailboxes     []RuntimeMailbox `json:"mailboxes"`
+	IMAPAddr          string           `json:"imap_addr"`
+	SMTPAddr          string           `json:"smtp_addr"`
+	SMTPHelloName     string           `json:"smtp_hello_name"`
+	SMTPAuthMechanism string           `json:"smtp_auth_mechanism"`
+	SMTPStartTLS      bool             `json:"smtp_starttls"`
+	SMTPTLSServerName string           `json:"smtp_tls_server_name"`
+	Mailboxes         []RuntimeMailbox `json:"mailboxes"`
 }
 
 type RuntimeMailbox struct {
@@ -48,9 +52,10 @@ type RuntimeMailbox struct {
 // authenticated mailbox address. It implements the IMAP, SMTP, resolver,
 // signer, and verifier seams used by Client and Sender.
 type RuntimeRegistry struct {
-	imapAddr, smtpAddr, smtpHelloName string
-	mailboxes                         map[string]RuntimeMailbox
-	now                               func() time.Time
+	imapAddr, smtpAddr, smtpHelloName, smtpAuthMechanism, smtpTLSServerName string
+	smtpStartTLS                                                            bool
+	mailboxes                                                               map[string]RuntimeMailbox
+	now                                                                     func() time.Time
 }
 
 func NewRuntimeRegistryFromFile(path string) (*RuntimeRegistry, error) {
@@ -80,13 +85,30 @@ func NewRuntimeRegistry(cfg RuntimeConfig) (*RuntimeRegistry, error) {
 	if strings.ContainsAny(cfg.SMTPHelloName, "\r\n") {
 		return nil, errors.New("webmail smtp hello name contains newline")
 	}
+	authMechanism := strings.ToLower(strings.TrimSpace(cfg.SMTPAuthMechanism))
+	if authMechanism != "plain" && authMechanism != "cram-md5" {
+		return nil, errors.New("webmail smtp auth mechanism must be plain or cram-md5")
+	}
+	tlsServerName := strings.TrimSpace(cfg.SMTPTLSServerName)
+	if cfg.SMTPStartTLS {
+		if err := validateTLSServerName(tlsServerName); err != nil {
+			return nil, fmt.Errorf("webmail smtp TLS server name: %w", err)
+		}
+	} else if tlsServerName != "" {
+		return nil, errors.New("webmail smtp TLS server name requires STARTTLS")
+	}
+	if authMechanism == "plain" && !cfg.SMTPStartTLS {
+		return nil, errors.New("webmail plain SMTP authentication requires STARTTLS")
+	}
 	if len(cfg.Mailboxes) == 0 {
 		return nil, errors.New("webmail runtime requires at least one mailbox")
 	}
 	r := &RuntimeRegistry{
 		imapAddr: strings.TrimSpace(cfg.IMAPAddr), smtpAddr: strings.TrimSpace(cfg.SMTPAddr),
-		smtpHelloName: strings.TrimSpace(cfg.SMTPHelloName), mailboxes: make(map[string]RuntimeMailbox, len(cfg.Mailboxes)),
-		now: func() time.Time { return time.Now().UTC() },
+		smtpHelloName: strings.TrimSpace(cfg.SMTPHelloName), smtpAuthMechanism: authMechanism,
+		smtpStartTLS: cfg.SMTPStartTLS, smtpTLSServerName: tlsServerName,
+		mailboxes: make(map[string]RuntimeMailbox, len(cfg.Mailboxes)),
+		now:       func() time.Time { return time.Now().UTC() },
 	}
 	if r.smtpHelloName == "" {
 		r.smtpHelloName = "gotth-mail-webmail"
@@ -199,10 +221,16 @@ func (r *RuntimeRegistry) Submit(ctx context.Context, envelope Envelope, msg []b
 	if err != nil {
 		return fmt.Errorf("load webmail smtp credential: %w", err)
 	}
-	return (NetSMTPSubmitter{
-		Addr: r.smtpAddr, HelloName: r.smtpHelloName,
-		Auth: smtp.CRAMMD5Auth(entry.Address, password),
-	}).Submit(ctx, envelope, msg)
+	submitter := NetSMTPSubmitter{Addr: r.smtpAddr, HelloName: r.smtpHelloName}
+	if r.smtpStartTLS {
+		submitter.StartTLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: r.smtpTLSServerName}
+	}
+	if r.smtpAuthMechanism == "plain" {
+		submitter.Auth = smtp.PlainAuth("", entry.Address, password, r.smtpTLSServerName)
+	} else {
+		submitter.Auth = smtp.CRAMMD5Auth(entry.Address, password)
+	}
+	return submitter.Submit(ctx, envelope, msg)
 }
 
 func (r *RuntimeRegistry) ResolveSender(ctx context.Context, fingerprint, from, sender string) (Identity, error) {
@@ -352,6 +380,26 @@ func validatePrivateServiceAddress(raw string) error {
 	for _, ch := range host {
 		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-') {
 			return errors.New("plaintext mail transport must target a private service")
+		}
+	}
+	return nil
+}
+
+func validateTLSServerName(raw string) error {
+	if raw == "" || len(raw) > 253 || strings.ContainsAny(raw, "\x00\r\n:/") {
+		return errors.New("valid TLS server name required")
+	}
+	if ip := net.ParseIP(raw); ip != nil {
+		return nil
+	}
+	for _, label := range strings.Split(raw, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return errors.New("valid TLS server name required")
+		}
+		for _, ch := range label {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-') {
+				return errors.New("valid TLS server name required")
+			}
 		}
 	}
 	return nil

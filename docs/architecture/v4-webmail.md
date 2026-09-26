@@ -33,6 +33,12 @@ The webmail client does not replace Dovecot.
 
 Sending uses SMTP submission.
 
+Production webmail submits through the mail front's private submission
+listener with STARTTLS and mailbox-bound PLAIN authentication. The TLS server
+name is explicit and certificate-verified. Raw Postfix listeners that require
+the HAProxy PROXY preamble are backend implementation details, not application
+submission endpoints.
+
 Features:
 
 - compose

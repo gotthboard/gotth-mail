@@ -2,6 +2,7 @@ package webmail
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -16,10 +17,11 @@ import (
 // It is deliberately small: policy, signing, sender binding, and recipient validation stay
 // in Sender. This type only performs the transport exchange.
 type NetSMTPSubmitter struct {
-	Addr      string
-	HelloName string
-	Timeout   time.Duration
-	Auth      smtp.Auth
+	Addr           string
+	HelloName      string
+	Timeout        time.Duration
+	Auth           smtp.Auth
+	StartTLSConfig *tls.Config
 }
 
 type SMTPFailureClass string
@@ -91,7 +93,17 @@ func (s NetSMTPSubmitter) Submit(ctx context.Context, envelope Envelope, msg []b
 		deadline = dl
 	}
 	_ = conn.SetDeadline(deadline)
-	client, err := smtp.NewClient(conn, smtpServerName(addr))
+	serverName := smtpServerName(addr)
+	var startTLSConfig *tls.Config
+	if s.StartTLSConfig != nil {
+		startTLSConfig = s.StartTLSConfig.Clone()
+		startTLSConfig.ServerName = strings.TrimSpace(startTLSConfig.ServerName)
+		if startTLSConfig.ServerName == "" {
+			return smtpFailure(SMTPFailurePermanent, "configuration", errors.New("smtp STARTTLS server name required"))
+		}
+		serverName = startTLSConfig.ServerName
+	}
+	client, err := smtp.NewClient(conn, serverName)
 	if err != nil {
 		return classifySMTPFailure("greeting", err, false)
 	}
@@ -99,6 +111,14 @@ func (s NetSMTPSubmitter) Submit(ctx context.Context, envelope Envelope, msg []b
 	if hello := strings.TrimSpace(s.HelloName); hello != "" {
 		if err := client.Hello(hello); err != nil {
 			return classifySMTPFailure("hello", err, false)
+		}
+	}
+	if startTLSConfig != nil {
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			return smtpFailure(SMTPFailurePermanent, "starttls", errors.New("smtp server does not advertise STARTTLS"))
+		}
+		if err := client.StartTLS(startTLSConfig); err != nil {
+			return classifySMTPFailure("starttls", err, false)
 		}
 	}
 	if s.Auth != nil {

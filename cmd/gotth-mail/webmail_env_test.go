@@ -48,7 +48,7 @@ func TestConfigureWebmailFromEnvRequiresDurabilityAndWiresProductionRuntime(t *t
 	writeWebmailTestFile(t, smtpSecret, []byte("smtp-secret\n"))
 	configPath := filepath.Join(dir, "runtime.json")
 	raw, err := json.Marshal(webmail.RuntimeConfig{
-		IMAPAddr: "dovecot:143", SMTPAddr: "postfix:25",
+		IMAPAddr: "dovecot:143", SMTPAddr: "postfix:25", SMTPAuthMechanism: "cram-md5",
 		Mailboxes: []webmail.RuntimeMailbox{{
 			Address: "user@example.test", IMAPPasswordFile: imapSecret, SMTPPasswordFile: smtpSecret,
 			SigningFingerprint: fingerprint, PrivateKeyFile: keyPath,
