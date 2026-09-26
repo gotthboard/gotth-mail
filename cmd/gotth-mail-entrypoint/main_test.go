@@ -73,6 +73,21 @@ func TestEntrypointRejectsInvalidBuildIdentity(t *testing.T) {
 	}
 }
 
+func TestPostfixDeliveryCredentialCheckUsesPipeIdentity(t *testing.T) {
+	environment := []string{"PATH=/usr/bin", "GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE=/run/secrets/postfix-helper-token"}
+	command := postfixDeliveryCredentialCommand(environment)
+	if command.Path != "/usr/local/bin/gotth-mail-postfix-gate" || len(command.Args) != 2 || command.Args[1] != "check-delivery" {
+		t.Fatalf("unexpected credential command: path=%q args=%v", command.Path, command.Args)
+	}
+	if !slices.Equal(command.Env, environment) {
+		t.Fatalf("credential environment=%v", command.Env)
+	}
+	credential := command.SysProcAttr.Credential
+	if credential == nil || credential.Uid != postfixPipeUID || credential.Gid != postfixPipeGID || !credential.NoSetGroups {
+		t.Fatalf("credential=%#v", credential)
+	}
+}
+
 func TestRenderSecretConfigRejectsDirectiveInjection(t *testing.T) {
 	dir := t.TempDir()
 	templatePath, tokenPath, targetPath := dir+"/template", dir+"/token", dir+"/runtime"

@@ -62,7 +62,8 @@ USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/gotth-mail-entrypoint"]
 
 FROM ${RUNTIME_IMAGE} AS postfix
-RUN apk add --no-cache ca-certificates=20260909-r0 tzdata=2026d-r0 postfix=3.10.13-r0 postfix-pcre=3.10.13-r0 postfix-pgsql=3.10.13-r0
+RUN apk add --no-cache ca-certificates=20260909-r0 tzdata=2026d-r0 postfix=3.10.13-r0 postfix-pcre=3.10.13-r0 postfix-pgsql=3.10.13-r0 && \
+    adduser -S -D -H -u 1000 -G postdrop gotth
 COPY --from=binaries-postfix /out/gotth-mail-entrypoint /out/gotth-mail-health /usr/local/bin/
 COPY --from=source /out/gotth-mail-postfix-gate /usr/local/bin/gotth-mail-postfix-gate
 ARG VERSION SOURCE_COMMIT SOURCE_STATE

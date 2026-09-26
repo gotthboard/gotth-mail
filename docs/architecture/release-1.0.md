@@ -119,7 +119,14 @@ packages. Runtime arguments cannot select another role.
   and proxies to exact private backends using one configured PROXY protocol.
 - The Postfix image contains Postfix and the Mail queue/policy helper. It owns
   private SMTP/queue processing only and receives authenticated/provenance
-  state from the front and control plane.
+  state from the front and control plane. The final policy pipe runs as the
+  unprivileged `gotth` UID that owns its mounted helper credential and the
+  `postdrop` primary group required for queue inspection, after a startup
+  preflight under that exact identity. Approved external mail is
+  requeued through a loopback-only SMTP listener with a one-message
+  `smtp:` content-filter override, so Postfix retains its native MX delivery
+  and retry behavior without exposing a policy-bypass listener to the private
+  container network.
 - The Dovecot image contains Dovecot and Pigeonhole. It owns private mailbox,
   passdb/userdb, quota, and Sieve processing only.
 - The Rspamd image contains Rspamd. It owns private milter/controller workers

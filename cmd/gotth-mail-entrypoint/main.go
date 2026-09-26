@@ -28,6 +28,8 @@ const (
 	rspamdTokenPath   = "/run/secrets/controller-token"
 	rspamdRuntimeFile = "/tmp/gotth-mail-rspamd-override.inc"
 	maxConfigBytes    = 1 << 20
+	postfixPipeUID    = 1000
+	postfixPipeGID    = 102
 )
 
 var controlEnvironmentKeys = map[string]struct{}{
@@ -166,6 +168,9 @@ func runPostfix() error {
 	if err != nil {
 		return err
 	}
+	if err := checkPostfixDeliveryCredential(environment); err != nil {
+		return err
+	}
 	helper := exec.Command("/usr/local/bin/gotth-mail-postfix-gate", "helper")
 	postfix := exec.Command("/usr/sbin/postfix", "-c", configRoot+"/postfix", "start-fg")
 	for _, command := range []*exec.Cmd{helper, postfix} {
@@ -202,6 +207,29 @@ func runPostfix() error {
 		}
 		return fmt.Errorf("%s failed", result.name)
 	}
+}
+
+// checkPostfixDeliveryCredential proves that the exact unprivileged identity
+// used by the Postfix pipe service can read and validate its helper token. A
+// missing, mis-mounted, or unreadable file fails container startup instead of
+// silently accumulating deferred mail.
+func checkPostfixDeliveryCredential(environment []string) error {
+	command := postfixDeliveryCredentialCommand(environment)
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("Postfix delivery credential preflight failed")
+	}
+	return nil
+}
+
+func postfixDeliveryCredentialCommand(environment []string) *exec.Cmd {
+	command := exec.Command("/usr/local/bin/gotth-mail-postfix-gate", "check-delivery")
+	command.Env = append([]string(nil), environment...)
+	command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{
+		Uid: postfixPipeUID, Gid: postfixPipeGID, NoSetGroups: true,
+	}}
+	return command
 }
 
 func terminateProcesses(commands ...*exec.Cmd) {

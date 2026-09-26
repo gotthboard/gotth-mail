@@ -121,6 +121,20 @@ The current live-identity feature retains the single active workflow slot.
 Once that boundary is handed off, this owner-prioritized feature is the next
 implementation assignment before lower-priority new feature work.
 
+The production Postfix pipe service executes as the image-owned `gotth` UID
+1000 with primary `postdrop` GID 102. The UID matches the owner-only helper
+token bind mount, while the primary group permits queue inspection without a
+setgid transition under `no-new-privileges`. Before Postfix starts, the
+compiled supervisor executes the gate's credential check under that exact
+identity; absent, wrong-path, and unreadable mounts fail startup.
+After final policy admission, the gate hands the message to
+`127.0.0.1:10027`. That listener is bound only inside the Postfix container,
+does not require the public HAProxy preamble, disables the inbound milter and
+authentication paths, and attaches a one-message `smtp:` content-filter
+override. Postfix then performs normal MX delivery and durable retry without
+recirculating the message through `gotth_policy` or opening a network-visible
+policy bypass.
+
 ## Release verification
 
 ### Production artifact implementation

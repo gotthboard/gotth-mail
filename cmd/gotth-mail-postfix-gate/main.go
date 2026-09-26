@@ -31,6 +31,11 @@ func main() {
 		os.Exit(exitTempFail)
 	}
 	switch os.Args[1] {
+	case "check-delivery":
+		if err := checkDeliveryCredential(); err != nil {
+			log.Printf("Postfix delivery credential check failed: %v", err)
+			os.Exit(exitTempFail)
+		}
 	case "helper":
 		if err := runHelper(); err != nil {
 			log.Printf("Postfix helper failed: %v", err)
@@ -45,6 +50,14 @@ func main() {
 		log.Print("unsupported Postfix gate mode")
 		os.Exit(exitTempFail)
 	}
+}
+
+// checkDeliveryCredential verifies the one secret needed by the unprivileged
+// Postfix pipe process. The supervisor executes this mode with the same UID and
+// GID declared by master.cf before accepting queue work.
+func checkDeliveryCredential() error {
+	_, err := helperToken()
+	return err
 }
 
 // runHelper serves the narrow local postqueue/postsuper boundary.

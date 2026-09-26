@@ -38,6 +38,7 @@ cleanup
 
 mkdir -p "$WORK"/{database,control,queue,mail,rspamd,dkim,secrets,tls}
 mkdir -p "$WORK/control/extensions"/{artifacts,runtime}
+chmod 0755 "$WORK/control/extensions/artifacts"
 chmod 0700 "$WORK/control/extensions/runtime"
 umask 077
 printf '%s' 'production-smoke-database-password' >"$WORK/secrets/postgres-password"
@@ -59,6 +60,11 @@ chmod 0444 "$WORK/secrets/postgres-password"
 if command -v sudo >/dev/null 2>&1; then
   sudo -n chown -R 1000:1000 "$WORK/control" "$WORK/mail" "$WORK/rspamd" "$WORK/dkim" "$WORK/tls" "$WORK/secrets"
   sudo -n chown -R 999:999 "$WORK/database" "$WORK/secrets/postgres-password"
+fi
+printf '%s' 'unreadable_postfix_helper_token_ABCDEF' >"$WORK/secrets/postfix-helper-token-unreadable"
+chmod 0400 "$WORK/secrets/postfix-helper-token-unreadable"
+if command -v sudo >/dev/null 2>&1; then
+  sudo -n chown 0:0 "$WORK/secrets/postfix-helper-token-unreadable"
 fi
 
 source_commit=$(git -C "$ROOT" rev-parse HEAD)
@@ -83,7 +89,7 @@ done
   "$POSTGRES_IMAGE" >/dev/null
 
 for _ in $(seq 1 90); do
-  if "${DOCKER[@]}" exec "$PREFIX-db" pg_isready -U gotth_mail -d gotth_mail >/dev/null 2>&1; then break; fi
+  if "${DOCKER[@]}" exec "$PREFIX-db" psql -U gotth_mail -d gotth_mail -Atqc 'SELECT 1' 2>/dev/null | grep -qx 1; then break; fi
   if [ "$("${DOCKER[@]}" inspect -f '{{.State.Running}}' "$PREFIX-db" 2>/dev/null || true)" != true ]; then
     echo 'PostgreSQL stopped before becoming ready' >&2
     "${DOCKER[@]}" logs "$PREFIX-db" >&2 || true
@@ -91,7 +97,7 @@ for _ in $(seq 1 90); do
   fi
   sleep 1
 done
-"${DOCKER[@]}" exec "$PREFIX-db" pg_isready -U gotth_mail -d gotth_mail >/dev/null
+"${DOCKER[@]}" exec "$PREFIX-db" psql -U gotth_mail -d gotth_mail -Atqc 'SELECT 1' | grep -qx 1
 
 run_control() {
   "${DOCKER[@]}" run -d --name "$PREFIX-control-plane" --network "$NETWORK" --network-alias control-plane \
@@ -171,9 +177,29 @@ wait_health dovecot
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=67108864 --tmpfs /run:rw,noexec,nosuid,nodev,size=16777216,uid=1000,gid=1000,mode=0700 \
   -v "$ROOT/configs/production:/etc/gotth-mail:ro" -v "$WORK/queue:/var/spool/postfix" \
   -v "$WORK/secrets/postfix-helper-token:/run/secrets/postfix-helper-token:ro" \
+  -v "$WORK/secrets/postfix-helper-token-unreadable:/run/secrets/postfix-helper-token-unreadable:ro" \
   -v "$WORK/secrets/postfix-release-token:/run/secrets/postfix-release-token:ro" \
   "$image_repository_base-postfix:dev" >/dev/null
 wait_health postfix
+
+"${DOCKER[@]}" exec --user 1000:102 \
+  -e GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE=/run/secrets/postfix-helper-token \
+  "$PREFIX-postfix" /usr/local/bin/gotth-mail-postfix-gate check-delivery
+for invalid_path in /run/secrets/postfix-helper-token-missing /run/secrets/postfix-helper-token-unreadable; do
+  if "${DOCKER[@]}" exec --user 1000:102 \
+    -e "GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE=$invalid_path" \
+    "$PREFIX-postfix" /usr/local/bin/gotth-mail-postfix-gate check-delivery >/dev/null 2>&1; then
+    echo "Postfix delivery identity accepted invalid helper token path: $invalid_path" >&2
+    exit 1
+  fi
+done
+"${DOCKER[@]}" exec "$PREFIX-postfix" sh -c \
+  'test "$(getent passwd gotth | cut -d: -f3-4)" = "1000:102" &&
+   test "$(getent group postdrop | cut -d: -f3)" = "102" &&
+   MAIL_CONFIG=/etc/gotth-mail/postfix postconf -M gotth_policy/unix | grep -F "user=gotth" >/dev/null &&
+   MAIL_CONFIG=/etc/gotth-mail/postfix postconf -M "127.0.0.1:10027/inet" | grep -F "smtpd" >/dev/null'
+"${DOCKER[@]}" exec --user 1000:102 "$PREFIX-postfix" sh -c \
+  'MAIL_CONFIG=/etc/gotth-mail/postfix /usr/sbin/postqueue -p >/dev/null'
 
 front_auth_status=$(curl -fsS -D - -o /dev/null \
   -H 'X-GOTTH-Mail-Front-Token: front_auth_token_0123456789_ABCDEFGHIJ' \

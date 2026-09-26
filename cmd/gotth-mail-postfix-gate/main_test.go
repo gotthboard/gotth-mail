@@ -27,6 +27,29 @@ func TestHelperTokenRequiresOneBoundedSource(t *testing.T) {
 	}
 }
 
+func TestDeliveryCredentialCheckRejectsMissingWrongAndUnreadableFiles(t *testing.T) {
+	t.Setenv("GOTTH_MAIL_POSTFIX_HELPER_TOKEN", "")
+	for _, path := range []string{"", t.TempDir() + "/missing", t.TempDir()} {
+		t.Run("path="+strings.ReplaceAll(path, "/", "_"), func(t *testing.T) {
+			t.Setenv("GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE", path)
+			if err := checkDeliveryCredential(); err == nil {
+				t.Fatalf("accepted unavailable helper token path %q", path)
+			}
+		})
+	}
+	path := t.TempDir() + "/unreadable"
+	if err := os.WriteFile(path, []byte("abcdef0123456789abcdef0123456789\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE", path)
+	if err := checkDeliveryCredential(); err == nil && os.Geteuid() != 0 {
+		t.Fatal("accepted unreadable helper token file")
+	}
+}
+
 func TestReleaseTokenUsesIndependentConfiguration(t *testing.T) {
 	t.Setenv("GOTTH_MAIL_POSTFIX_RELEASE_TOKEN", "abcdef0123456789abcdef0123456789")
 	token, err := releaseToken()
