@@ -110,10 +110,22 @@ original/replacement relation is unambiguous from the distinct message sizes
 
 All three replacement IDs then recorded `status=sent` and were removed. The
 live Postfix queue is empty. This proves external SMTP acceptance by the
-`dannyhunn.net` Microsoft protection service; it does not claim inbox receipt.
+`dannyhunn.net` Microsoft protection service.
+
+## User acceptance and known-good reference
+
+At `2026-09-26T18:13:24Z`, Danny confirmed, "I got the mail." That closes the
+inbox-placement acceptance gap for this repair. The exact known-good outbound
+candidate is implementation commit
+`5dd9a6ec0ca196f311cc9c37d29db4f7a91af948`, image
+`sha256:82b4ca622dd2a16576c75fd2af2f62589a15a6205ae069b5d19b27831ce82ab8`,
+and release path
+`/opt/gotth-mail-test/releases/dev-outbound-5dd9a6e-20260926T180305Z`.
+No rebuild, restart, tag movement, or release promotion was performed while
+recording this acceptance.
 
 ## Remaining deliverability boundary
 
-The server PTR is still generic Linode and DKIM is not yet published. Those
-are deliverability defects, not transport ambiguity: the recipient MX accepted
-all three messages, but Danny must confirm inbox placement.
+The server PTR is still generic Linode and DKIM is not yet published. Danny's
+receipt proves this message path worked; it does not remove those broader
+deliverability defects or guarantee placement at other providers.
