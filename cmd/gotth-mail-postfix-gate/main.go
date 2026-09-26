@@ -18,10 +18,10 @@ import (
 )
 
 const (
-	exitTempFail        = 75
-	deliveryUID         = 1000
-	deliveryGID         = 1000
-	deliveryPostdropGID = 102
+	exitTempFail = 75
+	deliveryUID  = 1000
+	deliveryGID  = 1000
+	helperURL    = "http://127.0.0.1:10026"
 )
 
 // main validates the build and dispatches one explicit gate mode.
@@ -66,23 +66,14 @@ func checkDeliveryCredential() error {
 }
 
 func checkDeliveryProcess() error {
-	groups, err := os.Getgroups()
-	if err != nil || !validDeliveryIdentity(os.Geteuid(), os.Getegid(), groups) {
+	if !validDeliveryIdentity(os.Geteuid(), os.Getegid()) {
 		return errors.New("Postfix delivery identity unavailable")
 	}
 	return checkDeliveryCredential()
 }
 
-func validDeliveryIdentity(uid, gid int, groups []int) bool {
-	if uid != deliveryUID || gid != deliveryGID {
-		return false
-	}
-	for _, group := range groups {
-		if group == deliveryPostdropGID {
-			return true
-		}
-	}
-	return false
+func validDeliveryIdentity(uid, gid int) bool {
+	return uid == deliveryUID && gid == deliveryGID
 }
 
 // runHelper serves the narrow local postqueue/postsuper boundary.
@@ -142,8 +133,7 @@ func runDelivery(args []string, message io.Reader) error {
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || len(originals) == 0 || len(originals) != len(recipients) {
 		return errors.New("invalid Postfix pipe arguments")
 	}
-	groups, err := os.Getgroups()
-	if err != nil || !validDeliveryIdentity(os.Geteuid(), os.Getegid(), groups) {
+	if !validDeliveryIdentity(os.Geteuid(), os.Getegid()) {
 		return errors.New("Postfix delivery identity unavailable")
 	}
 	authenticatedMailbox, systemSenderID, err := deliveryAuthority(*authenticated, *systemSender, *clientAddress)
@@ -158,11 +148,14 @@ func runDelivery(args []string, message io.Reader) error {
 	if err != nil {
 		return err
 	}
+	inspector, err := postfixgate.NewHTTPQueueInspector(helperURL, token)
+	if err != nil {
+		return err
+	}
 	instance := strings.TrimSpace(os.Getenv("GOTTH_MAIL_POSTFIX_INSTANCE"))
 	if instance == "" {
 		return errors.New("GOTTH_MAIL_POSTFIX_INSTANCE is required")
 	}
-	boundary := outboundpolicy.PostfixBoundary{PostqueuePath: "/usr/sbin/postqueue", PostsuperPath: "/usr/sbin/postsuper", InstanceID: instance, MaxOutputBytes: 8 << 20}
 	deliveries := make([]outboundpolicy.QueueDelivery, len(recipients))
 	for i := range recipients {
 		deliveries[i] = outboundpolicy.QueueDelivery{OriginalRecipient: originals[i], Recipient: recipients[i]}
@@ -170,7 +163,7 @@ func runDelivery(args []string, message io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	gate := postfixgate.Gate{
-		Inspector: boundary,
+		Inspector: inspector,
 		Control:   control,
 		Relay: postfixgate.SMTPRelay{
 			Addr:      os.Getenv("GOTTH_MAIL_OUTBOUND_RELAY_ADDR"),

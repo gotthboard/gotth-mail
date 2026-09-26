@@ -50,19 +50,15 @@ func TestDeliveryCredentialCheckRejectsMissingWrongAndUnreadableFiles(t *testing
 	}
 }
 
-func TestDeliveryIdentityRequiresOwnerAndSupplementaryPostdropGroup(t *testing.T) {
-	if !validDeliveryIdentity(deliveryUID, deliveryGID, []int{deliveryPostdropGID}) {
+func TestDeliveryIdentityRequiresExactOwner(t *testing.T) {
+	if !validDeliveryIdentity(deliveryUID, deliveryGID) {
 		t.Fatal("rejected exact delivery identity")
 	}
-	for _, identity := range []struct {
-		uid, gid int
-		groups   []int
-	}{
-		{deliveryUID + 1, deliveryGID, []int{deliveryPostdropGID}},
-		{deliveryUID, deliveryGID + 1, []int{deliveryPostdropGID}},
-		{deliveryUID, deliveryGID, nil},
+	for _, identity := range []struct{ uid, gid int }{
+		{deliveryUID + 1, deliveryGID},
+		{deliveryUID, deliveryGID + 1},
 	} {
-		if validDeliveryIdentity(identity.uid, identity.gid, identity.groups) {
+		if validDeliveryIdentity(identity.uid, identity.gid) {
 			t.Fatalf("accepted invalid delivery identity: %#v", identity)
 		}
 	}

@@ -120,9 +120,10 @@ packages. Runtime arguments cannot select another role.
 - The Postfix image contains Postfix and the Mail queue/policy helper. It owns
   private SMTP/queue processing only and receives authenticated/provenance
   state from the front and control plane. The final policy pipe runs as the
-  unprivileged `gotth` UID that owns its mounted helper credential and the
-  supplementary `postdrop` group required for queue inspection, after a startup
-  preflight under that exact identity. Approved external mail is
+  unprivileged `gotth` UID/GID that owns its mounted helper credential, after a
+  startup preflight under that exact identity. Queue inspection stays behind
+  the separately authenticated root helper because Postfix pipe(8) deliberately
+  clears supplementary groups. Approved external mail is
   requeued through a loopback-only SMTP listener with a one-message
   `smtp:` content-filter override, so Postfix retains its native MX delivery
   and retry behavior without exposing a policy-bypass listener to the private

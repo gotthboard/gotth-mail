@@ -83,7 +83,7 @@ func TestPostfixDeliveryCredentialCheckUsesPipeIdentity(t *testing.T) {
 		t.Fatalf("credential environment=%v", command.Env)
 	}
 	credential := command.SysProcAttr.Credential
-	if credential == nil || credential.Uid != postfixPipeUID || credential.Gid != postfixPipeGID || credential.NoSetGroups || !slices.Equal(credential.Groups, []uint32{postfixPostdropGID}) {
+	if credential == nil || credential.Uid != postfixPipeUID || credential.Gid != postfixPipeGID || !credential.NoSetGroups || len(credential.Groups) != 0 {
 		t.Fatalf("credential=%#v", credential)
 	}
 }

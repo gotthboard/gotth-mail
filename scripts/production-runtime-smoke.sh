@@ -182,13 +182,13 @@ wait_health dovecot
   "$image_repository_base-postfix:dev" >/dev/null
 wait_health postfix
 
-"${DOCKER[@]}" run --rm --network none --user 1000:1000 --group-add 102 \
+"${DOCKER[@]}" run --rm --network none --user 1000:1000 \
   --entrypoint /usr/local/bin/gotth-mail-postfix-gate \
   -e GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE=/run/secrets/postfix-helper-token \
   -v "$WORK/secrets/postfix-helper-token:/run/secrets/postfix-helper-token:ro" \
   "$image_repository_base-postfix:dev" check-delivery
 for invalid_path in /run/secrets/postfix-helper-token-missing /run/secrets/postfix-helper-token-unreadable; do
-  if "${DOCKER[@]}" run --rm --network none --user 1000:1000 --group-add 102 \
+  if "${DOCKER[@]}" run --rm --network none --user 1000:1000 \
     --entrypoint /usr/local/bin/gotth-mail-postfix-gate \
     -e "GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE=$invalid_path" \
     -v "$WORK/secrets/postfix-helper-token-unreadable:/run/secrets/postfix-helper-token-unreadable:ro" \
@@ -199,7 +199,7 @@ for invalid_path in /run/secrets/postfix-helper-token-missing /run/secrets/postf
 done
 "${DOCKER[@]}" exec "$PREFIX-postfix" sh -c \
   'test "$(getent passwd gotth | cut -d: -f3-4)" = "1000:1000" &&
-   test "$(getent group postdrop | cut -d: -f3,4)" = "102:gotth" &&
+   test "$(getent group postdrop | cut -d: -f3,4)" = "102:" &&
    MAIL_CONFIG=/etc/gotth-mail/postfix postconf -M gotth_policy/unix | grep -F "user=gotth" >/dev/null &&
    MAIL_CONFIG=/etc/gotth-mail/postfix postconf -M "127.0.0.1:10027/inet" | grep -F "smtpd" >/dev/null'
 

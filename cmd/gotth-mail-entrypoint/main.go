@@ -20,17 +20,16 @@ import (
 var role = "invalid"
 
 const (
-	configRoot         = "/etc/gotth-mail"
-	frontTokenPath     = "/run/secrets/front-auth-token"
-	frontTemplate      = configRoot + "/front/nginx.conf"
-	frontRuntimeFile   = "/tmp/gotth-mail-nginx.conf"
-	rspamdTemplate     = configRoot + "/rspamd/override.inc"
-	rspamdTokenPath    = "/run/secrets/controller-token"
-	rspamdRuntimeFile  = "/tmp/gotth-mail-rspamd-override.inc"
-	maxConfigBytes     = 1 << 20
-	postfixPipeUID     = 1000
-	postfixPipeGID     = 1000
-	postfixPostdropGID = 102
+	configRoot        = "/etc/gotth-mail"
+	frontTokenPath    = "/run/secrets/front-auth-token"
+	frontTemplate     = configRoot + "/front/nginx.conf"
+	frontRuntimeFile  = "/tmp/gotth-mail-nginx.conf"
+	rspamdTemplate    = configRoot + "/rspamd/override.inc"
+	rspamdTokenPath   = "/run/secrets/controller-token"
+	rspamdRuntimeFile = "/tmp/gotth-mail-rspamd-override.inc"
+	maxConfigBytes    = 1 << 20
+	postfixPipeUID    = 1000
+	postfixPipeGID    = 1000
 )
 
 var controlEnvironmentKeys = map[string]struct{}{
@@ -228,7 +227,7 @@ func postfixDeliveryCredentialCommand(environment []string) *exec.Cmd {
 	command := exec.Command("/usr/local/bin/gotth-mail-postfix-gate", "check-delivery")
 	command.Env = append([]string(nil), environment...)
 	command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{
-		Uid: postfixPipeUID, Gid: postfixPipeGID, Groups: []uint32{postfixPostdropGID},
+		Uid: postfixPipeUID, Gid: postfixPipeGID, NoSetGroups: true,
 	}}
 	return command
 }
