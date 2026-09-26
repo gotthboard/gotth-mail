@@ -57,3 +57,22 @@ real-browser gates above are green.
 `v1.0.0-alpha.2` remains immutable. Any deployment of this repair is an
 untagged `dev` candidate. If the live candidate is confirmed, the next honest
 release identity is `v1.0.0-alpha.3`.
+
+## Live candidate
+
+- Release path:
+  `/opt/gotth-mail-test/releases/dev-signed-out-shell-ca14f01-20260926T150503Z`.
+- Runtime version: `dev`.
+- Deployed control-plane image ID:
+  `sha256:60dc99ec5c0040934a9d97efefed515e93954309f24a22c12e4669190332472f`.
+- Retained archive SHA-256:
+  `413e19742189633a8e6fcb3944273ea46f231fd22b78558d6c452a70621c65f1`.
+- Real Chromium at 390 by 844 proved the signed-out state contains one bounded
+  sign-in card, no rendered authenticated shell, no overflow, no page scroll,
+  and the `dev` footer.
+- All six containers are healthy, both managed services are active, and mail
+  ports 25, 143, 465, 587, and 993 are externally reachable.
+- Immediate rollback remains immutable `v1.0.0-alpha.2` at
+  `/opt/gotth-mail-test/releases/v1.0.0-alpha.2-0bdb230`.
+
+This candidate is not known-good until Danny confirms it on his phone.
