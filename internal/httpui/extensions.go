@@ -133,11 +133,13 @@ func requireExtensionUIActor(w http.ResponseWriter, r *http.Request, ids *identi
 	return audit.ActorRef{Type: actor.Type, ID: actor.ID}, csrf, true
 }
 
-// Complexity: time O(B+Q+R), Omega(1); auxiliary space O(B+M), Omega(1);
-// tight Theta not established across action/error paths. B bounded form and
-// configuration bytes, Q delegated SQL/audit work, R runtime work including
-// lock waits, M delegated memory. Update-target display retains already
-// validated input and renders four identifiers, with no extra SQL/runtime call.
+// Complexity: time O(B+P+D), Omega(F+O); auxiliary space O(B+A+M),
+// Omega(F+O). Tight Theta is not established across action/error paths.
+// B form/configuration bytes, P/A time/space of extensionFields (at most three
+// projections, including copied options); F fields, O option entries. D/M
+// delegated service time/memory include validation, hashing, serialization,
+// SQL/audit, filesystem/runtime work and lock waits. No extra service calls;
+// successful configure preview retains its input projection, never stored values.
 func applyExtensionUIAction(r *http.Request, service *extensionsadmin.Service, actor audit.ActorRef, item extensionsadmin.Instance) (extensionPageView, error) {
 	view := extensionPageView{Item: item, Fields: extensionFields(item, nil)}
 	action := r.Form.Get("action")
@@ -189,7 +191,7 @@ func applyExtensionUIAction(r *http.Request, service *extensionsadmin.Service, a
 	if err != nil {
 		return view, err
 	}
-	if view.Item.InstanceID != "" {
+	if view.Item.InstanceID != "" && action != "configure-preview" {
 		view.Fields = extensionFields(view.Item, nil)
 	}
 	view.Message = "extension operation accepted"
@@ -233,6 +235,7 @@ func extensionConfigurationInput(item extensionsadmin.Instance, r *http.Request)
 // toUIString/TrimSpace delegate scalar formatting/scanning; option slices copy
 // string headers, not backing bytes. Assumes expected constant-time configuration
 // map lookup with hashing/comparison bytes included in B. No I/O; field names are slot IDs.
+// Defaults permit omission per ValidateConfiguration; projection does not insert them.
 func extensionFields(item extensionsadmin.Instance, override map[string]any) []extensionFieldView {
 	configuration := item.Configuration
 	if override != nil {
@@ -240,7 +243,7 @@ func extensionFields(item extensionsadmin.Instance, override map[string]any) []e
 	}
 	result := make([]extensionFieldView, 0, len(item.Metadata.Fields))
 	for _, field := range item.Metadata.Fields {
-		view := extensionFieldView{Name: field.Name, Label: field.Label, Kind: string(field.Kind), Required: field.Required, Options: append([]string(nil), field.Options...)}
+		view := extensionFieldView{Name: field.Name, Label: field.Label, Kind: string(field.Kind), Required: field.Required && field.Default == nil, Options: append([]string(nil), field.Options...)}
 		if field.Kind == extensionsadmin.FieldSecret && view.Required {
 			for _, status := range item.Secrets {
 				if status.Slot == field.Name && status.Configured {
@@ -307,7 +310,7 @@ var extensionPage = template.Must(template.New("extensions").Funcs(template.Func
 <h1>{{.Item.ExtensionID}}</h1>
 <nav><a href="#overview">Overview</a> <a href="#configuration">Configuration</a> <a href="#secrets">Secrets</a> <a href="#permissions">Permissions</a> <a href="#health">Health</a> <a href="#audit">Audit</a> <a href="#versions">Versions</a> <a href="#rollback">Rollback</a></nav>
 <section id="overview"><h2>Overview</h2><dl><dt>Repository</dt><dd>{{.Item.Repository}}</dd><dt>Artifact</dt><dd><code>{{.Item.ArtifactPin}}</code></dd><dt>Manifest</dt><dd><code>{{.Item.ManifestDigest}}</code></dd><dt>Lifecycle</dt><dd>{{.Item.Lifecycle}}</dd><dt>Enabled / routed</dt><dd>{{.Item.Enabled}} / {{.Item.Routed}}</dd></dl><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button name="action" value="test">Test</button>{{if .Item.Enabled}}<button name="action" value="enable" aria-describedby="extension-recovery-help">Recover / revalidate</button><button name="action" value="disable">Disable</button>{{else}}<button name="action" value="enable">Enable</button>{{end}}</form><p id="extension-recovery-help">Stored lifecycle is not proof of a live runtime. Recover / revalidate explicitly checks the existing approved configuration, secrets, identity and health before routing. It grants no new permissions. Disable remains available.</p></section>
-<section id="configuration"><h2>Configuration</h2><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}">{{range .Fields}}<label>{{.Label}} {{if eq .Kind "boolean"}}<input type="checkbox" name="field.{{.Name}}" {{if .Checked}}checked{{end}}>{{else if eq .Kind "enum"}}<select name="field.{{.Name}}" {{if .Required}}required{{end}}>{{range .Options}}<option>{{.}}</option>{{end}}</select>{{else}}<input name="field.{{.Name}}" value="{{.Value}}" {{if eq .Kind "secret"}}type="password" autocomplete="new-password"{{else if eq .Kind "integer"}}type="number"{{end}} {{if .Required}}required{{end}}>{{end}}</label>{{end}}<button name="action" value="configure-preview">Preview configuration</button>{{if eq .Preview.Operation "configure"}}<input type="hidden" name="preview_id" value="{{.Preview.ID}}"><p>Re-enter all changed secrets, then type <code>{{.Preview.Confirmation}}</code>.</p><input name="confirmation" autocomplete="off" required><button name="action" value="configure-apply">Apply configuration</button>{{end}}</form></section>
+<section id="configuration"><h2>Configuration</h2><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}">{{range .Fields}}<label>{{.Label}} {{if eq .Kind "boolean"}}<input type="checkbox" name="field.{{.Name}}" {{if .Checked}}checked{{end}}>{{else if eq .Kind "enum"}}<select name="field.{{.Name}}" {{if .Required}}required{{end}}>{{$value := .Value}}{{if not .Required}}<option value="" {{if eq .Value ""}}selected{{end}}>Not set</option>{{end}}{{range .Options}}<option value="{{.}}" {{if eq . $value}}selected{{end}}>{{.}}</option>{{end}}</select>{{else}}<input name="field.{{.Name}}" value="{{.Value}}" {{if eq .Kind "secret"}}type="password" autocomplete="new-password"{{else if eq .Kind "integer"}}type="number"{{end}} {{if .Required}}required{{end}}>{{end}}</label>{{end}}<button name="action" value="configure-preview">Preview configuration</button>{{if eq .Preview.Operation "configure"}}<input type="hidden" name="preview_id" value="{{.Preview.ID}}"><p>Re-enter all changed secrets, then type <code>{{.Preview.Confirmation}}</code>.</p><input name="confirmation" autocomplete="off" required><button name="action" value="configure-apply">Apply configuration</button>{{end}}</form></section>
 <section id="secrets"><h2>Secrets</h2><ul>{{range .Item.Secrets}}<li>{{.Slot}}: {{if .Configured}}configured (value hidden){{else}}not configured{{end}}</li>{{end}}</ul><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button name="action" value="secrets-delete-preview">Preview deletion of all secrets</button>{{if eq .Preview.Operation "delete_secrets"}}<input type="hidden" name="preview_id" value="{{.Preview.ID}}"><p>Type <code>{{.Preview.Confirmation}}</code>.</p><input name="confirmation" required><button name="action" value="secrets-delete-apply">Delete secrets</button>{{end}}</form></section>
 <section id="permissions"><h2>Permissions</h2><p>Capabilities: <code>{{join .Item.Capabilities ", "}}</code></p><p>Interfaces: <code>{{join .Item.Interfaces ", "}}</code></p><p>Granted secret slots: <code>{{join .Item.SecretSlots ", "}}</code></p></section>
 <section id="health"><h2>Health</h2><p>{{.Item.HealthCode}}; tested revision {{.Item.TestedRevision}}; configuration revision {{.Item.ConfigurationRev}}</p></section>

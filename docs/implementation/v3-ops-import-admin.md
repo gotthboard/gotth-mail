@@ -228,6 +228,17 @@ still requires identical re-entry on apply under the existing secret binding,
 confirmation and CSRF checks. Missing required initial secrets may be staged
 but cannot pass readiness or enable.
 
+Successful configuration preview retains the submitted non-secret scalar
+controls for ordinary Apply without re-entry; it does not reload stored values.
+Enum options reflect the selected value, including an explicit empty choice
+where omission is valid. Metadata defaults permit missing required values but
+are not inserted by ValidateConfiguration or this projection: omitted string,
+integer and enum fields remain omitted, including fields with defaults. The
+native checkbox adapter always supplies a boolean (unchecked means false).
+Native required constraints follow that contract; secret constraints remain
+write-only and status-dependent as above. Apply still verifies the exact
+preview-bound payload, actor, revision, confirmation and secret re-entry.
+
 Configuration metadata admits only a closed set of bounded scalar field kinds,
 labels, validation constraints, defaults, and named secret slots. It admits no
 markup, script, style, template, executable expression, redirect, arbitrary

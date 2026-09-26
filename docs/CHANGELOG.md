@@ -2,9 +2,51 @@
 
 ## Unreleased
 
-### 2026-09-26 18:06 CDT — Permit native configuration edits to retain configured secrets
+### 2026-09-26 18:34 CDT — Preserve native configuration preview values through Apply
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/httpui/extensions.go`
+- `internal/httpui/extensions_configuration_test.go`
+- `scripts/extensions-configuration-roundtrip-proof.mjs`
+- `docs/implementation/v3-ops-import-admin.md`
+
+Explanation:
+
+- Keep the successful configuration-preview projection instead of overwriting
+  it with stored configuration. Render the selected enum value and a blank
+  choice where omission is valid. Match native required constraints to the
+  existing default/omission contract without inserting defaults.
+- Preserve backend payload/secret binding, confirmation, CSRF and error
+  behavior. No service, router, schema, authorization or runtime change.
+  Configured secret retention and pending-rotation re-entry remain unchanged.
+
+Verification:
+
+- Test-first PG16 route/SQL red on initial setup, configured true/false edits,
+  default/optional omission and explicit overrides, and pending rotation.
+  Ordinary rendered Apply could not persist the requested configuration.
+- Focused race green proves exact persisted scalar configuration, preview
+  non-mutation, encrypted-secret retention, rotation and denial controls.
+- Chromium151 default-sandbox red/green captures compare actual native
+  FormData against exact expected successful controls without rewriting any
+  non-secret preview control. All four green cases valid and submit once.
+- Full affected UI package race, vet, exact hashes and resource accounting:
+  `workflow/features/v3.ops-import-admin/extension-management-ui/evidence/2026-09-26-configuration-preview-roundtrip.md`.
+
+Risks / non-goals:
+
+- Captured native form proof plus independent routed SQL tests, not a live
+  authenticated browser/SQL flow or full browser acceptance. No unchanged
+  delivery-artifact rebuild, audit-link work, release or deployment.
+- Existing confirmation-required input can block re-preview until filled;
+  observed and reported, deliberately not redesigned in this unit.
+
+### 2026-09-26 18:06 CDT — Permit native configuration edits to retain configured secrets
+
+Commit: `bc9390dce9253d8fe62fc64d5381f2bc35cb012c`
 
 Affected files:
 
