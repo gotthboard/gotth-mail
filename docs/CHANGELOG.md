@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-09-26 13:45 CDT — Release and deploy v1.0.0-alpha.3
+
+Implementation commit: `5dd9a6ec0ca196f311cc9c37d29db4f7a91af948`
+
+Affected surfaces:
+
+- immutable annotated `v1.0.0-alpha.3` tag and five production images;
+- closed configuration, manifest, image, extension, and checksum artifacts;
+- atomic live deployment and release evidence.
+
+Explanation:
+
+- Promoted the user-accepted outbound candidate without moving either earlier
+  alpha tag. The tag identifies the implementation commit; later evidence
+  commits remain outside the release identity.
+- Rebuilt all application roles with one source commit, source-state digest,
+  epoch, and release version. The release manifest advances the declared
+  database schema from 17 to 18 to match the accepted source.
+- Preserved the accepted dev candidate as the immediate rollback and alpha.2
+  as the immutable fallback.
+
+Verification:
+
+- two builds produced identical image digests and two release-generator runs
+  produced byte-identical configuration and manifest artifacts;
+- full, focused, race, vet, production-contract, syntax, and clean-tree gates
+  passed on the development host;
+- live authenticated STARTTLS submission, local LMTP delivery, authenticated
+  IMAPS readback, and Microsoft external SMTP acceptance passed;
+- all six containers are healthy, the queue is empty, and signed-out Chromium
+  at 390 by 844 has no authenticated toolbar or page overflow.
+
+Risks / non-goals:
+
+- Deployment had to preserve UID/GID 1000 ownership for owner-only runtime
+  state and group-readable configuration. Two fail-closed starts exposed and
+  corrected prior ownership drift before admission.
+- PTR and DKIM deliverability hardening remain open. External SMTP acceptance
+  and the earlier user-confirmed inbox receipt do not guarantee placement at
+  every provider.
+
 ## 2026-09-26 11:54 CDT — Submit webmail through authenticated STARTTLS
 
 Implementation commit: `259134a1eb0e89b2a813377860a94183c55ddef1`
