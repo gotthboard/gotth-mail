@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026-09-26 11:54 CDT — Submit webmail through authenticated STARTTLS
+
+Implementation commit: `259134a1eb0e89b2a813377860a94183c55ddef1`
+
+Affected files:
+
+- `internal/webmail/runtime.go`, `smtp.go`, and focused transport/runtime tests;
+- the v4 PRD, architecture, and implementation contracts;
+- the protected runtime fixture used by the containerized webmail smoke.
+
+Explanation:
+
+- Production webmail was configured to connect directly to `postfix:25`.
+  That backend requires an HAProxy PROXY preamble, so Postfix waited for the
+  preamble while the SMTP client waited for the greeting. Submission timed out
+  before either side issued one SMTP command.
+- The previous CRAM-MD5 contract was also incompatible with the production
+  front, which deliberately offers PLAIN and LOGIN only after TLS.
+- Production runtime configuration now declares its authentication mechanism
+  explicitly and routes through the private mail-front submission listener.
+  PLAIN authentication is refused unless certificate-verified STARTTLS is
+  configured. The exact mailbox address remains the authenticated identity
+  checked by outbound policy and final transport.
+
+Verification:
+
+- all packages compiled on the development host;
+- focused runtime/SMTP tests passed normally and under the race detector;
+- a real live-boundary probe negotiated STARTTLS, authenticated with the
+  protected mailbox credential, passed policy, was accepted by Postfix, and
+  was delivered over LMTP to the test mailbox;
+- the live candidate started healthy with an isolated owner-only runtime file,
+  all six containers remained healthy, and the mail queue remained empty.
+
+Risks / non-goals:
+
+- This repairs local SMTP submission and same-domain delivery. External
+  delivery still requires the separately selected outbound relay or an
+  admitted direct-delivery setup with PTR and DKIM.
+- The broad Go test run remains blocked by the pre-existing PostgreSQL fixture
+  startup/socket defect; the failure spans unrelated packages and is recorded
+  in the deployment evidence.
+
 ## 2026-09-26 09:32 CDT — Replace the signed-out mailbox shell with a sign-in state
 
 Implementation commit: `ca14f0117764cd8f19c88a55cae4fcd906d3f8a3`
