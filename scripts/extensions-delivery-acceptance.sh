@@ -2,10 +2,13 @@
 # Test equipment: precompiled Mail test binary, immutable alpha.1 archive, native PG16.
 # No builds/downloads, host trust changes, or writable source/cache mounts here.
 set -euo pipefail
-if [[ $# != 3 ]]; then echo "usage: $0 TEST_BINARY ALPHA1_ARCHIVE PG16_BIN" >&2; exit 2; fi
+if [[ $# != 3 && $# != 4 ]]; then echo "usage: $0 TEST_BINARY ALPHA1_ARCHIVE PG16_BIN [ALPHA2_CANDIDATE]" >&2; exit 2; fi
 binary=$(realpath -e "$1")
 archive=$(realpath -e "$2")
 pgbin=$(realpath -e "$3")
+archive_b=""
+test_name=TestExtensionRealArchiveDelivery
+if [[ $# == 4 ]]; then archive_b=$(realpath -e "$4"); test_name=TestExtensionRealArchiveUpdateRollback; fi
 [[ -x "$binary" && -f "$archive" && -x "$pgbin/postgres" ]]
 "$pgbin/postgres" --version
 bwrap --version
@@ -16,7 +19,7 @@ bwrap --unshare-user --unshare-pid --unshare-ipc --unshare-uts --unshare-net \
  --tmpfs /etc/ssl/certs --clearenv \
  --setenv PATH "$pgbin:/usr/bin:/bin" --setenv HOME /tmp --setenv TMPDIR /tmp \
  --setenv GOMAXPROCS 4 --setenv GOTTH_MAIL_ACCEPTANCE_NAMESPACE 1 \
- --setenv GOTTH_MAIL_ACCEPTANCE_ARCHIVE "$archive" \
+ --setenv GOTTH_MAIL_ACCEPTANCE_ARCHIVE "$archive" --setenv GOTTH_MAIL_ACCEPTANCE_ARCHIVE_B "$archive_b" \
  --setenv GOTTH_MAIL_ACCEPTANCE_CERT /tmp/tls/server.crt \
  --setenv GOTTH_MAIL_ACCEPTANCE_KEY /tmp/tls/server.key \
  --chdir /tmp -- /bin/bash -eu -o pipefail -c '
@@ -31,8 +34,8 @@ bwrap --unshare-user --unshare-pid --unshare-ipc --unshare-uts --unshare-net \
  openssl x509 -req -in /tmp/tls/server.csr -CA /etc/ssl/certs/ca-certificates.crt \
   -CAkey /tmp/tls/ca.key -CAcreateserial -days 1 -extfile /tmp/tls/server.ext \
   -out /tmp/tls/server.crt >/dev/null 2>&1
- "$1" -test.v -test.timeout=10m -test.run="^(TestExtensionRealArchiveDelivery|TestExtensionAcceptanceReceiverBounds)$"
+ "$1" -test.v -test.timeout=10m -test.run="^($2|TestExtensionAcceptanceReceiverBounds)$"
  # Test cleanup must have removed PG, staging and runtime directories.
  test "$(find /tmp -mindepth 1 -maxdepth 1 ! -name tls | wc -l)" -eq 0
  echo "namespace cleanup: only ephemeral TLS fixture remains; destroyed on namespace exit"
- ' acceptance "$binary"
+ ' acceptance "$binary" "$test_name"

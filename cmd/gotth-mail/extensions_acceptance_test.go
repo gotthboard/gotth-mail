@@ -1,6 +1,6 @@
 package main
 
-// Test equipment only: operator-verified alpha.1 staging, not a product installer.
+// Test equipment only: operator-verified alpha.1/alpha.2 staging, not a product installer.
 // Run using scripts/extensions-delivery-acceptance.sh in an isolated namespace.
 import (
 	"archive/tar"
@@ -44,7 +44,7 @@ import (
 
 // Expected digest comes from admitted alpha.1 verification, never the archive itself.
 const acceptanceArchiveSHA = "5cb6043ca200acfa67d4c6a85e0c1ba070c51dc550cacca7ce538021c8d9e83a"
-const acceptancePackage = "gotth-extension-webhook-1.0.0-alpha.1-linux-amd64"
+const acceptanceArchiveBSHA = "d3b79e577bc68aedcb83b8c3cc378341cf8610db514c751be3ff331df9a8937a"
 const acceptanceBodyLimit = 64 << 10
 
 func acceptanceCheck(t *testing.T, err error) {
@@ -70,9 +70,18 @@ func acceptanceUUID(t *testing.T) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-// Closed single-release fixture: no generic extraction and no execution before all checks.
-func acceptanceArchive(data []byte) (map[string][]byte, error) {
-	if len(data) > 8<<20 || fmt.Sprintf("%x", sha256.Sum256(data)) != acceptanceArchiveSHA {
+// Closed two-pin fixture: no caller-selected digest or generic installer.
+func acceptanceArchive(data []byte, version string) (map[string][]byte, error) {
+	expected := acceptanceArchiveSHA
+	switch version {
+	case "1.0.0-alpha.1":
+	case "1.0.0-alpha.2":
+		expected = acceptanceArchiveBSHA
+	default:
+		return nil, errors.New("unapproved release")
+	}
+	acceptancePackage := "gotth-extension-webhook-" + version + "-linux-amd64"
+	if len(data) > 8<<20 || fmt.Sprintf("%x", sha256.Sum256(data)) != expected {
 		return nil, errors.New("archive digest/size mismatch")
 	}
 	z, err := gzip.NewReader(bytes.NewReader(data))
@@ -173,10 +182,17 @@ func TestExtensionAcceptanceReceiverBounds(t *testing.T) {
 	}
 }
 
-func TestExtensionRealArchiveDelivery(t *testing.T) {
+func TestExtensionRealArchiveDelivery(t *testing.T) { acceptanceLifecycle(t, false) }
+
+func TestExtensionRealArchiveUpdateRollback(t *testing.T) { acceptanceLifecycle(t, true) }
+
+func acceptanceLifecycle(t *testing.T, updateRollback bool) {
 	archive := os.Getenv("GOTTH_MAIL_ACCEPTANCE_ARCHIVE")
 	if archive == "" {
 		t.Skip("opt-in packaged acceptance; use namespace runner")
+	}
+	if updateRollback && os.Getenv("GOTTH_MAIL_ACCEPTANCE_ARCHIVE_B") == "" {
+		t.Skip("opt-in two-archive acceptance; pass candidate B to runner")
 	}
 	if os.Getenv("GOTTH_MAIL_ACCEPTANCE_NAMESPACE") != "1" {
 		t.Fatal("private namespace runner required")
@@ -190,14 +206,14 @@ func TestExtensionRealArchiveDelivery(t *testing.T) {
 	data, err := io.ReadAll(io.LimitReader(archiveFile, (8<<20)+1))
 	acceptanceCheck(t, archiveFile.Close())
 	acceptanceCheck(t, err)
-	files, err := acceptanceArchive(data)
+	files, err := acceptanceArchive(data, "1.0.0-alpha.1")
 	acceptanceCheck(t, err)
 	bad := bytes.Clone(data)
 	bad[len(bad)/2] ^= 1
-	if _, err := acceptanceArchive(bad); err == nil {
+	if _, err := acceptanceArchive(bad, "1.0.0-alpha.1"); err == nil {
 		t.Fatal("altered archive accepted")
 	}
-	if _, err := acceptanceArchive(make([]byte, (8<<20)+1)); err == nil {
+	if _, err := acceptanceArchive(make([]byte, (8<<20)+1), "1.0.0-alpha.1"); err == nil {
 		t.Fatal("oversized archive accepted")
 	}
 	var manifest extensioncore.Manifest
@@ -325,6 +341,10 @@ func TestExtensionRealArchiveDelivery(t *testing.T) {
 		}
 	}
 	key := acceptanceRandom(t)
+	type receiverExpectation struct {
+		Body      map[string]any
+		Key, Path string
+	}
 	var expected atomic.Value
 	var requests, accepted, rejected atomic.Int32
 	receiver := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -332,8 +352,8 @@ func TestExtensionRealArchiveDelivery(t *testing.T) {
 		b, err := io.ReadAll(io.LimitReader(req.Body, acceptanceBodyLimit+1))
 		var got map[string]any
 		decodeErr := json.Unmarshal(b, &got)
-		want := expected.Load()
-		valid := err == nil && decodeErr == nil && req.Method == "POST" && req.Header.Get("Content-Type") == "application/json" && req.TLS != nil && req.TLS.Version >= tls.VersionTLS12 && acceptanceMAC(b, req.Header.Get("X-GOTTH-Signature"), []byte(key)) && want != nil && reflect.DeepEqual(got, want) && req.Header.Get("X-GOTTH-Alert-ID") == got["id"] && req.Header.Get("X-GOTTH-Correlation-ID") == got["correlation_id"]
+		want, ready := expected.Load().(receiverExpectation)
+		valid := err == nil && decodeErr == nil && req.Method == "POST" && req.Header.Get("Content-Type") == "application/json" && req.TLS != nil && req.TLS.Version >= tls.VersionTLS12 && acceptanceMAC(b, req.Header.Get("X-GOTTH-Signature"), []byte(want.Key)) && ready && req.URL.Path == want.Path && reflect.DeepEqual(got, want.Body) && req.Header.Get("X-GOTTH-Alert-ID") == got["id"] && req.Header.Get("X-GOTTH-Correlation-ID") == got["correlation_id"]
 		if !valid {
 			rejected.Add(1)
 			w.WriteHeader(403)
@@ -353,10 +373,10 @@ func TestExtensionRealArchiveDelivery(t *testing.T) {
 	untrusted.Config.ErrorLog = log.New(io.Discard, "", 0)
 	untrusted.StartTLS()
 	t.Cleanup(untrusted.Close)
-	configure := func(endpoint, secret string) {
+	configure := func(endpoint, secret, timeout string) {
 		t.Helper()
 		before := current()
-		values := url.Values{"action": {"configure-preview"}, "csrf_token": {csrf}, "field.webhook.endpoint": {endpoint}, "field.webhook.timeout-seconds": {"1"}, "field.webhook.hmac-key": {secret}}
+		values := url.Values{"action": {"configure-preview"}, "csrf_token": {csrf}, "field.webhook.endpoint": {endpoint}, "field.webhook.timeout-seconds": {timeout}, "field.webhook.hmac-key": {secret}}
 		body := form(values)
 		if strings.Contains(body, secret) {
 			t.Fatal("secret rendered")
@@ -412,10 +432,11 @@ func TestExtensionRealArchiveDelivery(t *testing.T) {
 			t.Fatal("socket path exceeds contract")
 		}
 	}
+	receiverPath := "/"
 	send := func(label string) (notification.DeliveryRecord, error) {
 		t.Helper()
 		alert := notification.Alert{ID: acceptanceUUID(t), Class: "acceptance." + label, Severity: notification.SeverityInfo, Title: "Packaged acceptance", Summary: "Synthetic alert", CorrelationID: acceptanceUUID(t), Resource: notification.ResourceRef{Type: "fixture", ID: id}, Details: map[string]string{"zeta": "last", "alpha": "first"}}
-		expected.Store(map[string]any{"schema": "gotth.extension.webhook.alert.v1", "id": alert.ID, "class": alert.Class, "severity": "info", "title": alert.Title, "summary": alert.Summary, "correlation_id": alert.CorrelationID, "resource_type": "fixture", "resource_id": id, "details": []any{map[string]any{"key": "alpha", "value": "first"}, map[string]any{"key": "zeta", "value": "last"}}})
+		expected.Store(receiverExpectation{Key: key, Path: receiverPath, Body: map[string]any{"schema": "gotth.extension.webhook.alert.v1", "id": alert.ID, "class": alert.Class, "severity": "info", "title": alert.Title, "summary": alert.Summary, "correlation_id": alert.CorrelationID, "resource_type": "fixture", "resource_id": id, "details": []any{map[string]any{"key": "alpha", "value": "first"}, map[string]any{"key": "zeta", "value": "last"}}}})
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		rec, err := server.NotificationService.SendAlert(ctx, alert)
@@ -427,7 +448,7 @@ func TestExtensionRealArchiveDelivery(t *testing.T) {
 		t.Logf("delivery label=%s alert=%s correlation=%s status=%s reason=%s transport=%s verification=%s", label, alert.ID, alert.CorrelationID, stored.Status, stored.Reason, stored.Evidence.Transport, stored.Evidence.VerificationResult)
 		return rec, err
 	}
-	configure(untrusted.URL, key)
+	configure(untrusted.URL, key, "1")
 	testEnable()
 	rec, sendErr := send("untrusted")
 	if sendErr == nil || rec.Status != notification.StatusFailedRetryable || untrustedHTTP.Load() != 0 {
@@ -435,7 +456,7 @@ func TestExtensionRealArchiveDelivery(t *testing.T) {
 	}
 	action("disable")
 	emptyRuntime()
-	configure(receiver.URL, acceptanceRandom(t))
+	configure(receiver.URL, acceptanceRandom(t), "1")
 	testEnable()
 	rec, sendErr = send("wrong-key")
 	acceptanceCheck(t, sendErr)
@@ -444,7 +465,7 @@ func TestExtensionRealArchiveDelivery(t *testing.T) {
 	}
 	action("disable")
 	emptyRuntime()
-	configure(receiver.URL, key)
+	configure(receiver.URL, key, "1")
 	testEnable()
 	rec, sendErr = send("positive")
 	acceptanceCheck(t, sendErr)
@@ -461,5 +482,222 @@ func TestExtensionRealArchiveDelivery(t *testing.T) {
 	if sendErr == nil || rec.Status != notification.StatusFailedRetryable || requests.Load() != 2 {
 		t.Fatal("disabled runtime delivered")
 	}
-	t.Log("PASS real registration/configure/readiness/enable/HTTPS-HMAC/SQL/disable; login mocked; no browser claim")
+	if !updateRollback {
+		t.Log("PASS real registration/configure/readiness/enable/HTTPS-HMAC/SQL/disable; login mocked; no browser claim")
+		return
+	}
+	// Candidate B is an independently admitted version-only test artifact, not a release.
+	archiveB := os.Getenv("GOTTH_MAIL_ACCEPTANCE_ARCHIVE_B")
+	f, err := os.Open(archiveB)
+	acceptanceCheck(t, err)
+	dataB, err := io.ReadAll(io.LimitReader(f, (8<<20)+1))
+	acceptanceCheck(t, f.Close())
+	acceptanceCheck(t, err)
+	filesB, err := acceptanceArchive(dataB, "1.0.0-alpha.2")
+	acceptanceCheck(t, err)
+	if _, err := acceptanceArchive(dataB, "1.0.0-alpha.1"); err == nil {
+		t.Fatal("B admitted under A pin")
+	}
+	var manifestB extensioncore.Manifest
+	acceptanceCheck(t, json.Unmarshal(filesB["manifest.json"], &manifestB))
+	canonicalB, err := extensioncore.CanonicalManifest(manifestB)
+	acceptanceCheck(t, err)
+	if !bytes.Equal(canonicalB, filesB["manifest.json"]) || manifestB.Version != "1.0.0-alpha.2" || manifestB.ID != manifest.ID {
+		t.Fatal("wrong B manifest")
+	}
+	var metadataB extensionsadmin.Metadata
+	acceptanceCheck(t, json.Unmarshal(filesB["configuration-metadata.json"], &metadataB))
+	acceptanceCheck(t, extensionsadmin.ValidateMetadata(metadataB))
+	if !reflect.DeepEqual(metadataB, metadata) {
+		t.Fatal("version-only candidate metadata changed")
+	}
+	mdB, err := extensioncore.ManifestDigest(manifestB)
+	acceptanceCheck(t, err)
+	binaryB := fmt.Sprintf("%x", sha256.Sum256(filesB["gotth-extension-webhook"]))
+	if mdB != "4093f2b17c2b8062d0f3ceb27480c77865289ec883c642798cd19352a8cab9ea" || binaryB != "6248244fa56bf39554d961019d40d71ece7a68eb5801eca0ef87602272818652" {
+		t.Fatal("B member provenance mismatch")
+	}
+	grantB := grant
+	grantB.ManifestDigest = mdB
+	grantB.Capabilities = manifestB.Capabilities
+	sessionB, err := extensioncore.Negotiate(manifestB, grantB, profile)
+	acceptanceCheck(t, err)
+	stageB := filepath.Join(a, acceptanceArchiveBSHA)
+	acceptanceCheck(t, os.Mkdir(stageB, 0700))
+	for name, b := range filesB {
+		mode := os.FileMode(0400)
+		if name == "gotth-extension-webhook" {
+			mode = 0500
+		}
+		acceptanceCheck(t, os.WriteFile(filepath.Join(stageB, name), b, mode))
+	}
+	acceptanceCheck(t, os.WriteFile(filepath.Join(stageB, "artifact-pin"), []byte("sha256:"+acceptanceArchiveBSHA), 0400))
+	acceptanceCheck(t, os.Chmod(stageB, 0500))
+	t.Cleanup(func() { acceptanceCheck(t, os.Chmod(stageB, 0700)) })
+	outB, err := exec.Command(filepath.Join(stageB, "gotth-extension-webhook"), "--version").CombinedOutput()
+	acceptanceCheck(t, err)
+	if strings.TrimSpace(string(outB)) != "1.0.0-alpha.2" {
+		t.Fatal("B binary version mismatch")
+	}
+	t.Logf("B archive=%s binary=%s manifest=%s grant=%s session=%s version=%s", acceptanceArchiveBSHA, binaryB, mdB, sessionB.GrantDigest, sessionB.Fingerprint, strings.TrimSpace(string(outB)))
+	// /proc is namespace-private. Match the actual child executable and hash its open inode,
+	// not the registry pin or a separate --version process. Require exactly one live match.
+	liveIdentity := func(dir string, expectedBinary []byte) {
+		t.Helper()
+		entries, err := os.ReadDir("/proc")
+		acceptanceCheck(t, err)
+		matches := 0
+		for _, entry := range entries {
+			if entry.Name() == "" || entry.Name()[0] < '0' || entry.Name()[0] > '9' {
+				continue
+			}
+			exe := filepath.Join("/proc", entry.Name(), "exe")
+			target, err := os.Readlink(exe)
+			if err != nil || target != filepath.Join(dir, "gotth-extension-webhook") {
+				continue
+			}
+			matches++
+			f, err := os.Open(exe)
+			acceptanceCheck(t, err)
+			h := sha256.New()
+			_, err = io.Copy(h, io.LimitReader(f, (12<<20)+1))
+			acceptanceCheck(t, f.Close())
+			acceptanceCheck(t, err)
+			want := sha256.Sum256(expectedBinary)
+			if !bytes.Equal(h.Sum(nil), want[:]) {
+				t.Fatal("live executable hash mismatch")
+			}
+			t.Logf("live executable pid=%s sha256=%x", entry.Name(), h.Sum(nil))
+		}
+		if matches != 1 {
+			t.Fatalf("expected one pinned live child, got %d", matches)
+		}
+	}
+	denied := func(values url.Values) {
+		t.Helper()
+		before := current()
+		n := requests.Load()
+		body := form(values)
+		if strings.Contains(body, "extension operation accepted") || !reflect.DeepEqual(before, current()) || requests.Load() != n {
+			t.Fatalf("denial failed: %s", values.Get("action"))
+		}
+	}
+	previewFields := url.Values{"action": {"update-preview"}, "csrf_token": {csrf}, "artifact_pin": {"sha256:" + acceptanceArchiveBSHA}, "manifest_sha256": {mdB}, "grant_sha256": {sessionB.GrantDigest}, "session_sha256": {sessionB.Fingerprint}, "capabilities": {strings.Join(grantB.Capabilities, ",")}, "interfaces": {extensionsruntime.Interface}, "secret_slots": {extensionsruntime.SecretSlot}}
+	action("enable")
+	liveIdentity(stage, files["gotth-extension-webhook"])
+	denied(previewFields)
+	denied(url.Values{"action": {"rollback"}, "csrf_token": {csrf}, "confirmation": {"rollback " + manifest.ID + " to sha256:" + acceptanceArchiveSHA}})
+	action("disable")
+	emptyRuntime()
+	snapshotA := current()
+	before := current()
+	n := requests.Load()
+	body := form(previewFields)
+	if !reflect.DeepEqual(before, current()) || requests.Load() != n {
+		t.Fatal("update preview mutated state or delivered")
+	}
+	emptyRuntime()
+	for _, value := range []string{acceptanceArchiveBSHA, mdB, sessionB.GrantDigest, sessionB.Fingerprint} {
+		if !strings.Contains(body, value) {
+			t.Fatal("preview lost exact target")
+		}
+	}
+	p := regexp.MustCompile(`name="preview_id" value="([^"]+)"`).FindStringSubmatch(body)
+	c := regexp.MustCompile(`<code>(confirm-[a-f0-9]+)</code>`).FindStringSubmatch(body)
+	if len(p) != 2 || len(c) != 2 {
+		t.Fatal("update confirmation missing")
+	}
+	apply := url.Values{"action": {"update-apply"}, "csrf_token": {csrf}, "preview_id": {p[1]}, "confirmation": {"wrong"}}
+	denied(apply)
+	apply.Set("confirmation", c[1])
+	apply.Set("preview_id", p[1]+"-tampered")
+	denied(apply)
+	apply.Set("preview_id", p[1])
+	body = form(apply)
+	if !strings.Contains(body, "extension operation accepted") {
+		t.Fatal("update rejected")
+	}
+	b := current()
+	if b.ArtifactPin != "sha256:"+acceptanceArchiveBSHA || b.PreviousArtifact != snapshotA.ArtifactPin || b.ManifestDigest != mdB || b.GrantDigest != sessionB.GrantDigest || b.SessionDigest != sessionB.Fingerprint || b.TestedRevision != 0 || b.Enabled || b.Routed || b.Lifecycle != "stopped" || b.ConfigurationRev != snapshotA.ConfigurationRev+1 {
+		t.Fatal("B update state mismatch")
+	}
+	denied(apply) // consumed preview cannot be replayed
+	denied(url.Values{"action": {"enable"}, "csrf_token": {csrf}})
+	emptyRuntime()
+	successfulSend := func(label string) {
+		t.Helper()
+		n, a := requests.Load(), accepted.Load()
+		rec, err := send(label)
+		acceptanceCheck(t, err)
+		if rec.Status != notification.StatusDelivered || rec.Reason != "receiver_accepted" || rec.Evidence.Transport != "https-webhook" || rec.Evidence.VerificationResult != "hmac_sha256" || requests.Load() != n+1 || accepted.Load() != a+1 {
+			t.Fatal("authenticated delivery missing")
+		}
+	}
+	testEnable()
+	liveIdentity(stageB, filesB["gotth-extension-webhook"])
+	successfulSend("b")
+	// A previous snapshot survives subsequent B configuration edits, but secrets are not snapshots.
+	denied(url.Values{"action": {"rollback"}, "csrf_token": {csrf}, "confirmation": {"rollback " + manifest.ID + " to " + snapshotA.ArtifactPin}})
+	action("disable")
+	emptyRuntime()
+	oldKey := key
+	rotatedKey := acceptanceRandom(t)
+	key = rotatedKey
+	receiverPath = "/candidate-b"
+	configure(receiver.URL+receiverPath, key, "2")
+	configuredB := current()
+	if reflect.DeepEqual(configuredB.Configuration, snapshotA.Configuration) {
+		t.Fatal("B configuration must differ meaningfully")
+	}
+	testEnable()
+	liveIdentity(stageB, filesB["gotth-extension-webhook"])
+	successfulSend("b-rotated")
+	action("disable")
+	emptyRuntime()
+	beforeRollback := current()
+	rollback := url.Values{"action": {"rollback"}, "csrf_token": {csrf}, "confirmation": {"wrong"}}
+	denied(rollback)
+	rollback.Set("confirmation", "rollback "+manifest.ID+" to "+snapshotA.ArtifactPin)
+	body = form(rollback)
+	if !strings.Contains(body, "extension operation accepted") {
+		t.Fatal("rollback rejected")
+	}
+	restored := current()
+	if restored.ArtifactPin != snapshotA.ArtifactPin || restored.PreviousArtifact != b.ArtifactPin || restored.ManifestDigest != snapshotA.ManifestDigest || restored.GrantDigest != snapshotA.GrantDigest || restored.SessionDigest != snapshotA.SessionDigest || !reflect.DeepEqual(restored.Metadata, snapshotA.Metadata) || !reflect.DeepEqual(restored.Configuration, snapshotA.Configuration) || !reflect.DeepEqual(restored.Capabilities, snapshotA.Capabilities) || !reflect.DeepEqual(restored.Interfaces, snapshotA.Interfaces) || !reflect.DeepEqual(restored.SecretSlots, snapshotA.SecretSlots) || restored.TestedRevision != 0 || restored.Enabled || restored.Routed || restored.Lifecycle != "stopped" || restored.ConfigurationRev != beforeRollback.ConfigurationRev+1 {
+		t.Fatal("rollback snapshot mismatch")
+	}
+	denied(url.Values{"action": {"enable"}, "csrf_token": {csrf}})
+	emptyRuntime()
+	receiverPath = "/"
+	testEnable()
+	liveIdentity(stage, files["gotth-extension-webhook"])
+	// A must no longer authenticate with the old key after rollback.
+	key = oldKey
+	rec, sendErr = send("a-old-key-rejected")
+	acceptanceCheck(t, sendErr)
+	if rec.Status != notification.StatusFailedPermanent || rec.Reason != "receiver_rejected" {
+		t.Fatal("rollback resurrected old secret")
+	}
+	// Retain the new value from configuration in the fixture, not from runtime private files.
+	key = rotatedKey
+	successfulSend("a-rollback-retained-key")
+	action("disable")
+	emptyRuntime()
+	n = requests.Load()
+	rec, sendErr = send("rollback-disabled")
+	if sendErr == nil || rec.Status != notification.StatusFailedRetryable || requests.Load() != n {
+		t.Fatal("rollback disable delivered")
+	}
+	for path, want := range map[string]string{archive: acceptanceArchiveSHA, archiveB: acceptanceArchiveBSHA} {
+		f, err := os.Open(path)
+		acceptanceCheck(t, err)
+		h := sha256.New()
+		_, err = io.Copy(h, f)
+		acceptanceCheck(t, f.Close())
+		acceptanceCheck(t, err)
+		if fmt.Sprintf("%x", h.Sum(nil)) != want {
+			t.Fatal("source archive changed")
+		}
+	}
+	t.Log("PASS A->B->A actual live binaries, confirmed update/rollback, restored A configuration, retained rotated secret; login mocked; no browser claim")
 }

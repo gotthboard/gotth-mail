@@ -2,9 +2,42 @@
 
 ## Unreleased
 
-### 2026-09-26 17:30 CDT — Real packaged webhook delivery acceptance equipment
+### 2026-09-26 17:47 CDT — Exercise immutable webhook A-to-B-to-A update and rollback
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `cmd/gotth-mail/extensions_acceptance_test.go`
+- `scripts/extensions-delivery-acceptance.sh`
+
+Explanation:
+
+- Extend the closed acceptance fixture to the exact admitted alpha.1 archive
+  and unpublished, version-only alpha.2 candidate; no downloader or release.
+- Exercise real cookie/CSRF update preview/confirmation and rollback with
+  denied enabled-state, wrong/forged/consumed confirmation, and pre-Test Enable
+  cases. Assert restored A configuration/binding and retained rotated secret.
+- Hash actual running child executables via namespace-private procfs, verify
+  independently authenticated HTTPS deliveries from B and restored A, and
+  publish receiver expectations atomically across the handler goroutine.
+
+Verification:
+
+- PostgreSQL16.14 focused normal/race A-to-B-to-A acceptance; exact commands,
+  initial fixture-oracle failure and subsequent results recorded in
+  `workflow/features/v3.ops-import-admin/extension-management-ui/evidence/2026-09-26-real-update-rollback.md`.
+- Formatting, shell syntax and diff checks.
+
+Risks / non-goals:
+
+- Test equipment only, no production code changes. Login remains mocked and
+  forms are HTTP-handler requests, not native browser acceptance. No release,
+  live OIDC, generic installer, secret rollback or full-beta admission claim.
+
+### 2026-09-26 17:30 CDT — Real packaged webhook delivery acceptance equipment
+
+Commit: `c0de075b1e61085a021be2679d2a9ceb44170d7a`
 
 Affected files:
 
