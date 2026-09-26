@@ -201,7 +201,12 @@ POST /api/v1/extensions/{instance-id}/uninstall/apply
 ```
 
 The HTML surface is server-rendered Go + templ + Tailwind with HTMX fragments
-and ordinary form fallback. Every POST requires administrator authorization,
+and ordinary form fallback. Update preview and confirmation use separate native
+forms: the confirmation form displays the accepted target artifact, manifest,
+grant and session, and submits only its preview ID, CSRF, action and required
+confirmation. Empty fields in the independent preview-input form cannot block
+confirmation. Submitted target fields never replace the server-stored preview.
+Every POST requires administrator authorization,
 CSRF, bounded input, and the same service-layer confirmation/audit contract as
 the API. Sensitive reconfiguration, capability expansion, rollback, uninstall,
 and secret deletion require recent reauthentication or the product's admitted

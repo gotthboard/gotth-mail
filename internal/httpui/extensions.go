@@ -26,6 +26,7 @@ type extensionPageView struct {
 	Item          extensionsadmin.Instance
 	Fields        []extensionFieldView
 	Preview       extensionsadmin.Preview
+	UpdateTarget  extensionsadmin.UpdateInput
 	Message       string
 	BlockedReason string
 	CSRF          string
@@ -132,6 +133,11 @@ func requireExtensionUIActor(w http.ResponseWriter, r *http.Request, ids *identi
 	return audit.ActorRef{Type: actor.Type, ID: actor.ID}, csrf, true
 }
 
+// Complexity: time O(B+Q+R), Omega(1); auxiliary space O(B+M), Omega(1);
+// tight Theta not established across action/error paths. B bounded form and
+// configuration bytes, Q delegated SQL/audit work, R runtime work including
+// lock waits, M delegated memory. Update-target display retains already
+// validated input and renders four identifiers, with no extra SQL/runtime call.
 func applyExtensionUIAction(r *http.Request, service *extensionsadmin.Service, actor audit.ActorRef, item extensionsadmin.Instance) (extensionPageView, error) {
 	view := extensionPageView{Item: item, Fields: extensionFields(item, nil)}
 	action := r.Form.Get("action")
@@ -159,6 +165,9 @@ func applyExtensionUIAction(r *http.Request, service *extensionsadmin.Service, a
 	case "update-preview":
 		input := extensionsadmin.UpdateInput{ArtifactPin: r.Form.Get("artifact_pin"), ManifestDigest: r.Form.Get("manifest_sha256"), GrantDigest: r.Form.Get("grant_sha256"), SessionDigest: r.Form.Get("session_sha256"), Capabilities: commaTokens(r.Form.Get("capabilities")), Interfaces: commaTokens(r.Form.Get("interfaces")), SecretSlots: commaTokens(r.Form.Get("secret_slots")), Metadata: item.Metadata}
 		view.Preview, err = service.PreviewUpdate(r.Context(), actor, item.InstanceID, input)
+		if err == nil {
+			view.UpdateTarget = input
+		}
 	case "update-apply":
 		view.Item, err = service.ApplyUpdate(r.Context(), actor, r.Form.Get("preview_id"), r.Form.Get("confirmation"))
 	case "rollback":
@@ -288,7 +297,7 @@ var extensionPage = template.Must(template.New("extensions").Funcs(template.Func
 <section id="permissions"><h2>Permissions</h2><p>Capabilities: <code>{{join .Item.Capabilities ", "}}</code></p><p>Interfaces: <code>{{join .Item.Interfaces ", "}}</code></p><p>Granted secret slots: <code>{{join .Item.SecretSlots ", "}}</code></p></section>
 <section id="health"><h2>Health</h2><p>{{.Item.HealthCode}}; tested revision {{.Item.TestedRevision}}; configuration revision {{.Item.ConfigurationRev}}</p></section>
 <section id="audit"><h2>Audit</h2><a href="/api/v1/audit/export?format=jsonl&resource_type=extension&resource_id={{.Item.InstanceID}}">Export redacted extension audit</a></section>
-<section id="versions"><h2>Versions / update</h2><p>Previous pin: <code>{{.Item.PreviousArtifact}}</code>; available pin: <code>{{.Item.AvailableUpdate}}</code></p><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><input name="artifact_pin" placeholder="sha256:…" required><input name="manifest_sha256" placeholder="manifest SHA-256" required><input name="grant_sha256" placeholder="grant SHA-256" required><input name="session_sha256" placeholder="session SHA-256" required><input name="capabilities" value="{{join .Item.Capabilities ","}}"><input name="interfaces" value="{{join .Item.Interfaces ","}}"><input name="secret_slots" value="{{join .Item.SecretSlots ","}}"><button name="action" value="update-preview">Preview update</button>{{if eq .Preview.Operation "update"}}<p>Privilege diff: <code>{{join .Preview.PrivilegeDiff ", "}}</code></p><p>Configuration-schema diff: <code>{{join .Preview.ConfigurationDiff ", "}}</code></p><p>Secret-slot diff: <code>{{join .Preview.SecretSlotDiff ", "}}</code></p><p>Type <code>{{.Preview.Confirmation}}</code>.</p><input type="hidden" name="preview_id" value="{{.Preview.ID}}"><input name="confirmation" required><button name="action" value="update-apply">Apply update</button>{{end}}</form></section>
+<section id="versions"><h2>Versions / update</h2><p>Previous pin: <code>{{.Item.PreviousArtifact}}</code>; available pin: <code>{{.Item.AvailableUpdate}}</code></p><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><input name="artifact_pin" placeholder="sha256:…" required><input name="manifest_sha256" placeholder="manifest SHA-256" required><input name="grant_sha256" placeholder="grant SHA-256" required><input name="session_sha256" placeholder="session SHA-256" required><input name="capabilities" value="{{join .Item.Capabilities ","}}"><input name="interfaces" value="{{join .Item.Interfaces ","}}"><input name="secret_slots" value="{{join .Item.SecretSlots ","}}"><button name="action" value="update-preview">Preview update</button></form>{{if eq .Preview.Operation "update"}}<form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><dl><dt>Target artifact</dt><dd><code>{{.UpdateTarget.ArtifactPin}}</code></dd><dt>Target manifest</dt><dd><code>{{.UpdateTarget.ManifestDigest}}</code></dd><dt>Target grant</dt><dd><code>{{.UpdateTarget.GrantDigest}}</code></dd><dt>Target session</dt><dd><code>{{.UpdateTarget.SessionDigest}}</code></dd></dl><p>Privilege diff: <code>{{join .Preview.PrivilegeDiff ", "}}</code></p><p>Configuration-schema diff: <code>{{join .Preview.ConfigurationDiff ", "}}</code></p><p>Secret-slot diff: <code>{{join .Preview.SecretSlotDiff ", "}}</code></p><p>Type <code>{{.Preview.Confirmation}}</code>.</p><input type="hidden" name="preview_id" value="{{.Preview.ID}}"><label>Update confirmation <input name="confirmation" autocomplete="off" required></label><button name="action" value="update-apply">Apply update</button></form>{{end}}</section>
 <section id="rollback"><h2>Rollback / uninstall</h2>{{if .Item.PreviousArtifact}}<form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><p>Type <code>rollback {{.Item.ExtensionID}} to {{.Item.PreviousArtifact}}</code>.</p><input name="confirmation" required><button name="action" value="rollback">Rollback</button></form>{{end}}<form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button name="action" value="uninstall-preview">Preview uninstall</button>{{if eq .Preview.Operation "uninstall"}}<input type="hidden" name="preview_id" value="{{.Preview.ID}}"><p>Type <code>{{.Preview.Confirmation}}</code>. Secrets must be deleted separately first.</p><input name="confirmation" required><button name="action" value="uninstall-apply">Uninstall</button>{{end}}</form></section>
 {{else}}
 <h1>Extensions</h1><p>Mail owns this presentation. Extension metadata supplies bounded scalar field descriptions only.</p><ul>{{range .Items}}<li><a href="/admin/extensions/{{.InstanceID}}">{{.ExtensionID}}</a> — {{.Lifecycle}} — {{if .Enabled}}enabled{{else}}disabled{{end}} — {{.HealthCode}}</li>{{else}}<li>No extensions installed.</li>{{end}}</ul>

@@ -2,9 +2,46 @@
 
 ## Unreleased
 
-### 2026-09-26 15:21 CDT — Reconcile extension runtime after restart
+### 2026-09-26 17:12 CDT — Make extension update confirmation a separate native form
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/httpui/extensions.go`
+- `internal/httpui/extensions_update_test.go`
+- `docs/implementation/v3-ops-import-admin.md`
+
+Explanation:
+
+- Separate target-entry preview from confirmation so empty required target
+  fields cannot block Apply update. Display the accepted target artifact,
+  manifest, grant and session; only the stored preview authorizes mutation.
+- Retain ordinary POST, CSRF, actor/revision/expiry/confirmation checks and
+  a required labeled confirmation. No JavaScript or validation bypass added.
+
+Verification:
+
+- PostgreSQL16.14 full-route fifteen-case regression established the actual
+  native-form defect before production changes; corrected fixture-only unique
+  identity and routed-implies-enabled violations are retained in raw evidence.
+- Focused race run passed all fifteen cases, including denied, stale, expired,
+  consumed and tampered-target requests.
+- Chromium151 native constraint validation on actual captured response markup:
+  old form remained invalid and submitted zero times; repaired form submitted
+  once after confirmation, with only action/CSRF/preview/confirmation controls.
+
+Risks / non-goals:
+
+- Browser proof uses test-only instrumentation on captured HTML, not a complete
+  live authenticated browser lifecycle or accessibility acceptance.
+- No runtime, registry, permission, secret-retention, audit-export or installer
+  change. Full affected-package verification and independent review remain
+  recorded in the checkpoint evidence; no beta release admission here.
+
+### 2026-09-26 15:21 CDT — Reconcile extension runtime after restart
+
+Commit: `b749d0de3f95cf58a9f432a43678d4dde5e74edc`
 
 Affected files:
 
