@@ -1180,7 +1180,7 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/webmail", nil))
 	body := rr.Body.String()
-	for _, want := range []string{"GOTTH Mail", "command-actions", "folder-pane", "message-list", "reader-pane", "composer", "/webmail/assets/trusted-html.js", "/webmail/assets/htmx-2.0.10.min.js", "/webmail/assets/app.js", "allowEval", "gotth-footer", "Powered by", "Version: <strong>dev</strong>", "Page: <strong>", "Template: <strong>"} {
+	for _, want := range []string{"GOTTH Mail", `data-session-state="loading"`, "session-panel", "authenticated-shell", "command-actions", "folder-pane", "message-list", "reader-pane", "composer", "/webmail/assets/trusted-html.js", "/webmail/assets/htmx-2.0.10.min.js", "/webmail/assets/app.js", "allowEval", "gotth-footer", "Powered by", "Version: <strong>dev</strong>", "Page: <strong>", "Template: <strong>"} {
 		if rr.Code != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("webmail shell status=%d missing %q body=%s", rr.Code, want, body)
 		}
@@ -1193,7 +1193,7 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 	}
 	asset := httptest.NewRecorder()
 	h.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/webmail/assets/app.js", nil))
-	if asset.Code != http.StatusOK || !strings.Contains(asset.Body.String(), "mark_read") || !strings.Contains(asset.Body.String(), "gotth_mail_csrf") {
+	if asset.Code != http.StatusOK || !strings.Contains(asset.Body.String(), "mark_read") || !strings.Contains(asset.Body.String(), "gotth_mail_csrf") || !strings.Contains(asset.Body.String(), "showSignedOut") {
 		t.Fatalf("webmail JS status=%d body=%s", asset.Code, asset.Body.String())
 	}
 	if got := asset.Header().Get("Cache-Control"); got != "no-store" {
@@ -1213,7 +1213,7 @@ func TestWebmailShellIsReachableWithoutRoundcube(t *testing.T) {
 	stylesheet := httptest.NewRecorder()
 	h.ServeHTTP(stylesheet, httptest.NewRequest(http.MethodGet, "/webmail/assets/app.css", nil))
 	css := stylesheet.Body.String()
-	for _, want := range []string{"[hidden]{display:none!important}", ".gotth-footer", ".gotth-footer-product", ".command-actions", "@media(max-width:1024px)", "min(var(--folder-width),28vw)", "grid-template-columns:max-content minmax(0,1fr)", "#compose-form{height:auto;min-height:100%;overflow:auto"} {
+	for _, want := range []string{"[hidden]{display:none!important}", `.session-panel{display:grid!important}`, `.authenticated-shell{display:none!important}`, ".gotth-footer", ".gotth-footer-product", ".command-actions", "@media(max-width:1024px)", "min(var(--folder-width),28vw)", "grid-template-columns:max-content minmax(0,1fr)", "#compose-form{height:auto;min-height:100%;overflow:auto"} {
 		if stylesheet.Code != http.StatusOK || !strings.Contains(css, want) {
 			t.Fatalf("webmail CSS status=%d missing %q body=%s", stylesheet.Code, want, css)
 		}

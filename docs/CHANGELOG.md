@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-09-26 09:32 CDT — Replace the signed-out mailbox shell with a sign-in state
+
+Implementation commit: `current commit; hash assigned by Git after commit`
+
+Affected files:
+
+- `internal/api/webmail_ui.go` and its focused shell assertions;
+- `scripts/webmail-browser-smoke.mjs`.
+
+Explanation:
+
+- The public shell previously left authenticated mail commands, search,
+  folders, quota, and empty panes visible after the identity request returned
+  401. That made an expired or absent session look like a broken mailbox.
+- The shell now starts in an explicit loading state and exposes mail controls
+  only after identity admission. A 401 clears rendered mailbox state and
+  presents one bounded sign-in card while retaining theme control, product
+  identity, and the canonical footer.
+- Composer and draft dialogs remain layout-hidden while signed out, including
+  keyboard-shortcut attempts. Authenticated desktop, tablet, and mobile
+  behavior is unchanged.
+
+Verification:
+
+- the new real-Chromium signed-out regression failed before implementation
+  because the session state never changed and the mail shell remained exposed;
+- focused API tests, JavaScript syntax checking, and `git diff --check` passed;
+- the complete real-Chromium smoke passed the signed-out 390 by 844 state and
+  the existing authenticated desktop/tablet/phone, HTMX reader, Back,
+  compose/send, draft, theme, and pane-preference paths.
+
+Risks / non-goals:
+
+- This changes presentation only. OIDC, session admission, authorization,
+  mailbox data, transport, DNS, identity, and release tags are unchanged.
+
 ## 2026-09-21 22:04 CDT — Hide the swapped reader placeholder correctly
 
 Implementation commit: `0bdb230de53a8a819851a16d190cf5c15d0f47f3`

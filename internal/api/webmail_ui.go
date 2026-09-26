@@ -134,8 +134,8 @@ const webmailAppHTML = `<!doctype html>
   <script src="/webmail/assets/htmx-2.0.10.min.js" defer></script>
   <script src="/webmail/assets/app.js" defer></script>
 </head>
-<body data-mobile-view="folders">
-  <a class="skip-link" href="#message-list">Skip to messages</a>
+<body data-mobile-view="folders" data-session-state="loading">
+  <a class="skip-link authenticated-shell" href="#message-list">Skip to messages</a>
   <header class="topbar">
     <div class="brand" aria-label="GOTTH Mail"><span class="brand-mark" aria-hidden="true">G</span><strong>GOTTH Mail</strong></div>
     <div class="account"><span id="account-label">Not signed in</span><span id="signature-label" class="signature"></span></div>
@@ -145,7 +145,15 @@ const webmailAppHTML = `<!doctype html>
     </div>
   </header>
 
-  <nav class="commandbar" aria-label="Mail commands">
+  <main id="session-panel" class="session-panel" aria-labelledby="session-title">
+    <section class="session-card">
+      <h1 id="session-title">Opening GOTTH Mail…</h1>
+      <p id="session-message">Checking your signed-in account.</p>
+      <a id="session-sign-in" class="button-link primary" href="/api/v1/oidc/login?mode=redirect&amp;redirect=/webmail" hidden>Sign in to GOTTH Mail</a>
+    </section>
+  </main>
+
+  <nav class="commandbar authenticated-shell" aria-label="Mail commands">
     <div class="command-actions">
       <button type="button" data-command="new" class="primary">New message</button>
       <button type="button" data-command="reply" disabled>Reply</button>
@@ -167,7 +175,7 @@ const webmailAppHTML = `<!doctype html>
     </form>
   </nav>
 
-  <section class="viewbar" aria-label="Reading pane settings">
+  <section class="viewbar authenticated-shell" aria-label="Reading pane settings">
     <label>Reading pane
       <select id="pane-placement">
         <option value="right">Right</option>
@@ -179,7 +187,7 @@ const webmailAppHTML = `<!doctype html>
     <label>List width <input id="list-width" type="range" min="320" max="720" step="20" value="440"></label>
   </section>
 
-  <main id="mail-app" class="mail-app pane-right">
+  <main id="mail-app" class="mail-app pane-right authenticated-shell">
     <aside id="folder-pane" class="folder-pane" aria-label="Mail folders">
       <div class="pane-heading"><h1>Folders</h1></div>
       <div id="folder-list" role="listbox" aria-label="Folders" tabindex="0"></div>
@@ -220,7 +228,7 @@ const webmailAppHTML = `<!doctype html>
     <button role="menuitem" type="button" data-command="delete">Delete</button>
   </div>
 
-  <dialog id="composer" aria-labelledby="composer-title">
+  <dialog id="composer" class="authenticated-shell" aria-labelledby="composer-title">
     <form id="compose-form">
       <header><h2 id="composer-title">New message</h2><button id="close-compose" type="button" aria-label="Close composer">Close</button></header>
       <input id="compose-draft-id" type="hidden">
@@ -238,20 +246,21 @@ const webmailAppHTML = `<!doctype html>
     </form>
   </dialog>
 
-  <dialog id="draft-list-dialog" aria-labelledby="draft-list-title">
+  <dialog id="draft-list-dialog" class="authenticated-shell" aria-labelledby="draft-list-title">
     <section class="draft-list">
       <header><h2 id="draft-list-title">Saved drafts</h2><button id="close-drafts" type="button">Close</button></header>
       <div id="saved-drafts" role="list"></div>
     </section>
   </dialog>
 
-  <div id="status" role="status" aria-live="polite">Loading webmail…</div>
+  <div id="status" class="authenticated-shell" role="status" aria-live="polite">Loading webmail…</div>
 `
 
 const webmailAppCSS = `
 :root{--bg:#f4f6f9;--surface:#fff;--surface-2:#edf2f7;--text:#172033;--muted:#596579;--line:#c6cfdb;--accent:#175ea8;--accent-2:#0d4d8d;--focus:#ffb000;--danger:#a3212b;--folder-width:240px;--list-width:440px;color-scheme:light}
 html[data-theme="dark"]{--bg:#111722;--surface:#182230;--surface-2:#202d3d;--text:#eef4fb;--muted:#b0bfd0;--line:#405064;--accent:#69adf0;--accent-2:#8bc2f5;--focus:#ffd166;--danger:#ff8e96;color-scheme:dark}
 *{box-sizing:border-box}html,body{height:100%;margin:0}[hidden]{display:none!important}body{background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto auto;overflow:hidden}button,input,select,textarea{font:inherit;color:inherit}button,.button-link{border:1px solid var(--line);background:var(--surface);padding:.45rem .7rem;border-radius:3px;text-decoration:none;cursor:pointer}button:hover,.button-link:hover{background:var(--surface-2)}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--focus);outline-offset:1px}button:disabled{opacity:.48;cursor:not-allowed}.primary{background:var(--accent);border-color:var(--accent);color:#fff}.primary:hover{background:var(--accent-2)}.quiet{background:transparent}.skip-link{position:fixed;left:.5rem;top:-4rem;background:var(--surface);padding:.6rem;z-index:50}.skip-link:focus{top:.5rem}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+body:not([data-session-state="authenticated"]){grid-template-rows:auto minmax(0,1fr) auto}body:not([data-session-state="authenticated"]) .authenticated-shell{display:none!important}body[data-session-state="authenticated"] .session-panel{display:none!important}body[data-session-state="signed-out"] .session-panel{display:grid!important}.session-panel{min-height:0;display:grid;place-items:center;padding:clamp(1rem,5vw,3rem);background:var(--bg)}.session-card{width:min(420px,100%);display:grid;justify-items:start;gap:.75rem;padding:clamp(1.25rem,5vw,2rem);border:1px solid var(--line);border-radius:6px;background:var(--surface);box-shadow:0 12px 36px #0002}.session-card h1,.session-card p{margin:0}.session-card h1{font-size:22px}.session-card p{color:var(--muted)}
 .topbar{height:48px;background:var(--accent-2);color:#fff;display:flex;align-items:center;padding:0 .75rem;gap:1rem}.brand{display:flex;align-items:center;gap:.55rem;font-size:16px}.brand-mark{display:grid;place-items:center;width:28px;height:28px;border:2px solid currentColor;border-radius:4px;font-weight:800}.account{display:flex;gap:.75rem;min-width:0;flex:1}.signature{opacity:.78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.top-actions{display:flex;align-items:center;gap:.5rem}.topbar .quiet,.topbar .button-link{border-color:#ffffff66;color:#fff}
 .commandbar{min-height:46px;display:flex;align-items:center;gap:.35rem;padding:.4rem .6rem;background:var(--surface);border-bottom:1px solid var(--line);overflow:hidden}.command-actions{display:flex;align-items:center;gap:.35rem;min-width:0;overflow-x:auto;overscroll-behavior-inline:contain;scrollbar-gutter:stable}.command-actions button{flex:0 0 auto}.commandbar form{margin-left:auto;display:flex;flex:0 0 250px;min-width:0}.commandbar input{width:100%;min-width:0;border:1px solid var(--line);background:var(--surface);padding:.45rem}.viewbar{display:flex;gap:1.25rem;align-items:center;padding:.25rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--line);color:var(--muted)}.viewbar label{display:flex;align-items:center;gap:.4rem}.viewbar input[type="range"]{width:110px}
 .mail-app{min-height:0;display:grid;background:var(--surface)}.pane-right{grid-template-columns:min(var(--folder-width),28vw) min(var(--list-width),42vw) minmax(260px,1fr)}.pane-below{grid-template-columns:min(var(--folder-width),32vw) minmax(0,1fr);grid-template-rows:minmax(220px,46%) minmax(250px,1fr)}.pane-below .folder-pane{grid-row:1/3}.pane-below .reader-pane{grid-column:2;grid-row:2}.pane-off{grid-template-columns:min(var(--folder-width),32vw) minmax(0,1fr)}.pane-off .reader-pane{display:none}.folder-pane,.list-pane,.reader-pane{min-width:0;min-height:0;background:var(--surface);overflow:auto}.folder-pane,.list-pane{border-right:1px solid var(--line)}.pane-heading{height:42px;display:flex;align-items:center;gap:.5rem;padding:0 .75rem;border-bottom:1px solid var(--line);background:var(--surface-2)}.pane-heading h1{font-size:14px;margin:0}.mobile-heading button{display:none}
@@ -316,12 +325,14 @@ async function openDrafts(){try{var result=await api('/api/v1/webmail/drafts');v
 function openContext(x,y){var menu=byId('context-menu');menu.hidden=false;menu.style.left=Math.min(x,window.innerWidth-170)+'px';menu.style.top=Math.min(y,window.innerHeight-210)+'px';var first=menu.querySelector('button');if(first)first.focus()}
 function closeContext(){byId('context-menu').hidden=true}
 async function runCommand(command){closeContext();if(command==='new')return openComposer('new');if(command==='reply')return openComposer('reply');if(command==='reply_all')return openComposer('reply_all');if(command==='forward')return openComposer('forward');if(command==='drafts')return openDrafts();if(command==='delete'){if(confirm('Delete the selected message?'))return messageAction('delete')}if(command==='move'){var destination=prompt('Move to folder:',state.folders.find(function(folder){return folder!==state.folder})||'');if(destination)return messageAction('move',destination)}if(command==='read')return messageAction('mark_read');if(command==='unread')return messageAction('mark_unread');if(command==='flag')return messageAction(hasFlag(selectedSummary()||{},'\\Flagged')?'unflag':'flag');if(command==='refresh')return Promise.all([loadMessages(false),loadFolders(),loadQuota()])}
-function handleError(error){if(error.status===401){byId('sign-in').hidden=false;setStatus('Sign in with your bound GOTTH Mail account to use webmail.',true)}else setStatus(error.message||'Webmail request failed',true)}
+// Complexity: time O(f+m+r), Omega(1), tight Theta(f+m+r), and auxiliary space O(1), Omega(1), tight Theta(1), where f and m are rendered folder/message nodes and r is rendered reader content removed when a session expires; DOM removal costs are included.
+function showSignedOut(){state.mailbox='';state.fingerprint='';state.folders=[];state.folderDetails=[];state.messages=[];state.selected=null;state.next='';state.context=null;state.composeAttachments=[];byId('account-label').textContent='Not signed in';byId('signature-label').textContent='';byId('sign-in').hidden=false;byId('session-title').textContent='Sign in to GOTTH Mail';byId('session-message').textContent='Use your bound GOTTH Mail account to open your mailbox.';byId('session-sign-in').hidden=false;byId('folder-list').replaceChildren();byId('message-list').replaceChildren();byId('reader-pane').replaceChildren();[byId('composer'),byId('draft-list-dialog')].forEach(function(dialog){if(dialog.open)dialog.close()});closeContext();document.body.dataset.sessionState='signed-out';setStatus('Sign in with your bound GOTTH Mail account to use webmail.',true)}
+function handleError(error){if(error.status===401){showSignedOut()}else{if(document.body.dataset.sessionState==='loading')document.body.dataset.sessionState='authenticated';setStatus(error.message||'Webmail request failed',true)}}
 function handleHTMXError(event){var xhr=event.detail&&event.detail.xhr;var error=new Error(xhr&&xhr.responseText?xhr.responseText.trim():'Unable to open message');if(xhr)error.status=xhr.status;handleError(error)}
 function applyPreferences(){var theme=localStorage.getItem('gotth-mail-theme')||'light';document.documentElement.dataset.theme=theme;var placement=localStorage.getItem('gotth-mail-pane')||'right';byId('pane-placement').value=placement;setPane(placement);['folder','list'].forEach(function(name){var input=byId(name+'-width');var saved=localStorage.getItem('gotth-mail-'+name+'-width');if(saved)input.value=saved;document.documentElement.style.setProperty('--'+name+'-width',input.value+'px')})}
 function setPane(value){var app=byId('mail-app');app.classList.remove('pane-right','pane-below','pane-off');app.classList.add('pane-'+value);localStorage.setItem('gotth-mail-pane',value)}
 function bind(){document.querySelectorAll('[data-command]').forEach(function(button){button.addEventListener('click',function(){runCommand(button.dataset.command)})});document.querySelectorAll('[data-sort]').forEach(function(button){button.addEventListener('click',function(){var key=button.dataset.sort;if(state.sort===key)state.direction*=-1;else{state.sort=key;state.direction=key==='Date'?-1:1}document.querySelectorAll('[data-sort]').forEach(function(item){item.setAttribute('aria-sort',item.dataset.sort===state.sort?(state.direction>0?'ascending':'descending'):'none')});renderMessages()})});byId('search-form').addEventListener('submit',function(event){event.preventDefault();loadMessages(false)});byId('load-more').addEventListener('click',function(){loadMessages(true)});byId('compose-form').addEventListener('submit',function(event){event.preventDefault();saveDraft(true)});byId('save-draft').addEventListener('click',function(){saveDraft(false)});byId('close-compose').addEventListener('click',function(){byId('composer').close()});byId('close-drafts').addEventListener('click',function(){byId('draft-list-dialog').close()});byId('theme-toggle').addEventListener('click',function(){var theme=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=theme;localStorage.setItem('gotth-mail-theme',theme)});byId('pane-placement').addEventListener('change',function(event){setPane(event.target.value)});['folder','list'].forEach(function(name){byId(name+'-width').addEventListener('input',function(event){document.documentElement.style.setProperty('--'+name+'-width',event.target.value+'px');localStorage.setItem('gotth-mail-'+name+'-width',event.target.value)})});document.addEventListener('click',function(event){var back=event.target.closest('[data-mobile-back]');if(back){document.body.dataset.mobileView=back.dataset.mobileBack;var selected=document.querySelector('.message-row[aria-selected="true"]');if(selected)selected.focus()}if(!byId('context-menu').contains(event.target))closeContext()});document.body.addEventListener('htmx:afterSwap',function(event){if(event.detail.target.id!=='reader-pane')return;try{var contextNode=byId('message-context');var context=JSON.parse(contextNode.content.textContent);context.BodyText=byId('message-body').textContent;state.context=context;var date=byId('message-date');if(date)date.textContent=displayDate(date.dataset.messageDate);document.body.dataset.mobileView='reader';byId('reader-pane').focus();setStatus('Opened '+(context.Subject||'message'),false);if(!hasFlag(selectedSummary()||{},'\\Seen'))messageAction('mark_read',null,true)}catch(error){handleError(error)}});document.body.addEventListener('htmx:responseError',handleHTMXError);document.body.addEventListener('htmx:swapError',handleHTMXError);document.addEventListener('keydown',function(event){var tag=(event.target.tagName||'').toLowerCase();if(tag==='input'||tag==='textarea'||tag==='select')return;var rows=Array.prototype.slice.call(document.querySelectorAll('.message-row'));var index=rows.findIndex(function(row){return row.dataset.id===state.selected});if(event.key==='ArrowDown'&&rows.length){event.preventDefault();rows[Math.min(rows.length-1,index+1)].click()}else if(event.key==='ArrowUp'&&rows.length){event.preventDefault();rows[Math.max(0,index<0?0:index-1)].click()}else if(event.key==='n')runCommand('new');else if(event.key==='r'&&state.selected)runCommand('reply');else if(event.key==='f'&&state.selected)runCommand('forward');else if(event.key==='Delete'&&state.selected)runCommand('delete')})}
-async function start(){bind();applyPreferences();try{var identity=await api('/api/v1/webmail/identity');state.mailbox=identity.mailbox;state.fingerprint=identity.signing_fingerprint;byId('account-label').textContent=state.mailbox;byId('signature-label').textContent='OpenPGP '+state.fingerprint.slice(-16);byId('compose-signature').textContent=state.mailbox+' · '+state.fingerprint;byId('sign-in').hidden=true;await Promise.all([loadFolders(),loadQuota()]);await loadMessages(false)}catch(error){handleError(error)}}
+async function start(){bind();applyPreferences();try{var identity=await api('/api/v1/webmail/identity');state.mailbox=identity.mailbox;state.fingerprint=identity.signing_fingerprint;byId('account-label').textContent=state.mailbox;byId('signature-label').textContent='OpenPGP '+state.fingerprint.slice(-16);byId('compose-signature').textContent=state.mailbox+' · '+state.fingerprint;byId('sign-in').hidden=true;byId('session-panel').hidden=true;document.body.dataset.sessionState='authenticated';await Promise.all([loadFolders(),loadQuota()]);await loadMessages(false)}catch(error){handleError(error)}}
 start();
 })();
 `

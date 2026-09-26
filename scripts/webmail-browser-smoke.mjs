@@ -93,6 +93,22 @@ try {
   await cdp.ready();
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  const signedOutLoaded = cdp.event('Page.loadEventFired');
+  await cdp.send('Page.navigate', { url: base + '/webmail' });
+  await signedOutLoaded;
+  await waitFor(cdp, "document.body.dataset.sessionState==='signed-out'", 'signed-out session state');
+  const signedOut = await evaluate(cdp, `(function(){
+    var panel=document.getElementById('session-panel');
+    var signIn=document.getElementById('session-sign-in');
+    var footer=document.querySelector('.gotth-footer');
+    var hiddenShell=['.commandbar','.viewbar','#mail-app','#status'].every(function(selector){return getComputedStyle(document.querySelector(selector)).display==='none'});
+    var box=panel.getBoundingClientRect();
+    return hiddenShell && getComputedStyle(panel).display!=='none' && panel.textContent.includes('Sign in to GOTTH Mail') && !signIn.hidden && box.left>=0 && box.right<=innerWidth && document.documentElement.scrollWidth===document.documentElement.clientWidth && getComputedStyle(footer).display==='flex';
+  })()`);
+  if (!signedOut) throw new Error('signed-out webmail exposed the authenticated shell or lacked a bounded sign-in panel');
+  await evaluate(cdp, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'n',bubbles:true}))");
+  if (await evaluate(cdp, "getComputedStyle(document.getElementById('composer')).display!=='none'")) throw new Error('signed-out keyboard shortcut exposed the composer');
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   const loaded = cdp.event('Page.loadEventFired');
   await cdp.send('Page.navigate', { url: base + '/__browser_start' });
