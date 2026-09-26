@@ -2,9 +2,43 @@
 
 ## Unreleased
 
-### 2026-09-26 17:12 CDT — Make extension update confirmation a separate native form
+### 2026-09-26 17:30 CDT — Real packaged webhook delivery acceptance equipment
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `cmd/gotth-mail/extensions_acceptance_test.go`
+- `scripts/extensions-delivery-acceptance.sh`
+
+Explanation:
+
+- Verify the immutable alpha.1 archive/member checksums and canonical manifest,
+  negotiate its actual grant/session, register through the real API, then use
+  cookie/CSRF administrator configuration preview/apply, readiness Test,
+  Enable and Disable through production runtime wiring and PostgreSQL16.
+- Independently verify exact-body HMAC and HTTPS before receiver204, correlate
+  durable delivery, reject wrong keys/untrusted TLS and prove Disable cleans
+  runtime files and prevents subsequent delivery. Private namespace standard
+  CA roots require no product trust seam or inherited environment.
+
+Verification:
+
+- Development PG16.14 packaged acceptance and bounded receiver checks pass
+  normally and under Go race detection; raw logs in the task-owned
+  `gotth-mail-real-delivery-20260926` validation directory.
+- `gofmt`, `bash -n scripts/extensions-delivery-acceptance.sh`, `git diff --check`.
+
+Risks / non-goals:
+
+- Login is mocked; forms traverse real handlers, not a browser. No full beta,
+  update/rollback, live OIDC, archive-download or runtime binary-rehash claim.
+  Test equipment only; production behavior unchanged. Scoped review and
+  admission limits are recorded in the checkpoint evidence.
+
+### 2026-09-26 17:12 CDT — Make extension update confirmation a separate native form
+
+Commit: `9b34def6130dcdeb2653ff53f0ff491bf6c90ec6`
 
 Affected files:
 
