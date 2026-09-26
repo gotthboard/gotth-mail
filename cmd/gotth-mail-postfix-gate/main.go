@@ -17,7 +17,12 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/version"
 )
 
-const exitTempFail = 75
+const (
+	exitTempFail        = 75
+	deliveryUID         = 1000
+	deliveryGID         = 1000
+	deliveryPostdropGID = 102
+)
 
 // main validates the build and dispatches one explicit gate mode.
 // Complexity: local time and space O(1); mode-specific costs are delegated.
@@ -32,7 +37,7 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "check-delivery":
-		if err := checkDeliveryCredential(); err != nil {
+		if err := checkDeliveryProcess(); err != nil {
 			log.Printf("Postfix delivery credential check failed: %v", err)
 			os.Exit(exitTempFail)
 		}
@@ -58,6 +63,26 @@ func main() {
 func checkDeliveryCredential() error {
 	_, err := helperToken()
 	return err
+}
+
+func checkDeliveryProcess() error {
+	groups, err := os.Getgroups()
+	if err != nil || !validDeliveryIdentity(os.Geteuid(), os.Getegid(), groups) {
+		return errors.New("Postfix delivery identity unavailable")
+	}
+	return checkDeliveryCredential()
+}
+
+func validDeliveryIdentity(uid, gid int, groups []int) bool {
+	if uid != deliveryUID || gid != deliveryGID {
+		return false
+	}
+	for _, group := range groups {
+		if group == deliveryPostdropGID {
+			return true
+		}
+	}
+	return false
 }
 
 // runHelper serves the narrow local postqueue/postsuper boundary.
@@ -116,6 +141,10 @@ func runDelivery(args []string, message io.Reader) error {
 	flags.Var(&recipients, "recipient", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || len(originals) == 0 || len(originals) != len(recipients) {
 		return errors.New("invalid Postfix pipe arguments")
+	}
+	groups, err := os.Getgroups()
+	if err != nil || !validDeliveryIdentity(os.Geteuid(), os.Getegid(), groups) {
+		return errors.New("Postfix delivery identity unavailable")
 	}
 	authenticatedMailbox, systemSenderID, err := deliveryAuthority(*authenticated, *systemSender, *clientAddress)
 	if err != nil {

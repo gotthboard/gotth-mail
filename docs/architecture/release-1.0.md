@@ -121,7 +121,7 @@ packages. Runtime arguments cannot select another role.
   private SMTP/queue processing only and receives authenticated/provenance
   state from the front and control plane. The final policy pipe runs as the
   unprivileged `gotth` UID that owns its mounted helper credential and the
-  `postdrop` primary group required for queue inspection, after a startup
+  supplementary `postdrop` group required for queue inspection, after a startup
   preflight under that exact identity. Approved external mail is
   requeued through a loopback-only SMTP listener with a one-message
   `smtp:` content-filter override, so Postfix retains its native MX delivery

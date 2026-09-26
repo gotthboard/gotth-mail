@@ -50,6 +50,24 @@ func TestDeliveryCredentialCheckRejectsMissingWrongAndUnreadableFiles(t *testing
 	}
 }
 
+func TestDeliveryIdentityRequiresOwnerAndSupplementaryPostdropGroup(t *testing.T) {
+	if !validDeliveryIdentity(deliveryUID, deliveryGID, []int{deliveryPostdropGID}) {
+		t.Fatal("rejected exact delivery identity")
+	}
+	for _, identity := range []struct {
+		uid, gid int
+		groups   []int
+	}{
+		{deliveryUID + 1, deliveryGID, []int{deliveryPostdropGID}},
+		{deliveryUID, deliveryGID + 1, []int{deliveryPostdropGID}},
+		{deliveryUID, deliveryGID, nil},
+	} {
+		if validDeliveryIdentity(identity.uid, identity.gid, identity.groups) {
+			t.Fatalf("accepted invalid delivery identity: %#v", identity)
+		}
+	}
+}
+
 func TestReleaseTokenUsesIndependentConfiguration(t *testing.T) {
 	t.Setenv("GOTTH_MAIL_POSTFIX_RELEASE_TOKEN", "abcdef0123456789abcdef0123456789")
 	token, err := releaseToken()

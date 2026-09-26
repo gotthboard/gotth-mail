@@ -182,24 +182,26 @@ wait_health dovecot
   "$image_repository_base-postfix:dev" >/dev/null
 wait_health postfix
 
-"${DOCKER[@]}" exec --user 1000:102 \
+"${DOCKER[@]}" run --rm --network none --user 1000:1000 --group-add 102 \
+  --entrypoint /usr/local/bin/gotth-mail-postfix-gate \
   -e GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE=/run/secrets/postfix-helper-token \
-  "$PREFIX-postfix" /usr/local/bin/gotth-mail-postfix-gate check-delivery
+  -v "$WORK/secrets/postfix-helper-token:/run/secrets/postfix-helper-token:ro" \
+  "$image_repository_base-postfix:dev" check-delivery
 for invalid_path in /run/secrets/postfix-helper-token-missing /run/secrets/postfix-helper-token-unreadable; do
-  if "${DOCKER[@]}" exec --user 1000:102 \
+  if "${DOCKER[@]}" run --rm --network none --user 1000:1000 --group-add 102 \
+    --entrypoint /usr/local/bin/gotth-mail-postfix-gate \
     -e "GOTTH_MAIL_POSTFIX_HELPER_TOKEN_FILE=$invalid_path" \
-    "$PREFIX-postfix" /usr/local/bin/gotth-mail-postfix-gate check-delivery >/dev/null 2>&1; then
+    -v "$WORK/secrets/postfix-helper-token-unreadable:/run/secrets/postfix-helper-token-unreadable:ro" \
+    "$image_repository_base-postfix:dev" check-delivery >/dev/null 2>&1; then
     echo "Postfix delivery identity accepted invalid helper token path: $invalid_path" >&2
     exit 1
   fi
 done
 "${DOCKER[@]}" exec "$PREFIX-postfix" sh -c \
-  'test "$(getent passwd gotth | cut -d: -f3-4)" = "1000:102" &&
-   test "$(getent group postdrop | cut -d: -f3)" = "102" &&
+  'test "$(getent passwd gotth | cut -d: -f3-4)" = "1000:1000" &&
+   test "$(getent group postdrop | cut -d: -f3,4)" = "102:gotth" &&
    MAIL_CONFIG=/etc/gotth-mail/postfix postconf -M gotth_policy/unix | grep -F "user=gotth" >/dev/null &&
    MAIL_CONFIG=/etc/gotth-mail/postfix postconf -M "127.0.0.1:10027/inet" | grep -F "smtpd" >/dev/null'
-"${DOCKER[@]}" exec --user 1000:102 "$PREFIX-postfix" sh -c \
-  'MAIL_CONFIG=/etc/gotth-mail/postfix /usr/sbin/postqueue -p >/dev/null'
 
 front_auth_status=$(curl -fsS -D - -o /dev/null \
   -H 'X-GOTTH-Mail-Front-Token: front_auth_token_0123456789_ABCDEFGHIJ' \
@@ -267,6 +269,26 @@ for _ in range(10):
 else:
     raise SystemExit(f'delivered message was not readable through authenticated IMAPS: {last_error}')
 PY
+
+printf 'Subject: production pipe identity probe\nFrom: probe@example.test\nTo: sink@outside.test\n\nprobe\n' | \
+  "${DOCKER[@]}" exec -i "$PREFIX-postfix" sh -c \
+    'MAIL_CONFIG=/etc/gotth-mail/postfix /usr/sbin/sendmail -i -- sink@outside.test'
+"${DOCKER[@]}" exec "$PREFIX-postfix" postqueue -f
+pipe_started=
+for _ in $(seq 1 30); do
+  postfix_logs=$("${DOCKER[@]}" logs "$PREFIX-postfix" 2>&1)
+  if grep -F 'specifies mail system postdrop group' <<<"$postfix_logs" >/dev/null; then
+    echo 'Postfix rejected the delivery pipe primary group' >&2
+    exit 1
+  fi
+  if grep -F 'Postfix delivery identity unavailable' <<<"$postfix_logs" >/dev/null; then
+    echo 'Postfix started the delivery pipe without its exact queue identity' >&2
+    exit 1
+  fi
+  if grep -F 'Postfix delivery deferred:' <<<"$postfix_logs" >/dev/null; then pipe_started=1; break; fi
+  sleep 1
+done
+test -n "$pipe_started"
 
 "${DOCKER[@]}" exec "$PREFIX-rspamd" sh -c \
   'test -s /var/lib/rspamd/bayes.ham.sqlite3 && test -s /var/lib/rspamd/bayes.spam.sqlite3 && test -s /var/lib/rspamd/learn_cache.sqlite'
