@@ -454,7 +454,7 @@ func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(a
 		return rec, err
 	}
 	if browser != nil {
-		browser(acceptanceBrowserStart{Handler: handler, DB: db, ID: id, Session: sid, CSRF: csrf, Current: current, EmptyRuntime: emptyRuntime, Requests: requests.Load})
+		browser(acceptanceBrowserStart{Handler: handler, DB: db, ID: id, Session: sid, CSRF: csrf, Current: current, EmptyRuntime: emptyRuntime, Requests: requests.Load, Endpoint: receiver.URL, Secret: key, MasterFile: master, RuntimeRoot: r, Executable: filepath.Join(stage, "gotth-extension-webhook"), ActorID: server.OIDCStore.(acceptanceSessions).bound.IdentityRefID})
 		return
 	}
 	configure(untrusted.URL, key, "1")

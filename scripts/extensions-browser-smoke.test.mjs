@@ -16,7 +16,7 @@ const detail='/admin/extensions/'+id;
 const row={ID:'event-one',Action:'extension.install',Resource:{Type:'extension',ID:id}};
 const bytes=Buffer.from(JSON.stringify(row)+'\n');
 let failures=0;
-for(const scenario of ['normal','duplicate-close','signal-close','duplicate-after-exit','undrained']){
+for(const mode of ['audit','configuration'])for(const scenario of ['normal','duplicate-close','signal-close','duplicate-after-exit','undrained']){
  const proc=new EventEmitter();Object.assign(proc,{argv:['node','driver','/evidence'],env:{GOTTH_MAIL_ACCEPTANCE_NAMESPACE:'1'},kill(){throw Error('unexpected forced shutdown');}});
  const stream=()=>Object.assign(new EventEmitter(),{destroyed:false,destroy(){this.destroyed=true;}});
  const browser=new EventEmitter();Object.assign(browser,{pid:123,stdio:[null,null,stream(),stream(),stream()],stderr:stream(),kill(){throw Error('unexpected kill');}});
@@ -52,21 +52,35 @@ for(const scenario of ['normal','duplicate-close','signal-close','duplicate-afte
    packet({id:q.id,result});
   });
  };
- const bootstrap={origin,id,session:'fixture-session',csrf:'fixture-csrf',mode:'audit',audit_expected:JSON.stringify([{id:row.ID,action:row.Action}])};
+ const bootstrap={origin,id,session:'fixture-session',csrf:'fixture-csrf',mode,audit_expected:JSON.stringify([{id:row.ID,action:row.Action}])};
  const context={spawn:()=>browser,readFileSync:p=>p===0?JSON.stringify(bootstrap):bytes,
   writeFileSync:(p,data)=>{assert.equal(p,'/evidence/proof.json');proof=JSON.parse(data);},
   mkdirSync:()=>{},mkdtempSync:p=>p+(++serial),readdirSync:()=>[],rmSync:p=>removed.push(p),statSync:()=>({size:bytes.length}),
   createHash,join,resolve,URL,Buffer,process:proc,setTimeout,clearTimeout,
   delay:()=>new Promise(r=>setImmediate(r)),console:{log:()=>{}}};
- await runInNewContext('(async()=>{"use strict";\n'+body+'\n})()',context,{timeout:1000});
+ // Configuration's native sequence is intentionally stubbed here; only actual
+ // driver shutdown/latching is exercised. Real form evidence is separate.
+ const exercised=mode==='audit'?body:body.slice(0,body.indexOf('async function runConfiguration('))+'async function runConfiguration(){proof.configurationGate="PASS";}\n'+body.slice(body.indexOf("try{\n proof.version="));
+ await runInNewContext('(async()=>{"use strict";\n'+exercised+'\n})()',context,{timeout:1000});
  try{
-  assert.equal(proof.auditGate,scenario==='normal'?'PASS':'FAIL');
+  assert.equal(mode==='audit'?proof.auditGate:proof.configurationGate,scenario==='normal'?'PASS':'FAIL');
   assert.equal(proc.exitCode || 0,scenario==='normal'?0:1);
   assert.equal(proof.cleanup.mainExited,true);
   assert.equal(proof.cleanup.remaining.length,0);
-  assert.equal(removed.length,2,'private profile/download cleanup must survive failure');
-  if(scenario!=='normal')assert.equal(proof.error,'audit interrupted or event stream not drained before proof');
-  console.log('PASS '+scenario);
+  assert.equal(removed.length,mode==='audit'?2:1,'private cleanup must survive failure');
+  if(scenario!=='normal')assert.equal(proof.error,mode==='audit'?'audit interrupted or event stream not drained before proof':'configuration interrupted or cleanup incomplete');
+  console.log('PASS '+mode+' '+scenario);
  }catch(e){failures++;console.error('FAIL '+scenario+': '+e.message);}
 }
+// Exercise the actual small native Enter helper, not a copied event algorithm.
+const enterStart=body.indexOf('async function configurationEnter(){');
+const enterEnd=body.indexOf('async function submitConfiguration(',enterStart);
+assert(enterStart>=0 && enterEnd>enterStart,'configuration Enter helper missing');
+const nativeEvents=[];
+await runInNewContext('(async()=>{'+body.slice(enterStart,enterEnd)+'await configurationEnter();})()',{call:async(method,params)=>nativeEvents.push({method,...params})});
+assert.deepEqual(nativeEvents.map(e=>e.type),['rawKeyDown','char','keyUp']);
+assert(nativeEvents.every(e=>e.method==='Input.dispatchKeyEvent' && e.key==='Enter'));
+assert.equal(nativeEvents[1].text,'\r');
+assert.equal(nativeEvents[1].unmodifiedText,'\r');
+console.log('PASS native Enter CR contract');
 if(failures)process.exitCode=1;

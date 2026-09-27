@@ -2,9 +2,21 @@
 
 ## Unreleased
 
-### 2026-09-26 23:40 CDT — Verify physical browser audit attachment delivery
+### 2026-09-27 00:22 CDT — Exercise native initial configuration against live SQL
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files: cmd/gotth-mail/extensions_browser_test.go, cmd/gotth-mail/extensions_acceptance_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-smoke.test.mjs, scripts/extensions-browser-acceptance.sh.
+
+Adds a configuration-only mode to the existing isolated browser equipment. Native keyboard input previews the admitted webhook endpoint, timeout and write-only HMAC secret, proves blank confirmation blocks submission, applies the displayed target with secret re-entry and reloads persisted state. A Go-side response barrier independently checks SQL preview/consumption/configuration/audit, AES-GCM plaintext equality in memory, unchanged authority, empty runtime and no receiver traffic. Unknown phase/action, browser bearer and private-data reflection fail closed. No production behavior or renderer change.
+
+Verification: development Go1.26.6 race compile, scoped cmd vet, eight fail-closed barrier cases, ten controlled shutdown cases plus native Enter event contract, and final native configuration run3 PASS (8.31s, PG16.14/160014, Chromium151.0.7922.71). Exactly two POSTs; blank confirmation blocks; independent SQL/AES-GCM/audit/privacy/runtime checks pass; browser and namespace cleanly exit with zero live descendants/residual paths. Initial run1 was an equipment failure: the inherited link helper omitted the Enter keypress CR required by native buttons. Exact Chromium source established the correction; only configuration uses the new native Enter sequence. Run1 evidence is retained, not a product defect. Source manifests and raw exits are in the task handoff. Existing navigation/audit modes remain available; controlled audit shutdown checks are not a repeated physical download. No old layout/audit/lifecycle or full-repository rerun or canonical admission is implied.
+
+Risks/non-goals: injected login, private fixture transport and current-renderer functional evidence only. Canonical templ/Tailwind/HTMX and shared-token alignment remains a B1/beta blocker; no presentation/accessibility, lifecycle, release or deployment admission.
+
+### 2026-09-26 23:40 CDT — Verify physical browser audit attachment delivery
+
+Commit: `c13f5ffd26ac8a52d9fe63f7cd2c0d6b95a80b85`
 
 Affected files: cmd/gotth-mail/extensions_browser_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-smoke.test.mjs, scripts/extensions-browser-acceptance.sh.
 
