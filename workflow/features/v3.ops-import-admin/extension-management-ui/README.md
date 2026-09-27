@@ -22,8 +22,13 @@ the complete foundation handshake and health, admits/revokes alert routing,
 and removes runtime secrets only after confirmed stop. Static notification
 configuration conflicts fail startup rather than silently changing routing.
 
-The feature has resumed at its only remaining boundary: distribution
-admission. Canonical Forgejo and public GitHub now advertise the same annotated
+The bounded inventory renderer has a reviewed development checkpoint; see
+[evidence/2026-09-27-renderer-inventory-admission.md](evidence/2026-09-27-renderer-inventory-admission.md).
+The feature remains in progress: detail/terminal workflows, bounded projections,
+cross-engine/floor, live-identity and full-image gates are not closed by that slice.
+
+Earlier distribution evidence (not a current completion claim): canonical Forgejo
+and public GitHub advertised the same annotated
 `v1.0.0-alpha.1` tag object and the same peeled tested commit. Two independent
 builds produced the same Linux/amd64 archive SHA-256. Release objects and
 uploaded archive/checksum parity have not yet been proved, so production

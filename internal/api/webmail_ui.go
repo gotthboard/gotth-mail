@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"forgejo/gotthboard/gotth-mail/internal/presentation"
 	"forgejo/gotthboard/gotth-mail/internal/webmail"
 )
 
@@ -257,8 +258,8 @@ const webmailAppHTML = `<!doctype html>
 `
 
 const webmailAppCSS = `
-:root{--bg:#f4f6f9;--surface:#fff;--surface-2:#edf2f7;--text:#172033;--muted:#596579;--line:#c6cfdb;--accent:#175ea8;--accent-2:#0d4d8d;--focus:#ffb000;--danger:#a3212b;--folder-width:240px;--list-width:440px;color-scheme:light}
-html[data-theme="dark"]{--bg:#111722;--surface:#182230;--surface-2:#202d3d;--text:#eef4fb;--muted:#b0bfd0;--line:#405064;--accent:#69adf0;--accent-2:#8bc2f5;--focus:#ffd166;--danger:#ff8e96;color-scheme:dark}
+:root{` + presentation.LightColors + `--folder-width:240px;--list-width:440px;color-scheme:light}
+html[data-theme="dark"]{` + presentation.DarkColors + `color-scheme:dark}
 *{box-sizing:border-box}html,body{height:100%;margin:0}[hidden]{display:none!important}body{background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto auto;overflow:hidden}button,input,select,textarea{font:inherit;color:inherit}button,.button-link{border:1px solid var(--line);background:var(--surface);padding:.45rem .7rem;border-radius:3px;text-decoration:none;cursor:pointer}button:hover,.button-link:hover{background:var(--surface-2)}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--focus);outline-offset:1px}button:disabled{opacity:.48;cursor:not-allowed}.primary{background:var(--accent);border-color:var(--accent);color:#fff}.primary:hover{background:var(--accent-2)}.quiet{background:transparent}.skip-link{position:fixed;left:.5rem;top:-4rem;background:var(--surface);padding:.6rem;z-index:50}.skip-link:focus{top:.5rem}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 body:not([data-session-state="authenticated"]){grid-template-rows:auto minmax(0,1fr) auto}body:not([data-session-state="authenticated"]) .authenticated-shell{display:none!important}body[data-session-state="authenticated"] .session-panel{display:none!important}body[data-session-state="signed-out"] .session-panel{display:grid!important}.session-panel{min-height:0;display:grid;place-items:center;padding:clamp(1rem,5vw,3rem);background:var(--bg)}.session-card{width:min(420px,100%);display:grid;justify-items:start;gap:.75rem;padding:clamp(1.25rem,5vw,2rem);border:1px solid var(--line);border-radius:6px;background:var(--surface);box-shadow:0 12px 36px #0002}.session-card h1,.session-card p{margin:0}.session-card h1{font-size:22px}.session-card p{color:var(--muted)}
 .topbar{height:48px;background:var(--accent-2);color:#fff;display:flex;align-items:center;padding:0 .75rem;gap:1rem}.brand{display:flex;align-items:center;gap:.55rem;font-size:16px}.brand-mark{display:grid;place-items:center;width:28px;height:28px;border:2px solid currentColor;border-radius:4px;font-weight:800}.account{display:flex;gap:.75rem;min-width:0;flex:1}.signature{opacity:.78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.top-actions{display:flex;align-items:center;gap:.5rem}.topbar .quiet,.topbar .button-link{border-color:#ffffff66;color:#fff}

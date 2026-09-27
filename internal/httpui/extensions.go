@@ -3,6 +3,7 @@ package httpui
 import (
 	"errors"
 	"html/template"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,18 +37,23 @@ type extensionPageView struct {
 // O(1+S), Omega(1). No tight Theta bound for arbitrary supplied mux state.
 // Local fixed-pattern/closure setup is constant; R/S include delegated ServeMux
 // parsing, conflict scans, synchronization waits and tree/index allocation/growth.
-// Per request, existing auth/SQL/render costs are delegated.
+// Inventory request: time O(A+Q+N+B), Omega(N+B) on successful reads;
+// auxiliary O(L+B), Omega(B). A auth time, Q SQL time (including existing
+// per-instance secret-status queries), N rows, B escaped bytes, L List storage.
+// Tight bounds depend on delegated auth/SQL/rendering; no fixed size bound.
 // Audit request costs are specified by registerExtensionAuditUI. Quarantine uses
 // O(P+F+W) time, Omega(1), and O(P) space, Omega(1), tight Theta not established
 // across errors: P tracked runtime dirs, F filesystem work, W lock wait.
 func registerExtensionUI(mux *http.ServeMux, ids *identity.Service, az authz.Authorizer, sessions authn.IdentitySessionStore, now func() time.Time, service *extensionsadmin.Service) {
+	registerInventoryAssets(mux)
 	registerExtensionAuditUI(mux, ids, az, sessions, now, service)
 	mux.HandleFunc("/admin/extensions", func(w http.ResponseWriter, r *http.Request) {
+		inventoryHeaders(w)
 		if r.URL.Path != "/admin/extensions" || r.Method != http.MethodGet {
 			http.NotFound(w, r)
 			return
 		}
-		_, csrf, ok := requireExtensionUIActor(w, r, ids, az, sessions, now, false, authz.Resource{Type: "extensions", ID: extensionsadmin.Product})
+		_, _, ok := requireExtensionUIActor(w, r, ids, az, sessions, now, false, authz.Resource{Type: "extensions", ID: extensionsadmin.Product})
 		if !ok {
 			return
 		}
@@ -60,11 +66,18 @@ func registerExtensionUI(mux *http.ServeMux, ids *identity.Service, az authz.Aut
 			http.Error(w, "extension inventory unavailable", http.StatusInternalServerError)
 			return
 		}
-		view := extensionPageView{Items: items, CSRF: csrf}
+		view := inventoryView{Items: items, Theme: inventoryTheme(r.URL.Query().Get("theme"))}
 		if service.RuntimeBlockReason != nil {
 			view.BlockedReason = service.RuntimeBlockReason()
 		}
-		renderExtensionPage(w, view)
+		fragment := r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-History-Restore-Request") != "true"
+		component := inventoryDocument(view)
+		if fragment {
+			component = inventoryRows(view)
+		}
+		if err := writeInventoryComponent(w, r, component, fragment); err != nil {
+			log.Print("extension inventory render/transport failure")
+		}
 	})
 
 	mux.HandleFunc("/admin/extensions/", func(w http.ResponseWriter, r *http.Request) {

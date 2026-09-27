@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bounded native gates; all writes are task evidence or private namespace state.
 set -euo pipefail
-[[ $# == 4 || $# == 5 || $# == 6 ]] || { echo 'usage: TEST_BINARY ALPHA1_ARCHIVE PG16_BIN NEW_EVIDENCE_DIR [navigation|audit|configuration|connection-test|activation|update|rollback] [ALPHA2_FOR_UPDATE_OR_ROLLBACK]' >&2; exit 2; }
+[[ $# == 4 || $# == 5 || $# == 6 ]] || { echo 'usage: TEST_BINARY ALPHA1_ARCHIVE PG16_BIN NEW_EVIDENCE_DIR [navigation|audit|inventory|configuration|connection-test|activation|update|rollback] [ALPHA2_FOR_UPDATE_OR_ROLLBACK]' >&2; exit 2; }
 mode=${5:-navigation}
 archive_b=""
 if [[ "$mode" == update || "$mode" == rollback ]]; then
@@ -9,10 +9,11 @@ if [[ "$mode" == update || "$mode" == rollback ]]; then
  archive_b=$(realpath -e "$6")
 else
  [[ $# == 4 || $# == 5 ]] || exit 2
- [[ "$mode" == navigation || "$mode" == audit || "$mode" == configuration || "$mode" == connection-test || "$mode" == activation ]] || exit 2
+ [[ "$mode" == navigation || "$mode" == audit || "$mode" == inventory || "$mode" == configuration || "$mode" == connection-test || "$mode" == activation ]] || exit 2
 fi
 binary=$(realpath -e "$1"); archive=$(realpath -e "$2"); pgbin=$(realpath -e "$3")
 driver=$(realpath -e "$(dirname "$0")/extensions-browser-smoke.mjs")
+if [[ "$mode" == inventory ]]; then driver=$(realpath -e "$(dirname "$0")/extensions-inventory-browser.mjs"); fi
 [[ -x "$binary" && -f "$archive" && -x "$pgbin/postgres" && -x "$pgbin/initdb" && -x "$pgbin/createdb" ]]
 mkdir -m 700 "$4"; output=$(realpath -e "$4")
 "$pgbin/postgres" --version

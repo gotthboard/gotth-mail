@@ -1,0 +1,115 @@
+package httpui
+
+// Complexity (successful rendering): time O(N+B), Omega(N+B), Theta(N+B),
+// auxiliary O(B), Omega(1); tight auxiliary bound depends on templ buffering.
+// N rows, B projected/escaped bytes including grant-list entries; writer costs
+// delegated. No fixed row/byte bound or extra projection materialization.
+templ inventoryDocument(v inventoryView) {
+ <!DOCTYPE html>
+ <html lang="en" data-theme={ inventoryTheme(v.Theme) }>
+  <head>
+   <meta charset="utf-8"/>
+   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+   <title>Extensions — GOTTH Mail</title>
+   <meta name="htmx-config" content={ inventoryHTMXConfig }/>
+   <link id="inventory-tokens-css" rel="stylesheet" href="/admin/extensions/assets/tokens.css"/>
+   <link id="inventory-utilities-css" rel="stylesheet" href="/admin/extensions/assets/inventory.css"/>
+   <script src="/admin/extensions/assets/inventory.js" defer></script>
+  </head>
+  <body class="bg-bg text-ink font-sans p-4 sm:p-6" hx-history="false">
+   <main class="mx-auto max-w-6xl min-w-0 grid gap-4">
+    <nav aria-label="Breadcrumb"><a href="/">GOTTH Mail</a> / <a href="/admin/extensions">Extensions</a></nav>
+    <header><h1 class="text-2xl font-bold">Extensions</h1><p>Mail-owned extension inventory. Pinned artifacts identify installed code; no semantic version is inferred.</p></header>
+    <nav aria-label="Inventory theme" class="flex flex-wrap gap-4">
+     <a href="/admin/extensions?theme=system">System theme</a>
+     <a href="/admin/extensions?theme=light">Light theme</a>
+     <a href="/admin/extensions?theme=dark">Dark theme</a>
+    </nav>
+    <div class="flex flex-wrap gap-4">
+     <a id="inventory-refresh" href={ "/admin/extensions?theme=" + inventoryTheme(v.Theme) }>Refresh inventory</a>
+     <a id="inventory-reload" href={ "/admin/extensions?theme=" + inventoryTheme(v.Theme) } hidden>Reload full inventory</a>
+    </div>
+    <p id="inventory-status" role="status" aria-live="polite">Inventory ready.</p>
+    <p id="inventory-error" role="alert"></p>
+    <section id="extension-inventory" aria-label="Installed extensions" aria-busy="false">
+     @inventoryRows(v)
+    </section>
+   </main>
+  </body>
+ </html>
+}
+
+// Complexity: time O(N+B), Omega(N+B), Theta(N+B) on successful render;
+// auxiliary O(B), Omega(1), tight bound depends on delegated templ buffering.
+// N instances; B escaped projection/list bytes. No queries, secret reads or cap.
+templ inventoryRows(v inventoryView) {
+ if v.BlockedReason != "" {
+  <p role="alert" class="text-danger break-words">Runtime blocked: { v.BlockedReason }</p>
+ }
+ if len(v.Items) == 0 {
+  <p>No extensions installed.</p>
+ }
+ <div class="grid gap-4 lg:grid-cols-2">
+  for _, item := range v.Items {
+   <article class="min-w-0 bg-surface border border-line rounded p-4" data-extension-id={ item.InstanceID }>
+    <h2 class="text-xl font-semibold break-words"><a href={ inventoryDetailURL(item.InstanceID) }>{ item.ExtensionID }</a></h2>
+    <dl class="grid gap-3">
+     <div><dt class="font-semibold">Repository</dt><dd class="m-0 break-all">{ item.Repository }</dd></div>
+     <div><dt class="font-semibold">Pinned artifact</dt><dd class="m-0 break-all"><code>{ item.ArtifactPin }</code></dd></div>
+     <div><dt class="font-semibold">Manifest digest</dt><dd class="m-0 break-all"><code>{ item.ManifestDigest }</code></dd></div>
+     <div><dt class="font-semibold">Grant digest</dt><dd class="m-0 break-all"><code>{ item.GrantDigest }</code></dd></div>
+     <div><dt class="font-semibold">Lifecycle</dt><dd class="m-0 break-words">{ item.Lifecycle }</dd></div>
+     <div><dt class="font-semibold">Health</dt><dd class="m-0 break-words">{ item.HealthCode }</dd></div>
+     <div><dt class="font-semibold">Enabled state</dt><dd class="m-0">
+ if item.Enabled {
+ Enabled
+ } else {
+ Disabled
+ }
+</dd></div>
+     <div><dt class="font-semibold">Capabilities</dt><dd class="m-0"><ul class="pl-5 break-words">
+ for _, value := range item.Capabilities {
+ <li>{ value }</li>
+ }
+</ul>
+ if len(item.Capabilities)==0 {
+ None
+ }
+</dd></div>
+     <div><dt class="font-semibold">Interfaces</dt><dd class="m-0"><ul class="pl-5 break-words">
+ for _, value := range item.Interfaces {
+ <li>{ value }</li>
+ }
+</ul>
+ if len(item.Interfaces)==0 {
+ None
+ }
+</dd></div>
+     <div><dt class="font-semibold">Granted secret slots (names only)</dt><dd class="m-0"><ul class="pl-5 break-words">
+ for _, value := range item.SecretSlots {
+ <li>{ value }</li>
+ }
+</ul>
+ if len(item.SecretSlots)==0 {
+ None
+ }
+</dd></div>
+     <div><dt class="font-semibold">Available update</dt><dd class="m-0 break-all">
+ if item.AvailableUpdate != "" {
+ <code>{ item.AvailableUpdate }</code>
+ } else {
+ No update available
+ }
+</dd></div>
+     <div><dt class="font-semibold">Rollback pin</dt><dd class="m-0 break-all">
+ if item.PreviousArtifact != "" {
+ <code>{ item.PreviousArtifact }</code>
+ } else {
+ No rollback pin
+ }
+</dd></div>
+    </dl>
+   </article>
+  }
+ </div>
+}

@@ -2,9 +2,119 @@
 
 ## Unreleased
 
-### 2026-09-27 02:23 CDT — Exercise native rollback and separate restored-A readiness
+### 2026-09-27 09:07 CDT — Admit the bounded inventory renderer development checkpoint
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected: the inventory renderer/shared assets/build and test files listed in the
+three implementation entries below; canonical inventory admission/evidence and
+feature README clarification. Two independent fresh whole-patch reviews returned
+CLEAN on frozen3828ddcc. Parent verified source/evidence identities and unchanged
+executable bytes through this narrative closeout.155 affected tests, final native
+67.93s, build/generator/builder checks and two clean final-product generations pass.
+See canonical2026-09-27-renderer-inventory-admission.md for full identities and limits.
+
+This supersedes earlier pending-admission statements for this bounded slice only.
+No workflow completion, WIP PR merge, tag, image build, deployment or beta admission.
+List/detail bounds and the remaining native/identity/release gates stay open; cost
+evidence is synthetic-DOM/browser only.
+
+### 2026-09-27 08:43 CDT — Repair renderer review edges and extend native evidence
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected: inventory companion/tests, generator and overlap tests; existing Go browser
+fixture/driver; canonical renderer evidence and this changelog. No service/schema/auth,
+List/detail/POST behavior, vendor, workflow state or production routing change.
+
+Watchdog now retires then aborts safely, rejecting owned late/unmatched responses
+before response-header commands or swap. Generator refuses source/cache/temp overlap
+in either direction before staging. Focused honest red/green evidence retained.
+
+Native equipment adds isolated normal-origin storage BLOCK with explicitly
+server-injected existing synthetic authentication pair and real401 before/after;
+original browser-cookie matrix unchanged. Native Back/Forward positively observes
+persisted row clearing and fresh authentication. Separate cache-disabled/enabled
+loader/DOM cost samples disclose synthetic response row expansion, polling bounds,
+cumulative process-RSS limits and lack of multirow SQL/speedup claims. Original reds
+and equipment corrections preserved. Final affected/build/generator/native evidence
+and source mapping are in the review1 HANDOFF; independent admission remains pending.
+
+No commit, push, images, deployment, cross-engine/live-identity or beta admission.
+
+### 2026-09-27 07:35 CDT — Guard inventory vendor loading and require generation checks before image builds
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files: inventory.js, inventory templ/generated source/tests; inventory browser
+driver and fixture count; production-image builder and its contract test; this
+changelog, v3 implementation spec and canonical inventory evidence.
+
+Sole companion loader accepts four exact actual-browser full URLs only, waits for
+complete/window-load and fixed shell/meta/CSS prerequisites, appends one immutable
+vendor script, then rechecks version/config/URL before activation and requests.
+Rejected URLs retain authorized ordinary HTML and pageshow protection. Reviewed
+public current-path bookkeeping and fixed transient probe/collision are explicit;
+unknown query persistence is repaired, not waived. Vendor/webmail bytes unchanged.
+Mandatory generator --check follows build identity guards and precedes Docker
+without source writes, downloads or optional skips.
+
+Verification: synthetic-canary actual-browser red4.42s, repaired native PASS24.28s;
+22 rejected URL/path cases with unchanged sentinel maps/native storage events,
+four canonical real refreshes, delayed vendor, after-DOMContentLoaded/before-complete
+observation, injected opaque-origin storage denial, seven visual/no-script cases,
+seven fallbacks and ten terminal errors. SQL/auth/runtime/cleanup pass. Seven PNGs
+inspected. Affected packages, actual pinned generator checks/denials/stale output/
+reproducibility pass. Builder sequencing red then green uses stubs, not image proof.
+
+Limits: raw failures/equipment corrections preserved; no speedup, fixed List bound,
+full images, cross-engine/floor/live identity or feature/beta admission. No commit,
+deployment, service/schema/workflow change, vendor patch or storage API override.
+
+### 2026-09-27 06:12 CDT — Implement inventory GET renderer; withhold persistence admission
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files: go.mod/go.sum; internal/presentation tokens/assets/tests and moved
+HTMX asset/license; internal/api webmail CSS/asset wiring and regression tests;
+internal/httpui inventory Go/templ/generated source/tests/assets and GET wiring;
+tools/renderer module/standalone manifest/license; inventory generator/browser
+scripts and minimal existing browser runner/fixture selection; this changelog,
+v3 implementation spec and extension-management-ui inventory evidence.
+
+Implements only escaped inventory GET with all projected fields, shared scalar
+colors, exact webmail byte preservation, fixed public assets and an outer buffer.
+Theme links work without scripts. HTMX opt-in requires safeguards/config/both CSS
+assets; exact valid response plus completed swap is success. Terminal failures
+settle busy state, and authorization loss clears old rows. Detail/POST/audit,
+service/schema/workflow behavior is untouched. The pinned standalone generator
+runs offline/private, validates explicit tools and rejects stale checked-in output;
+no npm or compiler at production startup.
+
+Verification:141 named/subtests across directly affected presentation/httpui/api
+packages pass with PG16.14 where required. Exact legacy CSS11102-byte/hash6645ad2c
+and HTMX71ea6718 served-byte/header checks pass. Generator denials, stale-output
+checks and reproducibility pass. Companion and actual-driver closeout fault checks
+pass. Native evidence exposed a deferred-init bug; focused red/green repair waits
+for DOMContentLoaded during interactive readiness. Chromium151 then exercised seven
+visual/no-script theme cases, forced-color focus, real row replacement preserving
+focus/scroll, seven fallbacks, ten injected failures and native reload recovery.
+Seven screenshots inspected; SQL unchanged; no bearer/non-GET/receiver/runtime
+activity; cleanup passed. Render-only latency/allocation/RSS samples retained,
+without a speedup, full-request or fixed-bound claim.
+
+Overall native gate stays FAIL: pinned HTMX writes the current public path to
+sessionStorage before configuration, rejected by the strict zero-session-storage
+probe. No localStorage or credential value observed. Parent must resolve the
+contract/oracle boundary; no library fork, global storage shim or relaxed assertion.
+Initial syntax, version-check, temp-path, CSP-injection and truncated-read equipment
+failures are retained with fixes. Cross-engine/floor, live identity, unlimited List
+resource bounds, detail migration and B1/beta gates remain open. No admission,
+workflow transition, commit or deployment.
+
+### 2026-09-27 02:23 CDT — Exercise native rollback and separate restored-A readiness
+
+Commit: `70defe10d973d3fa00741c3ef2ed43b622d0aeb4`
 
 Affected files: cmd/gotth-mail/extensions_acceptance_test.go, cmd/gotth-mail/extensions_browser_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-smoke.test.mjs, scripts/extensions-browser-acceptance.sh.
 

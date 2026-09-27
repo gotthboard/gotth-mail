@@ -59,6 +59,13 @@ if [ "$version" != dev ] && [ -n "$(git -C "$root" status --porcelain=v1 --untra
   exit 1
 fi
 
+# Mandatory generated-asset verification, after identity/clean-tree guards and
+# before even Docker discovery. --check writes only private scratch, never source.
+# Added cost: O(T+I+O+G) time, Omega(T+I+O); O(1+S) auxiliary memory,
+# Omega(1), no tight bound for delegated generator G/S. T tool bytes, I inputs,
+# O output bytes; scratch disk O(I+O), Omega(I+O), Theta(I+O).
+"$root/scripts/generate-extension-inventory.sh" --check
+
 docker_mode=direct
 if ! docker info >/dev/null 2>&1; then
   docker_mode=sudo

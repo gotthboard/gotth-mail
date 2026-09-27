@@ -16,6 +16,7 @@ require (
 )
 
 require (
+	github.com/a-h/templ v0.3.1020
 	github.com/cloudflare/circl v1.6.2 // indirect
 	github.com/coreos/go-oidc/v3 v3.20.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect

@@ -579,10 +579,15 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 			runConfigurationBrowser(t, f, driver)
 			return
 		}
+		inventoryMode := os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "inventory"
 		// SQL material remains in memory; only equality is retained, never row contents.
 		snapshot := func() []string {
 			var state []string
-			for _, table := range []string{"extension_instances", "extension_secrets", "extension_operation_previews", "audit_events"} {
+			tables := []string{"extension_instances", "extension_secrets", "extension_operation_previews", "audit_events"}
+			if inventoryMode {
+				tables = append(tables, "sessions", "identity_refs", "role_bindings")
+			}
+			for _, table := range tables {
 				var value string
 				err := f.DB.QueryRow("SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY to_jsonb(x)::text)::text,'[]') FROM " + table + " x").Scan(&value)
 				acceptanceCheck(t, err)
@@ -594,6 +599,8 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 		initial := f.Current()
 		f.EmptyRuntime()
 		var authorization, posts atomic.Int32
+		var inventoryRefreshes, costRefreshes atomic.Int32
+		var costPhase atomic.Bool
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		acceptanceCheck(t, err)
 		// Cleanup is independent of assertions and registered before Serve or driver launch.
@@ -605,6 +612,17 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 			}
 			if r.Method != "GET" {
 				posts.Add(1)
+				if inventoryMode {
+					http.Error(w, "inventory fixture permits GET only", 400)
+					return
+				}
+			}
+			if inventoryMode && r.URL.Path == "/admin/extensions" && r.Header.Get("HX-Request") == "true" {
+				if costPhase.Load() {
+					costRefreshes.Add(1)
+				} else {
+					inventoryRefreshes.Add(1)
+				}
 			}
 			f.Handler.ServeHTTP(w, r)
 		})}
@@ -627,10 +645,13 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 		if mode == "" {
 			mode = "navigation"
 		}
-		if mode != "navigation" && mode != "audit" {
+		if mode != "navigation" && mode != "audit" && mode != "inventory" {
 			t.Fatal("unknown browser mode")
 		}
 		input := map[string]string{"origin": "http://" + listener.Addr().String(), "id": f.ID, "session": f.Session, "csrf": f.CSRF, "mode": mode}
+		if inventoryMode {
+			input["pin"] = "sha256:" + acceptanceArchiveSHA
+		}
 		if mode == "audit" {
 			// Independent SQL identifiers, not the production reader/exporter output.
 			rows, err := f.DB.Query("SELECT id::text, action FROM audit_events WHERE resource_type = 'extension' AND resource_id = $1 ORDER BY timestamp DESC, id DESC LIMIT 1000", f.ID)
@@ -661,11 +682,40 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 		cmd.WaitDelay = 20 * time.Second
 		err = cmd.Run()
+		if inventoryMode && err == nil {
+			runInventoryPolicyBrowser(t, f, driver)
+			if !t.Failed() {
+				costPhase.Store(true)
+				input["costStage"] = "loader"
+				raw, marshalErr := json.Marshal(input)
+				acceptanceCheck(t, marshalErr)
+				costCtx, costCancel := context.WithTimeout(context.Background(), 90*time.Second)
+				costCmd := exec.CommandContext(costCtx, "node", driver, os.Getenv("GOTTH_MAIL_BROWSER_OUTPUT")+"-cost")
+				costCmd.Stdin = bytes.NewReader(raw)
+				costCmd.Stdout, costCmd.Stderr = os.Stdout, os.Stderr
+				costCmd.Cancel = func() error { return costCmd.Process.Signal(syscall.SIGTERM) }
+				costCmd.WaitDelay = 20 * time.Second
+				costErr := costCmd.Run()
+				costCancel()
+				costPhase.Store(false)
+				if costErr != nil {
+					t.Errorf("loader cost driver failed: %v", costErr)
+				}
+				if costErr == nil && costRefreshes.Load() != 24 {
+					t.Error("separate loader refresh count differs")
+				}
+				t.Logf("loader-only additional actual HX GETs %d; original five-refresh oracle unchanged", costRefreshes.Load())
+			}
+		}
 		if !reflect.DeepEqual(before, snapshot()) || !reflect.DeepEqual(initial, f.Current()) {
 			t.Error("browser GET changed durable state")
 		}
 		if authorization.Load() != 0 || posts.Load() != 0 || f.Requests() != 0 {
 			t.Error("initial navigation caused bearer injection, mutation, or receiver traffic")
+		}
+		// Four exact canonical URLs plus the retained light-theme refresh.
+		if inventoryMode && err == nil && inventoryRefreshes.Load() != 5 {
+			t.Error("native inventory refresh count differs from independent server oracle")
 		}
 		f.EmptyRuntime()
 		if !t.Failed() {
@@ -2001,4 +2051,223 @@ func TestNativeActivationSQLDelta(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestInventoryBrowserRunnerMode(t *testing.T) {
+	script := "../../scripts/extensions-browser-acceptance.sh"
+	// Missing paths stop before tools: supported mode reaches path validation1,
+	// while an unrecognized mode or forbidden sixth argument returns usage2.
+	cmd := exec.Command("bash", script, "/missing-binary", "/missing-archive", "/missing-pg", "/missing-output", "inventory")
+	err := cmd.Run()
+	var status *exec.ExitError
+	if !errors.As(err, &status) || status.ExitCode() != 1 {
+		t.Fatalf("inventory mode not admitted by argument parser: %v", err)
+	}
+	cmd = exec.Command("bash", script, "/missing-binary", "/missing-archive", "/missing-pg", "/missing-output", "inventory", "/extra-B")
+	err = cmd.Run()
+	if !errors.As(err, &status) || status.ExitCode() != 2 {
+		t.Fatal("inventory accepted sixth argument")
+	}
+}
+
+func TestInventoryBrowserCloseout(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		if os.Getenv("GOTTH_RENDERER_REQUIRE_NODE") == "1" {
+			t.Fatal(err)
+		}
+		t.Skip("Node test equipment unavailable")
+	}
+	const harness = `const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict'),{EventEmitter}=require('node:events'),path=require('node:path');
+const original=fs.readFileSync(process.argv[1],'utf8');assert.equal(original.split('await runMatrix();').length,2);
+const source=original.replace('await runMatrix();','/* only the matrix is omitted in this synthetic closeout test */');
+for(const mode of ['normal','signal','data-after-exit','non-get-after-exit','undrained']){
+ let proof,removed=false;const child=new EventEmitter(),proc=new EventEmitter();child.pid=100;
+ child.stderr=new EventEmitter();child.stderr.destroy=()=>{};
+ child.stdio=[null,null,child.stderr,new EventEmitter(),new EventEmitter()];for(const p of child.stdio.slice(3))p.destroy=()=>{};
+ child.stdio[3].write=data=>{const request=JSON.parse(data.slice(0,-1));assert.equal(request.method,'Browser.close');queueMicrotask(()=>{
+  if(mode==='signal')proc.emit('SIGTERM');child.emit('exit',0,null);
+  if(mode==='data-after-exit')child.stdio[4].emit('data',Buffer.from(JSON.stringify({method:'Browser.downloadWillBegin',params:{}})+String.fromCharCode(0)));
+  if(mode==='non-get-after-exit')child.stdio[4].emit('data',Buffer.from(JSON.stringify({method:'Network.requestWillBeSent',params:{request:{url:'http://127.0.0.1:123/admin/extensions',method:'POST',headers:{}}}})+String.fromCharCode(0)));
+  if(mode!=='undrained')child.emit('close',0,null);
+ });return true};
+ child.kill=()=>{};proc.argv=['node','driver','/evidence'];proc.env={GOTTH_MAIL_ACCEPTANCE_NAMESPACE:'1'};proc.kill=()=>{};
+ const mockFS={readFileSync(p){if(p===0)return JSON.stringify({origin:'http://127.0.0.1:123',mode:'inventory',id:'00000000-0000-4000-8000-000000000001',session:'private-session',csrf:'private-csrf'});throw Error('unexpected file read')},writeFileSync(p,s){proof=JSON.parse(s)},mkdirSync(){},mkdtempSync(){return '/tmp/private-profile'},readdirSync(){return []},rmSync(){removed=true}};
+ const context=vm.createContext({process:proc,Buffer,URL,console:{log(){}},setTimeout,clearTimeout});const module=new vm.SourceTextModule(source,{context});
+ await module.link(async name=>{let exports;if(name==='node:crypto')exports={createHash:require('node:crypto').createHash};else if(name==='node:child_process')exports={spawn:()=>child};else if(name==='node:fs')exports=mockFS;else if(name==='node:path')exports={join:path.join,resolve:path.resolve};else if(name==='node:timers/promises')exports={setTimeout:()=>new Promise(r=>setTimeout(r,2))};else throw Error('unexpected import');return new vm.SyntheticModule(Object.keys(exports),function(){for(const [k,v]of Object.entries(exports))this.setExport(k,v)},{context})});
+ await module.evaluate();assert.equal(proof.gate,mode==='normal'?'PASS':'FAIL');assert.equal(removed,mode!=='undrained');if(mode!=='normal')assert.equal(proc.exitCode,1);assert(!JSON.stringify(proof).includes('private-session'));
+}
+console.log('PASS actual driver handlers/publication: normal, close signal, late data/non-GET after exit, missing stdio drain; synthetic matrix omitted, not physical proof');
+`
+	cmd := exec.Command("node", "--experimental-vm-modules", "--input-type=module", "-e", "import {createRequire} from \"node:module\"; const require=createRequire(import.meta.url);\n"+harness, "../../scripts/extensions-inventory-browser.mjs")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("closeout harness: %v\n%s", err, out)
+	}
+	t.Log(string(out))
+}
+
+// Dedicated test equipment; never installed in the production router.
+// Phase is Go-owned and changed only between fully drained driver invocations.
+type inventoryPolicyHandler struct {
+	handler                                 http.Handler
+	host, session, csrf                     string
+	provision                               atomic.Bool
+	cookies, authorization, methods, routes atomic.Int32
+	injections, full, hx                    atomic.Int32
+}
+
+func (o *inventoryPolicyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if _, ok := r.Header["Cookie"]; ok {
+		o.cookies.Add(1)
+		http.Error(w, "browser cookie forbidden", 400)
+		return
+	}
+	if _, ok := r.Header["Authorization"]; ok {
+		o.authorization.Add(1)
+		http.Error(w, "browser authorization forbidden", 400)
+		return
+	}
+	if r.Method != http.MethodGet {
+		o.methods.Add(1)
+		http.Error(w, "GET only", 400)
+		return
+	}
+	inventory := false
+	switch r.RequestURI {
+	case "/admin/extensions", "/admin/extensions?theme=system", "/admin/extensions?theme=light", "/admin/extensions?theme=dark":
+		inventory = true
+	case "/admin/extensions/assets/tokens.css", "/admin/extensions/assets/inventory.css", "/admin/extensions/assets/inventory.js", "/admin/extensions/assets/htmx-2.0.10.min.js":
+	default:
+		o.routes.Add(1)
+		http.NotFound(w, r)
+		return
+	}
+	if r.Host != o.host || r.URL.IsAbs() {
+		o.routes.Add(1)
+		http.NotFound(w, r)
+		return
+	}
+	if inventory {
+		if r.Header.Get("HX-Request") == "true" {
+			o.hx.Add(1)
+		} else {
+			o.full.Add(1)
+		}
+		if o.provision.Load() {
+			r = r.Clone(r.Context())
+			r.AddCookie(&http.Cookie{Name: "gotth_mail_session", Value: o.session})
+			r.AddCookie(&http.Cookie{Name: "gotth_mail_csrf", Value: o.csrf})
+			o.injections.Add(1)
+		}
+	}
+	o.handler.ServeHTTP(w, r)
+}
+
+func TestInventoryPolicyHandler(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, uri, header, host string
+		enabled, admitted, injected     bool
+	}{
+		{name: "negative", method: "GET", uri: "/admin/extensions", admitted: true},
+		{name: "provisioned", method: "GET", uri: "/admin/extensions?theme=light", enabled: true, admitted: true, injected: true},
+		{name: "asset", method: "GET", uri: "/admin/extensions/assets/inventory.js", enabled: true, admitted: true},
+		{name: "cookie", method: "GET", uri: "/admin/extensions", header: "Cookie"},
+		{name: "authorization", method: "GET", uri: "/admin/extensions", header: "Authorization"},
+		{name: "post", method: "POST", uri: "/admin/extensions"},
+		{name: "host", method: "GET", uri: "/admin/extensions", host: "other"},
+		{name: "detail", method: "GET", uri: "/admin/extensions/id"},
+		{name: "query", method: "GET", uri: "/admin/extensions?unknown=x"},
+		{name: "encoded", method: "GET", uri: "/admin/%65xtensions"},
+		{name: "delimiter", method: "GET", uri: "/admin/extensions?"},
+		{name: "absolute", method: "GET", uri: "http://127.0.0.1:123/admin/extensions"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			o := &inventoryPolicyHandler{host: "127.0.0.1:123", session: "synthetic-session", csrf: "synthetic-csrf"}
+			o.provision.Store(tc.enabled)
+			o.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				cookies := r.Cookies()
+				if tc.injected {
+					if len(cookies) != 2 || cookies[0].Value != o.session || cookies[1].Value != o.csrf {
+						t.Error("injected pair differs")
+					}
+				} else if len(cookies) != 0 {
+					t.Error("unexpected injection")
+				}
+			})
+			r := httptest.NewRequest(tc.method, tc.uri, nil)
+			r.Host = o.host
+			if tc.host != "" {
+				r.Host = tc.host
+			}
+			if tc.header != "" {
+				r.Header[tc.header] = []string{""}
+			}
+			o.ServeHTTP(httptest.NewRecorder(), r)
+			if called != tc.admitted || len(r.Cookies()) != 0 {
+				t.Fatal("guard or request-clone boundary violated")
+			}
+		})
+	}
+}
+
+func runInventoryPolicyBrowser(t *testing.T, f acceptanceBrowserStart, driver string) {
+	// Preserve actual handler paired-cookie denial, independent of the wrapper.
+	for _, wrong := range []bool{false, true} {
+		r := httptest.NewRequest(http.MethodGet, "/admin/extensions", nil)
+		r.AddCookie(&http.Cookie{Name: "gotth_mail_session", Value: f.Session})
+		if wrong {
+			r.AddCookie(&http.Cookie{Name: "gotth_mail_csrf", Value: "invalid-synthetic-pair"})
+		}
+		rec := httptest.NewRecorder()
+		f.Handler.ServeHTTP(rec, r)
+		if rec.Code != 401 || bytes.Contains(rec.Body.Bytes(), []byte("data-extension-id")) {
+			t.Fatal("real paired-cookie negative regression")
+		}
+	}
+	t.Log("real handler missing-pair and wrong-pair denied401")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	acceptanceCheck(t, err)
+	o := &inventoryPolicyHandler{handler: f.Handler, host: listener.Addr().String(), session: f.Session, csrf: f.CSRF}
+	srv := &http.Server{Handler: o, ReadHeaderTimeout: 3 * time.Second}
+	served := make(chan error, 1)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			t.Error("policy listener shutdown")
+			_ = srv.Close()
+		}
+		if err := <-served; err != nil && err != http.ErrServerClosed {
+			t.Error("policy listener serve")
+		}
+	})
+	go func() { served <- srv.Serve(listener) }()
+	// One shared 90s budget for all three bounded policy driver invocations.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	for _, stage := range []string{"before", "provisioned", "after"} {
+		o.provision.Store(stage == "provisioned")
+		input := map[string]string{"origin": "http://" + o.host, "id": f.ID, "pin": "sha256:" + acceptanceArchiveSHA, "mode": "inventory", "policyStage": stage}
+		raw, err := json.Marshal(input)
+		acceptanceCheck(t, err)
+		cmd := exec.CommandContext(ctx, "node", driver, os.Getenv("GOTTH_MAIL_BROWSER_OUTPUT")+"-policy-"+stage)
+		cmd.Stdin = bytes.NewReader(raw)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+		cmd.WaitDelay = 20 * time.Second
+		if err := cmd.Run(); err != nil {
+			t.Errorf("policy %s driver failed: %v", stage, err)
+			break
+		}
+	}
+	o.provision.Store(false)
+	if o.cookies.Load() != 0 || o.authorization.Load() != 0 || o.methods.Load() != 0 || o.routes.Load() != 0 {
+		t.Error("policy listener request boundary violation")
+	}
+	if !t.Failed() && (o.full.Load() != 4 || o.hx.Load() != 1 || o.injections.Load() != 3) {
+		t.Error("policy separate full/HX/injection counts differ")
+	}
+	t.Logf("policy counters full %d HX %d injected %d cookie %d bearer %d methods %d routes %d", o.full.Load(), o.hx.Load(), o.injections.Load(), o.cookies.Load(), o.authorization.Load(), o.methods.Load(), o.routes.Load())
 }

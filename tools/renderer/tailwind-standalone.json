@@ -1,0 +1,15 @@
+{
+  "version": "4.3.3",
+  "platform": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "libc": "glibc"
+  },
+  "tag": "v4.3.3",
+  "commit": "c2b24dd15fed1c59dd521bd86082f520c9f5ad0d",
+  "asset_id": 479118279,
+  "url": "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-linux-x64",
+  "size": 111749248,
+  "sha256": "dc61b3ac6b8c9ca874c0cc4c57b2409791a64c5540404ca5f5367360babc313a",
+  "provenance": "Publisher HTTPS release API digest and sha256sums.txt agree (one trust authority). No verified binary signature/attestation or reproducible source-build guarantee. Embeds Bun and native components; no separately installed Node/npm required."
+}
