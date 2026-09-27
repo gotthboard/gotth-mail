@@ -2,9 +2,21 @@
 
 ## Unreleased
 
-### 2026-09-27 01:50 CDT — Exercise native pinned update and separate B readiness
+### 2026-09-27 02:23 CDT — Exercise native rollback and separate restored-A readiness
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files: cmd/gotth-mail/extensions_acceptance_test.go, cmd/gotth-mail/extensions_browser_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-smoke.test.mjs, scripts/extensions-browser-acceptance.sh.
+
+Adds isolated rollback mode: handler setup independently captures A before confirmed B update, changes B endpoint/timeout and rotates secret. Native blank denial, wrong-phrase denial, correct displayed-phrase rollback and reload use exactly two POSTs. SQL requires complete A restoration, full B previous snapshot, retained rotated encrypted secret and exact audit. After browser/HTTP shutdown, separate real A Service.Test must pass before combined success. Existing observer/server/B staging reused; runner sixth B argument limited to update/rollback.
+
+Verification: first actual rollback run PASS10.56s on development Go1.26.6 race binary, PostgreSQL16.14/160014, Chromium151.0.7922.71. Exactly two native POSTs (wrong denial, success), blank required denial, complete independent A/B snapshot and rotated-secret AES-GCM/SQL/audit/reload checks. After browser exit0/HTTP shutdown, real restored A PID229/open-inode616d9fd3…/private socket Start/Probe/Stop proves readiness revision5; combined gate passes, route absent/receiver0. Namespace zero live fixture processes/residual paths. Scoped compile/vet, 76 named oracle subcases plus combined-result and sequence guards, 30 controlled driver shutdown cases plus native Enter, 14 retained runner argument cases pass. Initial synthetic valid-delta red used non-JSON placeholder table strings; corrected fixture data only before any physical run, retained initial source/log/exit. No product edits, old physical/full-suite reruns or admission claim.
+
+Limits: injected setup/login, no delivery/Enable, no old physical gates; renderer/shared tokens and B1/beta remain binding.
+
+### 2026-09-27 01:50 CDT — Exercise native pinned update and separate B readiness
+
+Commit: `b57d641cf293d9534641fb3cc503de68f41d2ac6`
 
 Affected files: cmd/gotth-mail/extensions_acceptance_test.go, cmd/gotth-mail/extensions_browser_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-smoke.test.mjs, scripts/extensions-browser-acceptance.sh.
 

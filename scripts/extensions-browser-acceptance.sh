@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Bounded native gates; all writes are task evidence or private namespace state.
 set -euo pipefail
-[[ $# == 4 || $# == 5 || $# == 6 ]] || { echo 'usage: TEST_BINARY ALPHA1_ARCHIVE PG16_BIN NEW_EVIDENCE_DIR [navigation|audit|configuration|connection-test|activation|update] [ALPHA2_FOR_UPDATE]' >&2; exit 2; }
+[[ $# == 4 || $# == 5 || $# == 6 ]] || { echo 'usage: TEST_BINARY ALPHA1_ARCHIVE PG16_BIN NEW_EVIDENCE_DIR [navigation|audit|configuration|connection-test|activation|update|rollback] [ALPHA2_FOR_UPDATE_OR_ROLLBACK]' >&2; exit 2; }
 mode=${5:-navigation}
 archive_b=""
-if [[ "$mode" == update ]]; then
+if [[ "$mode" == update || "$mode" == rollback ]]; then
  [[ $# == 6 && -f "$6" ]] || exit 2
  archive_b=$(realpath -e "$6")
 else

@@ -13,9 +13,10 @@ const configurationMode=bootstrap.mode==='configuration';
 const connectionMode=bootstrap.mode==='connection-test';
 const activationMode=bootstrap.mode==='activation';
 const updateMode=bootstrap.mode==='update';
-if(!['navigation','audit','configuration','connection-test','activation','update'].includes(bootstrap.mode || 'navigation'))throw Error('unknown browser mode');
-const credentialNeedles=(auditMode||configurationMode||connectionMode||activationMode||updateMode)?[bootstrap.session,bootstrap.csrf,...(configurationMode?[bootstrap.secret]:[])]:[];
-let configurationPosts=0,connectionPosts=0,activationPosts=0,updatePosts=0;
+const rollbackMode=bootstrap.mode==='rollback';
+if(!['navigation','audit','configuration','connection-test','activation','update','rollback'].includes(bootstrap.mode || 'navigation'))throw Error('unknown browser mode');
+const credentialNeedles=(auditMode||configurationMode||connectionMode||activationMode||updateMode||rollbackMode)?[bootstrap.session,bootstrap.csrf,...(configurationMode?[bootstrap.secret]:[])]:[];
+let configurationPosts=0,connectionPosts=0,activationPosts=0,updatePosts=0,rollbackPosts=0;
 const origin=new URL(bootstrap.origin);
 if(origin.protocol!=='http:' || origin.hostname!=='127.0.0.1' || !/^[a-f0-9-]{36}$/.test(bootstrap.id)) throw Error('invalid fixture origin/id');
 const proof={scope:'first live navigation only',width:320,theme:'light',appJavaScript:false,defaultSandbox:true,diagnostics:'read-only Runtime.evaluate; native CDP keyboard actions',pages:[],focus:[],responses:[]};
@@ -41,6 +42,7 @@ if(configurationMode){proof.scope='native initial configuration only; not render
 if(connectionMode){proof.scope='native Test only; configured setup and login injected; not renderer acceptance';proof.firstGate='NOT_RUN';proof.auditGate='NOT_RUN';proof.configurationGate='NOT_RUN';}
 if(activationMode){proof.scope='native Enable then Disable only; configured/tested setup and login injected; not renderer acceptance';proof.firstGate='NOT_RUN';proof.auditGate='NOT_RUN';proof.configurationGate='NOT_RUN';proof.connectionGate='NOT_RUN';}
 if(updateMode){proof.scope='native update only; B execution separately checked after browser exit';for(const k of ['firstGate','auditGate','configurationGate','connectionGate','activationGate'])proof[k]='NOT_RUN';}
+if(rollbackMode){proof.scope='native rollback only; restored A execution separately checked after browser exit';for(const k of ['firstGate','auditGate','configurationGate','connectionGate','activationGate','updateGate'])proof[k]='NOT_RUN';}
 const browser=spawn('/usr/lib/chromium/chromium',['--headless','--remote-debugging-pipe','--disable-background-networking','--no-first-run','--no-default-browser-check','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe','pipe','pipe'],detached:true});
 let closed=false,drained=false,closing=false,interrupted=false,serial=0,session,buffer=Buffer.alloc(0),stderrBytes=0;
 const pending=new Map();
@@ -65,10 +67,12 @@ browser.stdio[4].on('data',chunk=>{
    const entry=pending.get(message.id);pending.delete(message.id);clearTimeout(entry.timer);
    if(message.error)entry.reject(Error('CDP command failed: '+entry.method));else entry.resolve(message.result || {});
   }else if(message.method==='Browser.downloadWillBegin'){
-   if(configurationMode || connectionMode || activationMode || updateMode || download){rejectPending(Error('unexpected download'));interrupted=true;}
+   if(configurationMode || connectionMode || activationMode || updateMode || rollbackMode || download){rejectPending(Error('unexpected download'));interrupted=true;}
    download=message.params;
   }else if(message.method==='Browser.downloadProgress'){
    if(download && message.params.guid===download.guid)downloadProgress=message.params;
+  }else if(rollbackMode && message.method==='Network.requestWillBeSent' && message.sessionId===session && message.params.request.method==='POST'){
+   rollbackPosts++;
   }else if(updateMode && message.method==='Network.requestWillBeSent' && message.sessionId===session && message.params.request.method==='POST'){
    updatePosts++;
   }else if(activationMode && message.method==='Network.requestWillBeSent' && message.sessionId===session && message.params.request.method==='POST'){
@@ -263,6 +267,24 @@ async function runUpdate(detail){
  if(proof.responses.at(-1)?.status!==200 || after.pin!==target.artifact_pin || !after.health.includes('extension.unknown; tested revision 0; configuration revision 3') || !after.blank || after.forms!==1 || !after.versions.includes('sha256:5cb6043ca200acfa67d4c6a85e0c1ba070c51dc550cacca7ce538021c8d9e83a'))throw Error('update persisted projection mismatch');
  proof.update={posts:updatePosts,blankConfirmationBlocked:true,siblingRequiredFieldsUntouched:true,reloaded:true,passwordControlsBlank:true};proof.updateGate='PASS';
 }
+async function runRollback(detail){
+ const button='#rollback button[value="rollback"]',input='#rollback form:first-of-type input[name="confirmation"]';
+ const expected='rollback gotth.mail.notification.webhook to sha256:5cb6043ca200acfa67d4c6a85e0c1ba070c51dc550cacca7ce538021c8d9e83a';
+ const projection=async()=>observe('({phrase:document.querySelector("#rollback form:first-of-type p code")?.textContent,required:document.querySelector("#rollback form:first-of-type input[name=confirmation]")?.required,names:Array.from(document.querySelector("#rollback form:first-of-type").elements).map(e=>e.name).sort(),health:document.querySelector("#health").textContent,status:document.querySelector("p[role=status]")?.textContent,pin:document.querySelectorAll("#overview dd code")[0].textContent,blank:Array.from(document.querySelectorAll("input[type=password]")).every(e=>e.value==="")})');
+ const submit=async()=>{await focusConfiguration(button);const prior=(await call('Page.getFrameTree')).frameTree.frame.loaderId;await configurationEnter();let loader;for(let n=0;n<200;n++){loader=(await call('Page.getFrameTree')).frameTree.frame.loaderId;if(loader!==prior)break;await delay(50);}if(loader===prior){proof.productRed='native rollback did not navigate';throw Error(proof.productRed);}await loaded(detail,loader);if(proof.responses.at(-1)?.status!==200)throw Error('rollback independent response failed');};
+ await loaded(detail,(await call('Page.navigate',{url:origin.origin+detail})).loaderId);
+ let page=await projection();
+ if(page.phrase!==expected || !page.required || !page.blank || !page.health.includes('extension.ready; tested revision 4; configuration revision 4') || JSON.stringify(page.names)!==JSON.stringify(['action','confirmation','csrf_token']))throw Error('rollback setup/form mismatch');
+ await focusConfiguration(button);const prior=(await call('Page.getFrameTree')).frameTree.frame.loaderId;await configurationEnter();await delay(200);
+ if(rollbackPosts!==0 || (await call('Page.getFrameTree')).frameTree.frame.loaderId!==prior)throw Error('blank rollback submitted');
+ await focusConfiguration(input);await typeConfiguration('wrong-confirmation');await submit();page=await projection();
+ if(rollbackPosts!==1 || page.status==='extension operation accepted' || page.phrase!==expected || !page.health.includes('tested revision 4; configuration revision 4'))throw Error('wrong rollback not denied');
+ await focusConfiguration(input);await call('Input.dispatchKeyEvent',{type:'rawKeyDown',key:'a',code:'KeyA',modifiers:2,windowsVirtualKeyCode:65});await call('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',modifiers:2,windowsVirtualKeyCode:65});await key('Backspace',8);await typeConfiguration(page.phrase);await submit();
+ page=await projection();if(rollbackPosts!==2 || page.status!=='extension operation accepted')throw Error('rollback not accepted');
+ await loaded(detail,(await call('Page.navigate',{url:origin.origin+detail})).loaderId);page=await projection();
+ if(page.pin!=='sha256:5cb6043ca200acfa67d4c6a85e0c1ba070c51dc550cacca7ce538021c8d9e83a' || !page.health.includes('extension.unknown; tested revision 0; configuration revision 5') || !page.blank)throw Error('rollback persisted projection mismatch');
+ proof.rollback={posts:rollbackPosts,blankBlocked:true,wrongDenied:true,reloaded:true,passwordControlsBlank:true};proof.rollbackGate='PASS';
+}
 try{
  proof.version=await call('Browser.getVersion',{},null);
  const target=await call('Target.createTarget',{url:'about:blank'},null);
@@ -278,7 +300,9 @@ try{
  await call('Network.setCookies',{cookies:[{name:'gotth_mail_session',value:bootstrap.session,url:origin.origin,path:'/'},{name:'gotth_mail_csrf',value:bootstrap.csrf,url:origin.origin,path:'/'}]});
  bootstrap.session='';bootstrap.csrf='';
  const detail=list+'/'+bootstrap.id;
- if(updateMode){
+ if(rollbackMode){
+  await runRollback(detail);
+ }else if(updateMode){
   await runUpdate(detail);
  }else if(activationMode){
   await runActivation(detail);
@@ -332,7 +356,7 @@ try{
  await inspectPage('detail');
  proof.firstGate='PASS';
  }
-}catch(e){if(updateMode)proof.updateGate=proof.productRed?'PRODUCT_RED':'FAIL';else if(activationMode)proof.activationGate=proof.productRed?'PRODUCT_RED':'FAIL';else if(connectionMode)proof.connectionGate=proof.productRed?'PRODUCT_RED':'FAIL';else if(configurationMode)proof.configurationGate=proof.productRed?'PRODUCT_RED':'FAIL';else if(auditMode)proof.auditGate='FAIL';else proof.firstGate=proof.productRed?'PRODUCT_RED':'EQUIPMENT_FAILURE';proof.error=e.message;process.exitCode=1;}
+}catch(e){if(rollbackMode)proof.rollbackGate=proof.productRed?'PRODUCT_RED':'FAIL';else if(updateMode)proof.updateGate=proof.productRed?'PRODUCT_RED':'FAIL';else if(activationMode)proof.activationGate=proof.productRed?'PRODUCT_RED':'FAIL';else if(connectionMode)proof.connectionGate=proof.productRed?'PRODUCT_RED':'FAIL';else if(configurationMode)proof.configurationGate=proof.productRed?'PRODUCT_RED':'FAIL';else if(auditMode)proof.auditGate='FAIL';else proof.firstGate=proof.productRed?'PRODUCT_RED':'EQUIPMENT_FAILURE';proof.error=e.message;process.exitCode=1;}
 finally{
  clearTimeout(timer);closing=true;
  try{if(!closed)await call('Browser.close',{},null);}catch{/* shutdown may close pipe before reply */}
@@ -354,6 +378,8 @@ finally{
  if(activationMode && credentialNeedles.some(s=>s && JSON.stringify(proof).includes(s))){proof.activationGate='FAIL';proof.error='retained diagnostic credential leak';process.exitCode=1;for(const k of Object.keys(proof))if(!['activationGate','error'].includes(k))delete proof[k];}
  if(updateMode && (interrupted || !drained || proof.cleanupFailed)){proof.updateGate='FAIL';proof.error='update interrupted or cleanup incomplete';process.exitCode=1;}
  if(updateMode && credentialNeedles.some(s=>s && JSON.stringify(proof).includes(s))){proof.updateGate='FAIL';proof.error='retained diagnostic credential leak';process.exitCode=1;for(const k of Object.keys(proof))if(!['updateGate','error'].includes(k))delete proof[k];}
+ if(rollbackMode && (interrupted || !drained || proof.cleanupFailed)){proof.rollbackGate='FAIL';proof.error='rollback interrupted or cleanup incomplete';process.exitCode=1;}
+ if(rollbackMode && credentialNeedles.some(s=>s && JSON.stringify(proof).includes(s))){proof.rollbackGate='FAIL';proof.error='retained diagnostic credential leak';process.exitCode=1;for(const k of Object.keys(proof))if(!['rollbackGate','error'].includes(k))delete proof[k];}
  writeFileSync(join(output,'proof.json'),JSON.stringify(proof,null,2)+'\n',{mode:0o600});
- console.log(JSON.stringify({firstGate:proof.firstGate,auditGate:proof.auditGate,configurationGate:proof.configurationGate,connectionGate:proof.connectionGate,activationGate:proof.activationGate,updateGate:proof.updateGate,audit:proof.audit,productRed:proof.productRed,cleanupFailed:!!proof.cleanupFailed,pages:(proof.pages||[]).map(x=>({name:x.name,client:x.client,scroll:x.scroll}))}));
+ console.log(JSON.stringify({firstGate:proof.firstGate,auditGate:proof.auditGate,configurationGate:proof.configurationGate,connectionGate:proof.connectionGate,activationGate:proof.activationGate,updateGate:proof.updateGate,rollbackGate:proof.rollbackGate,audit:proof.audit,productRed:proof.productRed,cleanupFailed:!!proof.cleanupFailed,pages:(proof.pages||[]).map(x=>({name:x.name,client:x.client,scroll:x.scroll}))}));
 }

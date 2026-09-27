@@ -16,7 +16,7 @@ const detail='/admin/extensions/'+id;
 const row={ID:'event-one',Action:'extension.install',Resource:{Type:'extension',ID:id}};
 const bytes=Buffer.from(JSON.stringify(row)+'\n');
 let failures=0;
-for(const mode of ['audit','configuration','connection-test','activation','update'])for(const scenario of ['normal','duplicate-close','signal-close','duplicate-after-exit','undrained']){
+for(const mode of ['audit','configuration','connection-test','activation','update','rollback'])for(const scenario of ['normal','duplicate-close','signal-close','duplicate-after-exit','undrained']){
  const proc=new EventEmitter();Object.assign(proc,{argv:['node','driver','/evidence'],env:{GOTTH_MAIL_ACCEPTANCE_NAMESPACE:'1'},kill(){throw Error('unexpected forced shutdown');}});
  const stream=()=>Object.assign(new EventEmitter(),{destroyed:false,destroy(){this.destroyed=true;}});
  const browser=new EventEmitter();Object.assign(browser,{pid:123,stdio:[null,null,stream(),stream(),stream()],stderr:stream(),kill(){throw Error('unexpected kill');}});
@@ -60,16 +60,16 @@ for(const mode of ['audit','configuration','connection-test','activation','updat
   delay:()=>new Promise(r=>setImmediate(r)),console:{log:()=>{}}};
  // Native form/action sequences are stubbed here; actual driver shutdown/latching
  // is exercised. Real configuration/Test evidence is separate.
- const stub=mode==='configuration'?'async function runConfiguration(){proof.configurationGate="PASS";}\n':mode==='update'?'async function runUpdate(){proof.updateGate="PASS";}\n':mode==='activation'?'async function runActivation(){proof.activationGate="PASS";}\n':'async function runConnectionTest(){proof.connectionGate="PASS";}\n';
+ const stub=mode==='configuration'?'async function runConfiguration(){proof.configurationGate="PASS";}\n':mode==='rollback'?'async function runRollback(){proof.rollbackGate="PASS";}\n':mode==='update'?'async function runUpdate(){proof.updateGate="PASS";}\n':mode==='activation'?'async function runActivation(){proof.activationGate="PASS";}\n':'async function runConnectionTest(){proof.connectionGate="PASS";}\n';
  const exercised=mode==='audit'?body:body.slice(0,body.indexOf('async function runConfiguration('))+stub+body.slice(body.indexOf("try{\n proof.version="));
  await runInNewContext('(async()=>{"use strict";\n'+exercised+'\n})()',context,{timeout:1000});
  try{
-  assert.equal(mode==='audit'?proof.auditGate:mode==='configuration'?proof.configurationGate:mode==='update'?proof.updateGate:mode==='activation'?proof.activationGate:proof.connectionGate,scenario==='normal'?'PASS':'FAIL');
+  assert.equal(mode==='audit'?proof.auditGate:mode==='configuration'?proof.configurationGate:mode==='rollback'?proof.rollbackGate:mode==='update'?proof.updateGate:mode==='activation'?proof.activationGate:proof.connectionGate,scenario==='normal'?'PASS':'FAIL');
   assert.equal(proc.exitCode || 0,scenario==='normal'?0:1);
   assert.equal(proof.cleanup.mainExited,true);
   assert.equal(proof.cleanup.remaining.length,0);
   assert.equal(removed.length,mode==='audit'?2:1,'private cleanup must survive failure');
-  if(scenario!=='normal')assert.equal(proof.error,mode==='audit'?'audit interrupted or event stream not drained before proof':mode==='configuration'?'configuration interrupted or cleanup incomplete':mode==='update'?'update interrupted or cleanup incomplete':mode==='activation'?'activation interrupted or cleanup incomplete':'connection-test interrupted or cleanup incomplete');
+  if(scenario!=='normal')assert.equal(proof.error,mode==='audit'?'audit interrupted or event stream not drained before proof':mode==='configuration'?'configuration interrupted or cleanup incomplete':mode==='rollback'?'rollback interrupted or cleanup incomplete':mode==='update'?'update interrupted or cleanup incomplete':mode==='activation'?'activation interrupted or cleanup incomplete':'connection-test interrupted or cleanup incomplete');
   console.log('PASS '+mode+' '+scenario);
  }catch(e){failures++;console.error('FAIL '+scenario+': '+e.message);}
 }

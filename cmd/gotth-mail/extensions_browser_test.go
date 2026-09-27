@@ -291,12 +291,16 @@ func (u *nativeUpdateOracle) secret(ctx context.Context) error {
 	return nil
 }
 func (u *nativeUpdateOracle) testB(t *testing.T, before [4]string) error {
+	label, revision, exe, digest := "B", float64(3), u.f.Update.Executable, u.f.Update.SHA
+	if u.f.Update.RollbackA[0] != "" {
+		label, revision, exe, digest = "restored A", 5, u.f.Executable, u.f.TestRuntime.expectedSHA
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := u.quiet(ctx); err != nil {
 		return err
 	}
-	r := &nativeTestRuntime{Runtime: u.f.TestRuntime.Runtime, root: u.f.RuntimeRoot, executable: u.f.Update.Executable, expectedSHA: u.f.Update.SHA}
+	r := &nativeTestRuntime{Runtime: u.f.TestRuntime.Runtime, root: u.f.RuntimeRoot, executable: exe, expectedSHA: digest}
 	if err := u.f.Update.TestB(ctx, r); err != nil {
 		return errors.New("nonbrowser B Service.Test failed")
 	}
@@ -322,7 +326,7 @@ func (u *nativeUpdateOracle) testB(t *testing.T, before [4]string) error {
 		return errors.New("B Test changed secret/preview")
 	}
 	row, base := rows[0][0], old[0][0]
-	if row["tested_revision"] != float64(3) || row["health_code"] != "extension.ready" {
+	if row["tested_revision"] != revision || row["health_code"] != "extension.ready" {
 		return errors.New("B readiness mismatch")
 	}
 	for _, f := range []string{"tested_revision", "health_code", "updated_at"} {
@@ -332,7 +336,7 @@ func (u *nativeUpdateOracle) testB(t *testing.T, before [4]string) error {
 	if !reflect.DeepEqual(row, base) {
 		return errors.New("B Test changed authority")
 	}
-	if err := updateAudit(before[3], state[3], u.f.ActorID, u.f.ID, "extension.test", map[string]any{"configuration_revision": float64(3), "health_code": "extension.ready"}); err != nil {
+	if err := updateAudit(before[3], state[3], u.f.ActorID, u.f.ID, "extension.test", map[string]any{"configuration_revision": revision, "health_code": "extension.ready"}); err != nil {
 		return err
 	}
 	for _, table := range state {
@@ -345,11 +349,198 @@ func (u *nativeUpdateOracle) testB(t *testing.T, before [4]string) error {
 	if err := u.secret(ctx); err != nil {
 		return err
 	}
-	t.Logf("PASS nonbrowser B only: pid=%s executable_sha256=%x Start/Probe/Stop; private socket removed; revision3 tested3; route absent receiver0", r.pid, r.expectedSHA)
+	t.Logf("PASS nonbrowser %s only: pid=%s executable_sha256=%x Start/Probe/Stop; private socket removed; revision/tested=%v; route absent receiver0", label, r.pid, r.expectedSHA, revision)
 	return nil
 }
 
+// Independent snapshot projection from captured SQL, never stored previous JSON.
+func rollbackVersion(row map[string]any) map[string]any {
+	out := map[string]any{}
+	for to, from := range map[string]string{"artifact_pin": "artifact_pin", "manifest_sha256": "manifest_sha256", "grant_sha256": "grant_sha256", "session_sha256": "session_sha256", "capabilities": "capabilities_json", "interfaces": "interfaces_json", "secret_slots": "secret_slots_json", "metadata": "metadata_json", "configuration": "configuration_json"} {
+		out[to] = row[from]
+	}
+	return out
+}
+func rollbackSetup(a, b [4]string) error {
+	left, err := updateRows(a)
+	if err != nil {
+		return err
+	}
+	right, err := updateRows(b)
+	if err != nil {
+		return err
+	}
+	ar, br := left[0][0], right[0][0]
+	ac, aok := ar["configuration_json"].(map[string]any)
+	bc, bok := br["configuration_json"].(map[string]any)
+	if !aok || !bok || bc["webhook.endpoint"] != ac["webhook.endpoint"].(string)+"/rollback-b" || ac["webhook.timeout-seconds"] != float64(2) || bc["webhook.timeout-seconds"] != float64(1) {
+		return errors.New("rollback setup configurations not distinct")
+	}
+	if ar["artifact_pin"] != "sha256:"+acceptanceArchiveSHA || br["artifact_pin"] != "sha256:"+acceptanceArchiveBSHA || ar["configuration_revision"] != float64(2) || ar["tested_revision"] != float64(2) || br["configuration_revision"] != float64(4) || br["tested_revision"] != float64(4) || br["enabled"] != false || br["routed"] != false || br["lifecycle"] != "stopped" || br["health_code"] != "extension.ready" || !reflect.DeepEqual(br["previous_version_json"], rollbackVersion(ar)) || br["previous_artifact_pin"] != ar["artifact_pin"] {
+		return errors.New("rollback setup snapshot/readiness")
+	}
+	if len(left[1]) != 1 || len(right[1]) != 1 || reflect.DeepEqual(left[1][0]["ciphertext"], right[1][0]["ciphertext"]) || len(right[2]) != 3 || len(left[3]) != 3 || len(right[3]) != 6 {
+		return errors.New("rollback setup rotation/counts")
+	}
+	return nil
+}
+func rollbackSQL(a, b, after [4]string, actor, id string, success bool) error {
+	if !success {
+		if after != b {
+			return errors.New("denied rollback mutated SQL")
+		}
+		return nil
+	}
+	if b[1] != after[1] || b[2] != after[2] {
+		return errors.New("rollback changed secret/preview")
+	}
+	left, err := updateRows(a)
+	if err != nil {
+		return err
+	}
+	prior, err := updateRows(b)
+	if err != nil {
+		return err
+	}
+	rows, err := updateRows(after)
+	if err != nil {
+		return err
+	}
+	ar, br, row := left[0][0], prior[0][0], rows[0][0]
+	expected := map[string]any{}
+	for _, field := range []string{"artifact_pin", "manifest_sha256", "grant_sha256", "session_sha256", "capabilities_json", "interfaces_json", "secret_slots_json", "metadata_json", "configuration_json"} {
+		expected[field] = ar[field]
+	}
+	expected["previous_artifact_pin"] = br["artifact_pin"]
+	expected["previous_version_json"] = rollbackVersion(br)
+	expected["configuration_revision"] = br["configuration_revision"].(float64) + 1
+	expected["tested_revision"] = nil
+	expected["health_code"] = "extension.unknown"
+	expected["lifecycle"] = "stopped"
+	for field, want := range expected {
+		if !reflect.DeepEqual(row[field], want) {
+			return errors.New("rollback restoration/snapshot mismatch")
+		}
+		delete(row, field)
+		delete(br, field)
+	}
+	delete(row, "updated_at")
+	delete(br, "updated_at")
+	if !reflect.DeepEqual(row, br) {
+		return errors.New("rollback unrelated authority changed")
+	}
+	if err := updateAudit(b[3], after[3], actor, id, "extension.rollback", map[string]any{"artifact_pin": ar["artifact_pin"]}); err != nil {
+		return err
+	}
+	var events, old []map[string]any
+	_ = json.Unmarshal([]byte(after[3]), &events)
+	_ = json.Unmarshal([]byte(b[3]), &old)
+	ids := map[any]bool{}
+	for _, e := range old {
+		ids[e["id"]] = true
+	}
+	for _, e := range events {
+		if !ids[e["id"]] {
+			raw, ok := e["before_redacted_json"].(string)
+			var payload map[string]any
+			if !ok || json.Unmarshal([]byte(raw), &payload) != nil || !reflect.DeepEqual(payload, map[string]any{"artifact_pin": "sha256:" + acceptanceArchiveBSHA}) {
+				return errors.New("rollback before audit pin")
+			}
+		}
+	}
+	return nil
+}
+func TestNativeRollbackDelta(t *testing.T) {
+	encode := func(v any) string { b, e := json.Marshal(v); acceptanceCheck(t, e); return string(b) }
+	for _, kind := range []string{"valid", "configuration", "metadata", "grant", "session", "permissions", "previous", "revision", "ready", "secret", "preview", "audit-before", "audit-after", "actor", "denial"} {
+		t.Run(kind, func(t *testing.T) {
+			ar := map[string]any{"artifact_pin": "sha256:" + acceptanceArchiveSHA, "configuration_revision": float64(2), "configuration_json": "A", "metadata_json": "metaA", "grant_sha256": "grantA", "session_sha256": "sessionA", "capabilities_json": "capsA", "interfaces_json": "interface", "secret_slots_json": "slots", "manifest_sha256": "manifestA", "enabled": false, "routed": false, "lifecycle": "stopped", "tested_revision": float64(2), "health_code": "extension.ready"}
+			br := map[string]any{}
+			for k, v := range ar {
+				br[k] = v
+			}
+			br["artifact_pin"] = "sha256:" + acceptanceArchiveBSHA
+			br["configuration_revision"] = float64(4)
+			br["configuration_json"] = "B"
+			br["tested_revision"] = float64(4)
+			row := map[string]any{}
+			for k, v := range ar {
+				row[k] = v
+			}
+			row["configuration_revision"] = float64(5)
+			row["tested_revision"] = nil
+			row["health_code"] = "extension.unknown"
+			row["previous_artifact_pin"] = br["artifact_pin"]
+			row["previous_version_json"] = rollbackVersion(br)
+			event := map[string]any{"id": "new", "action": "extension.rollback", "actor_type": "oidc_subject", "actor_id": "actor", "resource_type": "extension", "resource_id": "id", "result": "success", "before_redacted_json": encode(map[string]any{"artifact_pin": br["artifact_pin"]}), "after_redacted_json": encode(map[string]any{"artifact_pin": ar["artifact_pin"]})}
+			a := [4]string{encode([]any{ar}), "[]", "[]", "[]"}
+			b := [4]string{encode([]any{br}), `[ {"ciphertext":"rotated"} ]`, `[ {"id":"preview"} ]`, "[]"}
+			after := [4]string{"", b[1], b[2], ""}
+			switch kind {
+			case "configuration":
+				row["configuration_json"] = "B"
+			case "metadata":
+				row["metadata_json"] = "B"
+			case "grant":
+				row["grant_sha256"] = "B"
+			case "session":
+				row["session_sha256"] = "B"
+			case "permissions":
+				row["capabilities_json"] = "B"
+			case "previous":
+				row["previous_version_json"] = rollbackVersion(ar)
+			case "revision":
+				row["configuration_revision"] = 4
+			case "ready":
+				row["tested_revision"] = 4
+			case "secret":
+				after[1] = "old"
+			case "preview":
+				after[2] = "changed"
+			case "audit-before":
+				event["before_redacted_json"] = "{}"
+			case "audit-after":
+				event["after_redacted_json"] = "{}"
+			case "actor":
+				event["actor_id"] = "other"
+			}
+			after[0] = encode([]any{row})
+			after[3] = encode([]any{event})
+			err := rollbackSQL(a, b, after, "actor", "id", kind != "denial")
+			if (err == nil) != (kind == "valid") {
+				t.Fatalf("rollback delta corruption mismatch: %v", err)
+			}
+			if rollbackSQL(a, b, b, "actor", "id", false) != nil {
+				t.Fatal("unchanged denial rejected")
+			}
+		})
+	}
+}
+func TestNativeCombinedDecision(t *testing.T) {
+	failure := errors.New("postcondition failure")
+	for _, native := range []bool{false, true} {
+		for _, err := range []error{nil, failure} {
+			got := nativeCombinedResult(native, err)
+			if (got == nil) != (native && err == nil) {
+				t.Fatal("combined success accepted incomplete evidence")
+			}
+			if native && err != nil && got != err {
+				t.Fatal("postcondition error replaced")
+			}
+		}
+	}
+}
+
+// Pure decision used by the measured combined gate, not a product fault injection.
+func nativeCombinedResult(native bool, postcondition error) error {
+	if !native {
+		return errors.New("native proof failed")
+	}
+	return postcondition
+}
+
 type nativeUpdateSetup struct {
+	RollbackA  [4]string
 	Target     extensionsadmin.UpdateInput
 	Executable string
 	SHA        [32]byte
@@ -380,7 +571,7 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 		}
 	}
 	acceptanceLifecycleDriver(t, false, func(f acceptanceBrowserStart) {
-		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "connection-test" || mode == "activation" || mode == "update" {
+		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "connection-test" || mode == "activation" || mode == "update" || mode == "rollback" {
 			runConnectionBrowser(t, f, driver)
 			return
 		}
@@ -1261,7 +1452,8 @@ func activationSQL(before, after [4]string, actor, id string, enable bool) error
 func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string) {
 	mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE")
 	activation := mode == "activation"
-	update := mode == "update"
+	rollback := mode == "rollback"
+	update := mode == "update" || rollback
 	var u *nativeUpdateOracle
 	if update {
 		if f.Update == nil {
@@ -1281,6 +1473,9 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 	}
 	if update {
 		actions = []string{"update-preview", "update-apply"}
+		if rollback {
+			actions = []string{"rollback", "rollback"}
+		}
 	}
 	if f.TestRuntime == nil {
 		t.Fatal("missing real runtime observer")
@@ -1298,6 +1493,10 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 	applied := before
 	if update {
 		u.baseline = before
+		if rollback {
+			acceptanceCheck(t, rollbackSetup(f.Update.RollbackA, before))
+			acceptanceCheck(t, u.secret(context.Background()))
+		}
 		acceptanceCheck(t, u.quiet(context.Background()))
 	}
 	reloads := 0
@@ -1388,7 +1587,14 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 			if r.Method == "POST" {
 				var delta error
 				if update {
-					delta = u.check(ctx, posts, state, body)
+					if rollback {
+						delta = rollbackSQL(f.Update.RollbackA, before, state, f.ActorID, f.ID, posts == 2)
+						if delta == nil {
+							delta = u.secret(ctx)
+						}
+					} else {
+						delta = u.check(ctx, posts, state, body)
+					}
 				} else if activation {
 					delta = activationSQL(applied, state, f.ActorID, f.ID, posts == 1)
 				} else {
@@ -1398,8 +1604,9 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 					fail(delta.Error())
 					return
 				}
-				if !bytes.Contains(body, []byte("extension operation accepted")) {
-					fail("Test action not accepted")
+				accepted := bytes.Contains(body, []byte("extension operation accepted"))
+				if accepted == (rollback && posts == 1) {
+					fail("native lifecycle acceptance/denial mismatch")
 					return
 				}
 				applied = state
@@ -1520,23 +1727,29 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 			return
 		}
 		var diagnostic struct {
-			UpdateGate  string
-			BrowserExit struct{ Code int }
-			Cleanup     struct {
+			UpdateGate   string
+			RollbackGate string
+			BrowserExit  struct{ Code int }
+			Cleanup      struct {
 				MainExited bool
 				Remaining  []any
 			}
 		}
-		if json.Unmarshal(proof, &diagnostic) != nil || diagnostic.UpdateGate != "PASS" || !diagnostic.Cleanup.MainExited || len(diagnostic.Cleanup.Remaining) != 0 || diagnostic.BrowserExit.Code != 0 {
+		decodeErr := json.Unmarshal(proof, &diagnostic)
+		gate := diagnostic.UpdateGate
+		if rollback {
+			gate = diagnostic.RollbackGate
+		}
+		if decodeErr != nil || gate != "PASS" || !diagnostic.Cleanup.MainExited || len(diagnostic.Cleanup.Remaining) != 0 || diagnostic.BrowserExit.Code != 0 {
 			t.Error("native update proof incomplete")
 			return
 		}
-		t.Log("native update SQL/proof frozen; browser and HTTP stopped; B execution NOT YET proven")
-		if err := u.testB(t, applied); err != nil {
+		t.Logf("native %s SQL/proof frozen; browser/HTTP stopped; separate execution NOT YET proven", mode)
+		if err := nativeCombinedResult(gate == "PASS", u.testB(t, applied)); err != nil {
 			t.Error(err.Error())
 			return
 		}
-		t.Log("PASS combined native update/reload plus separately nonbrowser B Service.Test; no routing/delivery/rollback credit")
+		t.Logf("PASS combined native %s/reload plus separately labeled nonbrowser Service.Test; no routing/delivery credit", mode)
 		return
 	}
 	if !t.Failed() {

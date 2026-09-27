@@ -458,9 +458,9 @@ func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(a
 	if browser != nil {
 		var observation *nativeTestRuntime
 		var update *nativeUpdateSetup
-		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "connection-test" || mode == "activation" || mode == "update" {
+		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "connection-test" || mode == "activation" || mode == "update" || mode == "rollback" {
 			configure(receiver.URL, key, "2") // Admitted handler-driven SETUP, not browser coverage.
-			if mode == "activation" || mode == "update" {
+			if mode == "activation" || mode == "update" || mode == "rollback" {
 				action("test")
 				emptyRuntime()
 			} // SETUP, not native Test credit.
@@ -475,7 +475,7 @@ func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(a
 					return supervisor.Health(ctx, extensionsruntime.ExtensionID)
 				}
 			}
-			if mode == "update" {
+			if mode == "update" || mode == "rollback" {
 				_, filesB, stageB, mdB, grantB, sessionB := acceptanceStageB(t, a, manifest, metadata, grant, profile)
 				supervisor, ok := original.(*extensionsruntime.Supervisor)
 				if !ok {
@@ -484,6 +484,29 @@ func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(a
 				update = &nativeUpdateSetup{Target: extensionsadmin.UpdateInput{ArtifactPin: "sha256:" + acceptanceArchiveBSHA, ManifestDigest: mdB, GrantDigest: sessionB.GrantDigest, SessionDigest: sessionB.Fingerprint, Capabilities: grantB.Capabilities, Interfaces: []string{extensionsruntime.Interface}, SecretSlots: grantB.Secrets, Metadata: metadata}, Executable: filepath.Join(stageB, "gotth-extension-webhook"), SHA: sha256.Sum256(filesB["gotth-extension-webhook"])}
 				update.Route = func(ctx context.Context) (plugin.HealthResponse, error) {
 					return supervisor.Health(ctx, extensionsruntime.ExtensionID)
+				}
+				if mode == "rollback" {
+					captured, err := configurationSnapshot(context.Background(), db)
+					acceptanceCheck(t, err)
+					update.RollbackA = captured
+					target := update.Target
+					body := form(url.Values{"action": {"update-preview"}, "csrf_token": {csrf}, "artifact_pin": {target.ArtifactPin}, "manifest_sha256": {target.ManifestDigest}, "grant_sha256": {target.GrantDigest}, "session_sha256": {target.SessionDigest}, "capabilities": {strings.Join(target.Capabilities, ",")}, "interfaces": {strings.Join(target.Interfaces, ",")}, "secret_slots": {strings.Join(target.SecretSlots, ",")}})
+					preview := regexp.MustCompile(`name="preview_id" value="([^"]+)"`).FindStringSubmatch(body)
+					phrase := regexp.MustCompile(`<code>(confirm-[a-f0-9]+)</code>`).FindStringSubmatch(body)
+					if len(preview) != 2 || len(phrase) != 2 {
+						t.Fatal("rollback setup update preview missing")
+					}
+					body = form(url.Values{"action": {"update-apply"}, "csrf_token": {csrf}, "preview_id": {preview[1]}, "confirmation": {phrase[1]}})
+					if !strings.Contains(body, "extension operation accepted") {
+						t.Fatal("rollback setup update rejected")
+					}
+					key = acceptanceRandom(t)
+					configure(receiver.URL+"/rollback-b", key, "1")
+					action("test")
+					emptyRuntime()
+					baseline, err := configurationSnapshot(context.Background(), db)
+					acceptanceCheck(t, err)
+					acceptanceCheck(t, rollbackSetup(captured, baseline))
 				}
 				update.TestB = func(ctx context.Context, observer *nativeTestRuntime) error {
 					server.Extensions.Runtime = observer
