@@ -84,7 +84,35 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 			}
 		})
 		go func() { served <- srv.Serve(listener) }()
-		bootstrap, err := json.Marshal(map[string]string{"origin": "http://" + listener.Addr().String(), "id": f.ID, "session": f.Session, "csrf": f.CSRF})
+		mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE")
+		if mode == "" {
+			mode = "navigation"
+		}
+		if mode != "navigation" && mode != "audit" {
+			t.Fatal("unknown browser mode")
+		}
+		input := map[string]string{"origin": "http://" + listener.Addr().String(), "id": f.ID, "session": f.Session, "csrf": f.CSRF, "mode": mode}
+		if mode == "audit" {
+			// Independent SQL identifiers, not the production reader/exporter output.
+			rows, err := f.DB.Query("SELECT id::text, action FROM audit_events WHERE resource_type = 'extension' AND resource_id = $1 ORDER BY timestamp DESC, id DESC LIMIT 1000", f.ID)
+			acceptanceCheck(t, err)
+			defer rows.Close() // also release rows if an oracle assertion fails
+			var expected []map[string]string
+			for rows.Next() {
+				var id, action string
+				acceptanceCheck(t, rows.Scan(&id, &action))
+				expected = append(expected, map[string]string{"id": id, "action": action})
+			}
+			acceptanceCheck(t, rows.Err())
+			acceptanceCheck(t, rows.Close())
+			if len(expected) == 0 {
+				t.Fatal("audit fixture must contain events")
+			}
+			encoded, err := json.Marshal(expected)
+			acceptanceCheck(t, err)
+			input["audit_expected"] = string(encoded)
+		}
+		bootstrap, err := json.Marshal(input)
 		acceptanceCheck(t, err)
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
@@ -107,6 +135,6 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 		if err != nil {
 			t.Fatalf("browser first gate: %v (see sanitized proof)", err)
 		}
-		t.Log("first navigation gate only; lifecycle/matrix remains open")
+		t.Logf("browser %s gate only; lifecycle/matrix remains open", mode)
 	})
 }

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # First live navigation only; all writes are task evidence or private namespace state.
 set -euo pipefail
-[[ $# == 4 ]] || { echo 'usage: TEST_BINARY ALPHA1_ARCHIVE PG16_BIN NEW_EVIDENCE_DIR' >&2; exit 2; }
+[[ $# == 4 || $# == 5 ]] || { echo 'usage: TEST_BINARY ALPHA1_ARCHIVE PG16_BIN NEW_EVIDENCE_DIR [navigation|audit]' >&2; exit 2; }
+mode=${5:-navigation}
+[[ "$mode" == navigation || "$mode" == audit ]] || exit 2
 binary=$(realpath -e "$1"); archive=$(realpath -e "$2"); pgbin=$(realpath -e "$3")
 driver=$(realpath -e "$(dirname "$0")/extensions-browser-smoke.mjs")
 [[ -x "$binary" && -f "$archive" && -x "$pgbin/postgres" && -x "$pgbin/initdb" && -x "$pgbin/createdb" ]]
@@ -14,7 +16,7 @@ bwrap --unshare-user --unshare-pid --unshare-ipc --unshare-uts --unshare-net \
  --setenv TMPDIR /tmp --setenv GOTMPDIR /tmp --setenv GOMAXPROCS 4 \
  --setenv GOTTH_MAIL_ACCEPTANCE_NAMESPACE 1 --setenv GOTTH_MAIL_ACCEPTANCE_ARCHIVE "$archive" \
  --setenv GOTTH_MAIL_ACCEPTANCE_CERT /tmp/tls/server.crt --setenv GOTTH_MAIL_ACCEPTANCE_KEY /tmp/tls/server.key \
- --setenv GOTTH_MAIL_BROWSER_DRIVER "$driver" --setenv GOTTH_MAIL_BROWSER_OUTPUT "$output/browser" \
+ --setenv GOTTH_MAIL_BROWSER_MODE "$mode" --setenv GOTTH_MAIL_BROWSER_DRIVER "$driver" --setenv GOTTH_MAIL_BROWSER_OUTPUT "$output/browser" \
  --chdir /tmp -- /bin/bash -eu -o pipefail -c '
  umask 077
  mkdir /tmp/tls /tmp/browser-home

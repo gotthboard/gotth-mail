@@ -2,9 +2,21 @@
 
 ## Unreleased
 
-### 2026-09-26 21:51 CDT — Wrap extension identifiers and verify narrow-screen native navigation
+### 2026-09-26 23:40 CDT — Verify physical browser audit attachment delivery
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files: cmd/gotth-mail/extensions_browser_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-smoke.test.mjs, scripts/extensions-browser-acceptance.sh.
+
+Adds an opt-in audit mode to the existing isolated real-runtime browser fixture. Native Tab/Enter activates the rendered audit anchor with application scripts disabled and cookie authentication only. Chromium saves the actual attachment into private temporary storage; completed-download identity, filename, bytes, newline-delimited JSON and event IDs/actions/resource/order/count are checked against an independent SQL query. The attachment is hashed and deleted with private state, not copied into retained evidence. Session/CSRF values are checked for absence; this is not a general configured-secret or redaction-matrix claim.
+
+Verification: actual download passed with one 493-byte event, independent read-only SQL/noPOST/noBearer/noReceiver/runtime-empty oracles and normal browser/namespace cleanup. Final targeted race compile and audit mode pass; scoped vet and syntax checks pass. The final audit run repeats only this new gate after tightening row cleanup and duplicate-download rejection; completed layout/lifecycle validation was not restarted. Cold review found a late-interruption window during browser shutdown. The corrected driver waits for ChildProcess close (process exit plus stdio closure), then latches audit interruption/undrained streams into failure immediately before proof publication. Five controlled cases exercise the real driver: normal control, duplicate during close, signal during close, duplicate after exit and undrained streams. The old driver falsely passed all four fault cases; the correction rejects them while preserving cleanup and normal success. The corrected real download also passes (7.27s). Default navigation mode remains available; independent admission and delivery are still pending.
+
+Risks/non-goals: test equipment only; production unchanged. Download-size check is a post-download fixture bound, not a streaming product cap. Initial unconfigured instance only; no full redaction/limit/error matrix, live OIDC, full browser lifecycle, beta release or deployment claim.
+
+### 2026-09-26 21:51 CDT — Wrap extension identifiers and verify narrow-screen native navigation
+
+Commit: `7c000229a28f104d198125df901c7727e68a2cae`
 
 Affected files: internal/httpui/extensions.go, cmd/gotth-mail/extensions_acceptance_test.go, cmd/gotth-mail/extensions_browser_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-acceptance.sh.
 

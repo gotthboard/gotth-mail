@@ -1,12 +1,15 @@
 // Test-only first live navigation gate. No app scripts, DOM writes, or form actions.
 import {spawn} from 'node:child_process';
-import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,readdirSync,rmSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,readdirSync,rmSync,statSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {join,resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 const output=resolve(process.argv[2] || '');
 if(!process.argv[2] || process.env.GOTTH_MAIL_ACCEPTANCE_NAMESPACE!=='1') throw Error('namespace runner required');
 mkdirSync(output,{mode:0o700}); // no overwrite of an existing evidence run
 const bootstrap=JSON.parse(readFileSync(0,'utf8'));
+const auditMode=bootstrap.mode==='audit';
+const credentialNeedles=auditMode?[bootstrap.session,bootstrap.csrf]:[];
 const origin=new URL(bootstrap.origin);
 if(origin.protocol!=='http:' || origin.hostname!=='127.0.0.1' || !/^[a-f0-9-]{36}$/.test(bootstrap.id)) throw Error('invalid fixture origin/id');
 const proof={scope:'first live navigation only',width:320,theme:'light',appJavaScript:false,defaultSandbox:true,diagnostics:'read-only Runtime.evaluate; native CDP keyboard actions',pages:[],focus:[],responses:[]};
@@ -25,14 +28,19 @@ function chromeProcesses(){
 }
 if(chromeProcesses().length)throw Error('namespace already has a browser');
 const profile=mkdtempSync('/tmp/mail-browser-');
+const downloads=auditMode?mkdtempSync('/tmp/mail-download-'):null;
+let download,downloadProgress;
+if(auditMode){proof.scope='native audit download only';proof.firstGate='NOT_RUN';}
 const browser=spawn('/usr/lib/chromium/chromium',['--headless','--remote-debugging-pipe','--disable-background-networking','--no-first-run','--no-default-browser-check','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe','pipe','pipe'],detached:true});
-let closed=false,closing=false,interrupted=false,serial=0,session,buffer=Buffer.alloc(0),stderrBytes=0;
+let closed=false,drained=false,closing=false,interrupted=false,serial=0,session,buffer=Buffer.alloc(0),stderrBytes=0;
 const pending=new Map();
 let resolveExit;
 const exited=new Promise(r=>{resolveExit=r;});
 function rejectPending(reason){for(const entry of pending.values()){clearTimeout(entry.timer);entry.reject(reason);}pending.clear();}
-browser.on('error',()=>{closed=true;proof.spawnError=true;resolveExit();rejectPending(Error('browser spawn failed'));});
-browser.on('exit',(code,signal)=>{closed=true;proof.browserExit={code,signal};resolveExit();rejectPending(Error('browser exited'));});
+browser.on('error',()=>{closed=true;proof.spawnError=true;rejectPending(Error('browser spawn failed'));});
+browser.on('exit',(code,signal)=>{closed=true;proof.browserExit={code,signal};rejectPending(Error('browser exited'));});
+// ChildProcess close follows exit AND closure of its stdio streams.
+browser.on('close',()=>{drained=true;resolveExit();});
 browser.stderr.on('data',b=>{stderrBytes+=b.length;}); // never retain unfiltered browser output
 browser.stdio[3].on('error',()=>rejectPending(Error('CDP write failed')));
 browser.stdio[4].on('error',()=>rejectPending(Error('CDP read failed')));
@@ -46,6 +54,11 @@ browser.stdio[4].on('data',chunk=>{
   if(message.id && pending.has(message.id)){
    const entry=pending.get(message.id);pending.delete(message.id);clearTimeout(entry.timer);
    if(message.error)entry.reject(Error('CDP command failed: '+entry.method));else entry.resolve(message.result || {});
+  }else if(message.method==='Browser.downloadWillBegin'){
+   if(download){rejectPending(Error('unexpected extra download'));interrupted=true;}
+   download=message.params;
+  }else if(message.method==='Browser.downloadProgress'){
+   if(download && message.params.guid===download.guid)downloadProgress=message.params;
   }else if(message.method==='Network.responseReceived' && message.sessionId===session && message.params.type==='Document'){
    const u=new URL(message.params.response.url);
    if(u.origin===origin.origin)proof.responses.push({path:u.pathname,status:message.params.response.status});
@@ -104,10 +117,40 @@ try{
  if(proof.responses.at(-1)?.status!==401)throw Error('unauthenticated browser not denied');
  await call('Network.setCookies',{cookies:[{name:'gotth_mail_session',value:bootstrap.session,url:origin.origin,path:'/'},{name:'gotth_mail_csrf',value:bootstrap.csrf,url:origin.origin,path:'/'}]});
  bootstrap.session='';bootstrap.csrf='';
+ const detail=list+'/'+bootstrap.id;
+ if(auditMode){
+  await call('Browser.setDownloadBehavior',{behavior:'allowAndName',downloadPath:downloads,eventsEnabled:true},null);
+  await loaded(detail,(await call('Page.navigate',{url:origin.origin+detail})).loaderId);
+  if(proof.responses.at(-1)?.status!==200)throw Error('authenticated detail failed');
+  const auditPath=detail+'/audit';
+  let reached=false;
+  for(let i=0;i<100;i++){
+   await key('Tab',9);
+   const focus=await observe('({tag:document.activeElement.tagName,href:document.activeElement.getAttribute("href")})');
+   if(focus.tag==='A' && focus.href===auditPath){proof.auditTabs=i+1;reached=true;break;}
+  }
+  if(!reached)throw Error('audit link unreachable by native keyboard');
+  await key('Enter',13);
+  for(let i=0;i<100 && downloadProgress?.state!=='completed';i++){
+   if(interrupted || downloadProgress?.state==='canceled')throw Error('audit download interrupted');
+   await delay(50);
+  }
+  if(interrupted || downloadProgress?.state!=='completed' || download?.url!==origin.origin+auditPath || download.suggestedFilename!=='extension-audit.jsonl' || !/^[a-f0-9-]{36}$/.test(download.guid))throw Error('audit download did not complete as expected');
+  const path=join(downloads,download.guid);
+  const size=statSync(path).size;
+  if(size===0 || size>1024*1024 || size!==downloadProgress.receivedBytes)throw Error('audit attachment size mismatch or fixture limit');
+  const bytes=readFileSync(path);const raw=bytes.toString('utf8');
+  if(credentialNeedles.some(s=>s && raw.includes(s)))throw Error('audit attachment exposed fixture credentials');
+  if(!raw.endsWith('\n'))throw Error('audit attachment missing final line ending');
+  let events;try{events=raw.trimEnd().split('\n').map(line=>JSON.parse(line));}catch{throw Error('invalid audit JSONL attachment');}
+  const expected=JSON.parse(bootstrap.audit_expected);
+  if(events.length!==expected.length || events.some((row,i)=>row.ID!==expected[i].id || row.Action!==expected[i].action || row.Resource?.Type!=='extension' || row.Resource.ID!==bootstrap.id))throw Error('audit attachment differs from independent SQL scope/order');
+  proof.audit={state:'completed',bytes:size,events:events.length,sha256:createHash('sha256').update(bytes).digest('hex'),independentSQLMatch:true,credentialLeak:false};
+  proof.auditGate='PASS';
+ }else{
  await loaded(list,(await call('Page.navigate',{url:origin.origin+list})).loaderId);
  if(proof.responses.at(-1)?.status!==200)throw Error('authenticated inventory failed');
  await inspectPage('inventory');
- const detail=list+'/'+bootstrap.id;
  let found=false;
  for(let i=0;i<20;i++){
   await key('Tab',9);
@@ -120,7 +163,8 @@ try{
  if(proof.responses.at(-1)?.status!==200)throw Error('detail navigation failed');
  await inspectPage('detail');
  proof.firstGate='PASS';
-}catch(e){proof.firstGate=proof.productRed?'PRODUCT_RED':'EQUIPMENT_FAILURE';proof.error=e.message;process.exitCode=1;}
+ }
+}catch(e){if(auditMode)proof.auditGate='FAIL';else proof.firstGate=proof.productRed?'PRODUCT_RED':'EQUIPMENT_FAILURE';proof.error=e.message;process.exitCode=1;}
 finally{
  clearTimeout(timer);closing=true;
  try{if(!closed)await call('Browser.close',{},null);}catch{/* shutdown may close pipe before reply */}
@@ -130,8 +174,10 @@ finally{
  let remaining=[];
  for(let i=0;i<20;i++){remaining=chromeProcesses();if(!remaining.length)break;await delay(50);}
  proof.cleanup={mainExited:closed,remaining,unfilteredStderrBytes:stderrBytes};
- if(!closed || remaining.length || proof.forcedShutdown || proof.signalError){proof.cleanupFailed=true;process.exitCode=1;}else rmSync(profile,{recursive:true});
+ if(!closed || remaining.length || proof.forcedShutdown || proof.signalError){proof.cleanupFailed=true;process.exitCode=1;}else {rmSync(profile,{recursive:true});if(downloads)rmSync(downloads,{recursive:true});}
  rejectPending(Error('driver closed'));browser.stdio[3].destroy();browser.stdio[4].destroy();browser.stderr.destroy();
+ // No await between this final latch and proof publication: late events cannot restore PASS.
+ if(auditMode && (interrupted || !drained)){proof.auditGate='FAIL';proof.error='audit interrupted or event stream not drained before proof';process.exitCode=1;}
  writeFileSync(join(output,'proof.json'),JSON.stringify(proof,null,2)+'\n',{mode:0o600});
- console.log(JSON.stringify({firstGate:proof.firstGate,productRed:proof.productRed,cleanupFailed:!!proof.cleanupFailed,pages:proof.pages.map(x=>({name:x.name,client:x.client,scroll:x.scroll}))}));
+ console.log(JSON.stringify({firstGate:proof.firstGate,auditGate:proof.auditGate,audit:proof.audit,productRed:proof.productRed,cleanupFailed:!!proof.cleanupFailed,pages:proof.pages.map(x=>({name:x.name,client:x.client,scroll:x.scroll}))}));
 }
