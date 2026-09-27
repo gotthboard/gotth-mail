@@ -454,7 +454,15 @@ func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(a
 		return rec, err
 	}
 	if browser != nil {
-		browser(acceptanceBrowserStart{Handler: handler, DB: db, ID: id, Session: sid, CSRF: csrf, Current: current, EmptyRuntime: emptyRuntime, Requests: requests.Load, Endpoint: receiver.URL, Secret: key, MasterFile: master, RuntimeRoot: r, Executable: filepath.Join(stage, "gotth-extension-webhook"), ActorID: server.OIDCStore.(acceptanceSessions).bound.IdentityRefID})
+		var observation *nativeTestRuntime
+		if os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "connection-test" {
+			configure(receiver.URL, key, "2") // Admitted handler-driven SETUP, not browser coverage.
+			original := server.Extensions.Runtime
+			observation = &nativeTestRuntime{Runtime: original, root: r, executable: filepath.Join(stage, "gotth-extension-webhook"), expectedSHA: sha256.Sum256(files["gotth-extension-webhook"])}
+			server.Extensions.Runtime = observation
+			defer func() { server.Extensions.Runtime = original }() // Restore before registered Disable cleanup.
+		}
+		browser(acceptanceBrowserStart{TestRuntime: observation, Handler: handler, DB: db, ID: id, Session: sid, CSRF: csrf, Current: current, EmptyRuntime: emptyRuntime, Requests: requests.Load, Endpoint: receiver.URL, Secret: key, MasterFile: master, RuntimeRoot: r, Executable: filepath.Join(stage, "gotth-extension-webhook"), ActorID: server.OIDCStore.(acceptanceSessions).bound.IdentityRefID})
 		return
 	}
 	configure(untrusted.URL, key, "1")

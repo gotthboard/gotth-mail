@@ -2,9 +2,21 @@
 
 ## Unreleased
 
-### 2026-09-27 00:22 CDT — Exercise native initial configuration against live SQL
+### 2026-09-27 01:00 CDT — Observe native Test against the real packaged extension
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files: cmd/gotth-mail/extensions_browser_test.go, cmd/gotth-mail/extensions_acceptance_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-smoke.test.mjs, scripts/extensions-browser-acceptance.sh.
+
+Adds an isolated connection-test browser mode. Existing handler-driven configuration is explicit setup, not repeated native configuration evidence. One native Test button POST executes the real administrator Start/Probe/Stop path. A passive delegating test observer checks the pinned live executable inode digest, child/process-group/runtime-directory binding and owner-only socket/files after Start and Probe, then child/directory removal after Stop. Independent SQL checks require only readiness and one Test audit delta, preserving encrypted secrets, configuration, previews and authority; receiver traffic and private-value reflection fail the gate. Existing modes and production remain unchanged.
+
+Verification: development Go1.26.6 race compile and scoped cmd vet exit0; two observer-transparency and seven SQL-delta cases pass; fifteen controlled shutdown cases plus native Enter contract pass. First actual connection-test run passes7.52s with Chromium151.0.7922.71 and PostgreSQL16.14/160014: one native POST, real pinned child observed after Start and Probe, private socket/files, exact readiness/audit delta, encrypted rows/configuration/authority preserved, no receiver traffic, child/runtime removed after Stop. Browser exit0 and namespace zero live processes/residual paths. No product red, production edit, old physical gate or full-suite rerun. Source identities, raw logs/build metadata and evidence limits are retained in the task handoff; canonical admission remains parent-owned.
+
+Risks/non-goals: Test attests authenticated extension-control readiness, not webhook receiver delivery or a whole-request latency bound. Injected login, no Enable/Disable/send/update/rollback browser flow and no presentation/renderer/B1/beta admission. Canonical stack and shared tokens remain required.
+
+### 2026-09-27 00:22 CDT — Exercise native initial configuration against live SQL
+
+Commit: `4d3dc671d90759e582b32b89890d5eef979e0de2`
 
 Affected files: cmd/gotth-mail/extensions_browser_test.go, cmd/gotth-mail/extensions_acceptance_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-smoke.test.mjs, scripts/extensions-browser-acceptance.sh.
 

@@ -1,15 +1,17 @@
 package main
 
-// Bounded live-browser gates only; lifecycle controls remain outside this fixture.
+// Bounded live-browser gates; routing and delivery admission remain outside this fixture.
 import (
 	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +30,7 @@ import (
 )
 
 type acceptanceBrowserStart struct {
+	TestRuntime                                                    *nativeTestRuntime
 	Handler                                                        http.Handler
 	DB                                                             *sql.DB
 	ID, Session, CSRF                                              string
@@ -48,6 +51,10 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 		}
 	}
 	acceptanceLifecycleDriver(t, false, func(f acceptanceBrowserStart) {
+		if os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "connection-test" {
+			runConnectionBrowser(t, f, driver)
+			return
+		}
 		if os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "configuration" {
 			runConfigurationBrowser(t, f, driver)
 			return
@@ -521,6 +528,547 @@ func TestConfigurationBrowserBarrierRejectsUnknown(t *testing.T) {
 			o.ServeHTTP(w, r)
 			if w.Code != 500 || o.failure == "" || invoked {
 				t.Fatal("invalid action crossed fixture boundary")
+			}
+		})
+	}
+}
+
+// Test-only passive observer: every runtime result and effect comes from the real
+// delegate. Observation errors latch independently, never bypassing Probe/Stop.
+type nativeTestRuntime struct {
+	extensionsadmin.Runtime
+	mu                                         sync.Mutex
+	root, executable, pid, dir, token, failure string
+	expectedSHA                                [32]byte
+	sequence                                   []string
+	liveStart, liveProbe, stopped              bool
+}
+
+func (r *nativeTestRuntime) record(err error) {
+	if err != nil && r.failure == "" {
+		r.failure = err.Error()
+	}
+}
+func (r *nativeTestRuntime) live() error {
+	entries, err := os.ReadDir(r.root)
+	if err != nil || len(entries) != 1 {
+		return errors.New("expected one private runtime directory")
+	}
+	dir := filepath.Join(r.root, entries[0].Name())
+	if r.dir != "" && r.dir != dir {
+		return errors.New("runtime directory changed during Test")
+	}
+	for _, name := range []string{"", "secrets", "config.json", "binding.json", "service.token", "secrets/webhook.hmac-key", "extension.sock"} {
+		info, err := os.Lstat(filepath.Join(dir, name))
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0077 != 0 {
+			return errors.New("runtime path missing or not private")
+		}
+		owner, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || owner.Uid != uint32(os.Geteuid()) {
+			return errors.New("runtime path ownership mismatch")
+		}
+		if name == "extension.sock" && info.Mode()&os.ModeSocket == 0 {
+			return errors.New("runtime socket missing")
+		}
+		if (name == "" || name == "secrets") && !info.IsDir() {
+			return errors.New("runtime directory type mismatch")
+		}
+		if name != "" && name != "secrets" && name != "extension.sock" && !info.Mode().IsRegular() {
+			return errors.New("runtime file type mismatch")
+		}
+	}
+	paths, err := filepath.Glob("/proc/[0-9]*/exe")
+	if err != nil {
+		return errors.New("child inventory failed")
+	}
+	found := ""
+	for _, path := range paths {
+		target, err := os.Readlink(path)
+		if err != nil || target != r.executable {
+			continue
+		}
+		if found != "" {
+			return errors.New("multiple pinned children")
+		}
+		found = filepath.Base(filepath.Dir(path))
+		file, err := os.Open(path)
+		if err != nil {
+			return errors.New("live executable open failed")
+		}
+		hash := sha256.New()
+		n, copyErr := io.Copy(hash, io.LimitReader(file, (12<<20)+1))
+		closeErr := file.Close()
+		if copyErr != nil || closeErr != nil || n > 12<<20 || !bytes.Equal(hash.Sum(nil), r.expectedSHA[:]) {
+			return errors.New("live executable digest mismatch")
+		}
+		stat, err := os.ReadFile(filepath.Join("/proc", found, "stat"))
+		if err != nil {
+			return errors.New("child state unavailable")
+		}
+		end := strings.LastIndexByte(string(stat), ')')
+		if end < 0 {
+			return errors.New("child state malformed")
+		}
+		fields := strings.Fields(string(stat[end+1:]))
+		if len(fields) < 3 || fields[0] == "Z" || fields[2] != found {
+			return errors.New("child dead or process group mismatch")
+		}
+		cwd, err := os.Readlink(filepath.Join("/proc", found, "cwd"))
+		if err != nil || cwd != dir {
+			return errors.New("child runtime directory mismatch")
+		}
+	}
+	if found == "" || (r.pid != "" && r.pid != found) {
+		return errors.New("pinned child absent or changed")
+	}
+	r.pid, r.dir = found, dir
+	tokenFile, err := os.Open(filepath.Join(dir, "service.token"))
+	if err != nil {
+		return errors.New("runtime privacy canary unavailable")
+	}
+	token, err := io.ReadAll(io.LimitReader(tokenFile, 65))
+	closeErr := tokenFile.Close()
+	if err != nil || closeErr != nil || len(token) != 64 {
+		return errors.New("runtime privacy canary invalid")
+	}
+	if _, err := hex.DecodeString(string(token)); err != nil {
+		return errors.New("runtime privacy canary encoding invalid")
+	}
+	if r.token != "" && r.token != string(token) {
+		return errors.New("runtime token changed during Test")
+	}
+	r.token = string(token)
+	clear(token)
+	return nil
+}
+func (r *nativeTestRuntime) absent() error {
+	entries, err := os.ReadDir(r.root)
+	if err != nil || len(entries) != 0 {
+		return errors.New("runtime directory remains after Stop")
+	}
+	if r.pid != "" {
+		if _, err := os.Stat(filepath.Join("/proc", r.pid)); !os.IsNotExist(err) {
+			return errors.New("observed child remains after Stop")
+		}
+	}
+	if r.dir != "" {
+		if _, err := os.Lstat(r.dir); !os.IsNotExist(err) {
+			return errors.New("observed socket directory remains")
+		}
+	}
+	return nil
+}
+func (r *nativeTestRuntime) Start(ctx context.Context, i extensionsadmin.Instance, secrets map[string][]byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sequence = append(r.sequence, "start")
+	err := r.Runtime.Start(ctx, i, secrets)
+	if err != nil {
+		r.record(errors.New("real Start failed"))
+		return err
+	}
+	observation := r.live()
+	r.record(observation)
+	r.liveStart = observation == nil
+	return err
+}
+func (r *nativeTestRuntime) Probe(ctx context.Context, i extensionsadmin.Instance) (extensionsadmin.Health, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sequence = append(r.sequence, "probe")
+	health, err := r.Runtime.Probe(ctx, i)
+	if err != nil || !health.Healthy || health.Code != "extension.ready" {
+		r.record(errors.New("real Probe not ready"))
+	}
+	observation := r.live()
+	r.record(observation)
+	r.liveProbe = err == nil && health.Healthy && health.Code == "extension.ready" && observation == nil
+	return health, err
+}
+func (r *nativeTestRuntime) Stop(ctx context.Context, i extensionsadmin.Instance) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sequence = append(r.sequence, "stop")
+	err := r.Runtime.Stop(ctx, i)
+	if err != nil {
+		r.record(errors.New("real Stop failed"))
+	}
+	observation := r.absent()
+	r.record(observation)
+	r.stopped = err == nil && observation == nil
+	return err
+}
+func (r *nativeTestRuntime) AdmitRouting(ctx context.Context, i extensionsadmin.Instance) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.record(errors.New("unexpected routing admission"))
+	return r.Runtime.AdmitRouting(ctx, i)
+}
+func (r *nativeTestRuntime) RevokeRouting(ctx context.Context, i extensionsadmin.Instance) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.record(errors.New("unexpected routing revocation"))
+	return r.Runtime.RevokeRouting(ctx, i)
+}
+
+// Check only Test's SQL delta; the already-admitted configure pair is SETUP.
+func connectionSQL(before, after [4]string, actor, id string) error {
+	if before[1] != after[1] || before[2] != after[2] {
+		return errors.New("Test changed secrets or operation previews")
+	}
+	var oldRows, newRows, oldAudit, newAudit []map[string]any
+	if json.Unmarshal([]byte(before[0]), &oldRows) != nil || json.Unmarshal([]byte(after[0]), &newRows) != nil || len(oldRows) != 1 || len(newRows) != 1 {
+		return errors.New("Test instance cardinality mismatch")
+	}
+	old, row := oldRows[0], newRows[0]
+	if old["configuration_revision"] != float64(2) || old["tested_revision"] != nil || old["enabled"] != false || old["routed"] != false || row["tested_revision"] != old["configuration_revision"] || row["health_code"] != "extension.ready" || row["lifecycle"] != "stopped" {
+		return errors.New("Test readiness delta mismatch")
+	}
+	for _, field := range []string{"tested_revision", "health_code", "lifecycle", "updated_at"} {
+		delete(old, field)
+		delete(row, field)
+	}
+	if !reflect.DeepEqual(old, row) {
+		return errors.New("Test changed configuration or authority")
+	}
+	if json.Unmarshal([]byte(before[3]), &oldAudit) != nil || json.Unmarshal([]byte(after[3]), &newAudit) != nil || len(oldAudit) != 2 || len(newAudit) != 3 {
+		return errors.New("Test audit cardinality mismatch")
+	}
+	prior := map[any]map[string]any{}
+	for _, event := range oldAudit {
+		prior[event["id"]] = event
+	}
+	var added map[string]any
+	for _, event := range newAudit {
+		if old, ok := prior[event["id"]]; ok {
+			if !reflect.DeepEqual(old, event) {
+				return errors.New("prior audit changed")
+			}
+			delete(prior, event["id"])
+		} else if added == nil {
+			added = event
+		} else {
+			return errors.New("extra Test audit")
+		}
+	}
+	if len(prior) != 0 || added == nil || added["action"] != "extension.test" || added["actor_type"] != "oidc_subject" || added["actor_id"] != actor || added["resource_type"] != "extension" || added["resource_id"] != id || added["result"] != "success" {
+		return errors.New("Test audit binding mismatch")
+	}
+	payload, ok := added["after_redacted_json"].(string)
+	if !ok {
+		return errors.New("Test audit payload absent")
+	}
+	var values map[string]any
+	if json.Unmarshal([]byte(payload), &values) != nil || !reflect.DeepEqual(values, map[string]any{"configuration_revision": float64(2), "health_code": "extension.ready"}) {
+		return errors.New("Test audit payload mismatch")
+	}
+	return nil
+}
+
+func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string) {
+	if f.TestRuntime == nil {
+		t.Fatal("missing real runtime observer")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	before, err := configurationSnapshot(ctx, f.DB)
+	cancel()
+	acceptanceCheck(t, err)
+	acceptanceCheck(t, f.TestRuntime.absent())
+	var mu sync.Mutex
+	posts := 0
+	failure := ""
+	var applied [4]string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		fail := func(reason string) {
+			if failure == "" {
+				failure = reason
+			}
+			http.Error(w, "connection-test fixture failed", 500)
+		}
+		if failure != "" {
+			fail(failure)
+			return
+		}
+		detail := "/admin/extensions/" + f.ID
+		if r.Header.Get("Authorization") != "" || r.URL.RawQuery != "" {
+			fail("unexpected authority or query")
+			return
+		}
+		if r.URL.Path != detail && r.URL.Path != "/admin/extensions" && r.URL.Path != "/favicon.ico" {
+			fail("unexpected connection-test route")
+			return
+		}
+		if r.Method == "POST" {
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+			if posts != 0 || r.URL.Path != detail || r.ParseForm() != nil || r.PostForm.Get("action") != "test" {
+				fail("unexpected connection-test action or phase")
+				return
+			}
+			posts++
+		} else if r.Method != "GET" {
+			fail("unexpected connection-test method")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		rec := httptest.NewRecorder()
+		f.Handler.ServeHTTP(rec, r.WithContext(ctx))
+		f.TestRuntime.mu.Lock()
+		defer f.TestRuntime.mu.Unlock()
+		body := rec.Body.Bytes()
+		for _, needle := range []string{f.Secret, f.Session, f.TestRuntime.token} {
+			if needle != "" && bytes.Contains(body, []byte(needle)) {
+				fail("Test response private value leak")
+				return
+			}
+		}
+		if len(body) > 1<<20 {
+			fail("Test response fixture size exceeded")
+			return
+		}
+		expected := 200
+		if r.URL.Path == "/admin/extensions" {
+			expected = 401
+		}
+		if r.URL.Path == "/favicon.ico" {
+			expected = 404
+		}
+		if rec.Code != expected {
+			fail("unexpected Test response status")
+			return
+		}
+		state, err := configurationSnapshot(ctx, f.DB)
+		if err != nil {
+			fail(err.Error())
+			return
+		}
+		if f.Requests() != 0 {
+			fail("Test reached webhook receiver")
+			return
+		}
+		if err := f.TestRuntime.absent(); err != nil {
+			fail(err.Error())
+			return
+		}
+		if posts == 0 {
+			if state != before || len(f.TestRuntime.sequence) != 0 {
+				fail("GET changed configured state")
+				return
+			}
+		} else {
+			if f.TestRuntime.failure != "" {
+				fail(f.TestRuntime.failure)
+				return
+			}
+			if !reflect.DeepEqual(f.TestRuntime.sequence, []string{"start", "probe", "stop"}) || !f.TestRuntime.liveStart || !f.TestRuntime.liveProbe || !f.TestRuntime.stopped {
+				fail("positive real Test runtime proof incomplete")
+				return
+			}
+			if r.Method == "POST" {
+				if err := connectionSQL(before, state, f.ActorID, f.ID); err != nil {
+					fail(err.Error())
+					return
+				}
+				if !bytes.Contains(body, []byte("extension operation accepted")) {
+					fail("Test action not accepted")
+					return
+				}
+				applied = state
+			} else if state != applied {
+				fail("GET changed tested state")
+				return
+			}
+		}
+		for _, table := range state {
+			for _, needle := range []string{f.Secret, f.Session, f.CSRF, f.TestRuntime.token} {
+				if needle != "" && strings.Contains(table, needle) {
+					fail("Test SQL private value leak")
+					return
+				}
+			}
+		}
+		for name, values := range rec.Header() {
+			for _, value := range values {
+				w.Header().Add(name, value)
+			}
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(body)
+	})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	acceptanceCheck(t, err)
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 25 * time.Second, WriteTimeout: 25 * time.Second, IdleTimeout: 10 * time.Second}
+	served := make(chan error, 1)
+	var shutdownOnce sync.Once
+	shutdown := func() {
+		shutdownOnce.Do(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(ctx); err != nil {
+				t.Error("Test HTTP shutdown failed")
+				_ = srv.Close()
+			}
+			if err := <-served; err != nil && err != http.ErrServerClosed {
+				t.Error("Test HTTP serve failed")
+			}
+		})
+	}
+	t.Cleanup(shutdown)
+	go func() { served <- srv.Serve(listener) }()
+	input := map[string]string{"origin": "http://" + listener.Addr().String(), "id": f.ID, "session": f.Session, "csrf": f.CSRF, "mode": "connection-test"}
+	bootstrap, err := json.Marshal(input)
+	acceptanceCheck(t, err)
+	runctx, runcancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer runcancel()
+	cmd := exec.CommandContext(runctx, "node", driver, os.Getenv("GOTTH_MAIL_BROWSER_OUTPUT"))
+	cmd.Stdin = bytes.NewReader(bootstrap)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 20 * time.Second
+	runErr := cmd.Run()
+	clear(bootstrap)
+	shutdown()
+	mu.Lock()
+	defer mu.Unlock()
+	f.TestRuntime.mu.Lock()
+	defer f.TestRuntime.mu.Unlock()
+	if failure != "" {
+		t.Error(failure)
+	}
+	if posts != 1 || f.TestRuntime.failure != "" || !reflect.DeepEqual(f.TestRuntime.sequence, []string{"start", "probe", "stop"}) || !f.TestRuntime.liveStart || !f.TestRuntime.liveProbe || !f.TestRuntime.stopped {
+		t.Error("native Test or positive runtime sequence incomplete")
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	state, err := configurationSnapshot(ctx, f.DB)
+	cancel()
+	if err != nil || state != applied {
+		t.Error("final tested SQL mismatch")
+	}
+	if err := f.TestRuntime.absent(); err != nil {
+		t.Error(err.Error())
+	}
+	if f.Requests() != 0 {
+		t.Error("receiver not quiet")
+	}
+	// Only the whitelist proof is read; no transport dumps are retained.
+	proof, err := os.ReadFile(filepath.Join(os.Getenv("GOTTH_MAIL_BROWSER_OUTPUT"), "proof.json"))
+	if err != nil {
+		t.Error("browser proof absent")
+	} else {
+		for _, needle := range []string{f.Secret, f.Session, f.CSRF, f.TestRuntime.token} {
+			if needle != "" && bytes.Contains(proof, []byte(needle)) {
+				t.Error("browser proof private value leak")
+			}
+		}
+	}
+	if runErr != nil {
+		t.Errorf("native Test browser failed: %v", runErr)
+	}
+	if !t.Failed() {
+		t.Logf("PASS native Test: one POST; Start/Probe/Stop real child pid=%s executable_sha256=%x private socket; stopped/disabled/unrouted; SQL/audit/secret retention/privacy; receiver quiet; login injected", f.TestRuntime.pid, f.TestRuntime.expectedSHA)
+	}
+}
+
+// Synthetic delegate verifies observer transparency only; it is not runtime proof.
+type nativeTestDelegate struct {
+	calls  []string
+	result error
+	health extensionsadmin.Health
+}
+
+func (d *nativeTestDelegate) Start(context.Context, extensionsadmin.Instance, map[string][]byte) error {
+	d.calls = append(d.calls, "start")
+	return d.result
+}
+func (d *nativeTestDelegate) Probe(context.Context, extensionsadmin.Instance) (extensionsadmin.Health, error) {
+	d.calls = append(d.calls, "probe")
+	return d.health, d.result
+}
+func (d *nativeTestDelegate) Stop(context.Context, extensionsadmin.Instance) error {
+	d.calls = append(d.calls, "stop")
+	return d.result
+}
+func (d *nativeTestDelegate) AdmitRouting(context.Context, extensionsadmin.Instance) error {
+	d.calls = append(d.calls, "admit")
+	return d.result
+}
+func (d *nativeTestDelegate) RevokeRouting(context.Context, extensionsadmin.Instance) error {
+	d.calls = append(d.calls, "revoke")
+	return d.result
+}
+func TestNativeTestObserverPreservesDelegate(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "no-fake-success", true: "original-errors"}[failed], func(t *testing.T) {
+			var expected error
+			if failed {
+				expected = errors.New("synthetic delegate failure")
+			}
+			d := &nativeTestDelegate{result: expected, health: extensionsadmin.Health{Healthy: true, Code: "extension.ready"}}
+			r := &nativeTestRuntime{Runtime: d, root: "/nonexistent-native-test-observer"}
+			ctx := context.Background()
+			i := extensionsadmin.Instance{}
+			if err := r.Start(ctx, i, nil); err != expected {
+				t.Fatal("observer replaced Start result")
+			}
+			h, err := r.Probe(ctx, i)
+			if err != expected || h != d.health {
+				t.Fatal("observer replaced Probe result")
+			}
+			if err := r.Stop(ctx, i); err != expected {
+				t.Fatal("observer replaced Stop result")
+			}
+			if !reflect.DeepEqual(d.calls, []string{"start", "probe", "stop"}) || r.failure == "" || r.liveStart || r.liveProbe || r.stopped {
+				t.Fatal("missing positive OS proof was accepted or delegation suppressed")
+			}
+			if err := r.AdmitRouting(ctx, i); err != expected {
+				t.Fatal("admit result changed")
+			}
+			if err := r.RevokeRouting(ctx, i); err != expected {
+				t.Fatal("revoke result changed")
+			}
+			if !reflect.DeepEqual(d.calls, []string{"start", "probe", "stop", "admit", "revoke"}) {
+				t.Fatal("unexpected routing call did not delegate")
+			}
+		})
+	}
+}
+func TestNativeTestSQLDelta(t *testing.T) {
+	encode := func(v any) string { b, err := json.Marshal(v); acceptanceCheck(t, err); return string(b) }
+	for _, kind := range []string{"valid", "configuration", "authority", "secret", "preview", "audit", "readiness"} {
+		t.Run(kind, func(t *testing.T) {
+			old := map[string]any{"configuration_revision": 2, "tested_revision": nil, "enabled": false, "routed": false, "configuration_json": map[string]any{"endpoint": "fixed"}, "health_code": "extension.unknown", "lifecycle": "stopped", "updated_at": "before"}
+			next := map[string]any{}
+			for k, v := range old {
+				next[k] = v
+			}
+			next["tested_revision"] = 2
+			next["health_code"] = "extension.ready"
+			next["updated_at"] = "after"
+			prior := []map[string]any{{"id": "install"}, {"id": "configure"}}
+			event := map[string]any{"id": "test", "action": "extension.test", "actor_type": "oidc_subject", "actor_id": "actor", "resource_type": "extension", "resource_id": "instance", "result": "success", "after_redacted_json": encode(map[string]any{"configuration_revision": 2, "health_code": "extension.ready"})}
+			before := [4]string{encode([]any{old}), "encrypted", "consumed", encode(prior)}
+			after := [4]string{"", "encrypted", "consumed", ""}
+			switch kind {
+			case "configuration":
+				next["configuration_json"] = "changed"
+			case "authority":
+				next["enabled"] = true
+			case "secret":
+				after[1] = "rotated"
+			case "preview":
+				after[2] = "new"
+			case "audit":
+				event["actor_id"] = "other"
+			case "readiness":
+				next["tested_revision"] = 1
+			}
+			after[0] = encode([]any{next})
+			after[3] = encode([]any{prior[0], prior[1], event})
+			err := connectionSQL(before, after, "actor", "instance")
+			if (err == nil) != (kind == "valid") {
+				t.Fatal("SQL delta oracle accepted corruption or rejected valid delta")
 			}
 		})
 	}

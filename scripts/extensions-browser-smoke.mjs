@@ -10,9 +10,10 @@ mkdirSync(output,{mode:0o700}); // no overwrite of an existing evidence run
 const bootstrap=JSON.parse(readFileSync(0,'utf8'));
 const auditMode=bootstrap.mode==='audit';
 const configurationMode=bootstrap.mode==='configuration';
-if(!['navigation','audit','configuration'].includes(bootstrap.mode || 'navigation'))throw Error('unknown browser mode');
-const credentialNeedles=(auditMode||configurationMode)?[bootstrap.session,bootstrap.csrf,...(configurationMode?[bootstrap.secret]:[])]:[];
-let configurationPosts=0;
+const connectionMode=bootstrap.mode==='connection-test';
+if(!['navigation','audit','configuration','connection-test'].includes(bootstrap.mode || 'navigation'))throw Error('unknown browser mode');
+const credentialNeedles=(auditMode||configurationMode||connectionMode)?[bootstrap.session,bootstrap.csrf,...(configurationMode?[bootstrap.secret]:[])]:[];
+let configurationPosts=0,connectionPosts=0;
 const origin=new URL(bootstrap.origin);
 if(origin.protocol!=='http:' || origin.hostname!=='127.0.0.1' || !/^[a-f0-9-]{36}$/.test(bootstrap.id)) throw Error('invalid fixture origin/id');
 const proof={scope:'first live navigation only',width:320,theme:'light',appJavaScript:false,defaultSandbox:true,diagnostics:'read-only Runtime.evaluate; native CDP keyboard actions',pages:[],focus:[],responses:[]};
@@ -35,6 +36,7 @@ const downloads=auditMode?mkdtempSync('/tmp/mail-download-'):null;
 let download,downloadProgress;
 if(auditMode){proof.scope='native audit download only';proof.firstGate='NOT_RUN';}
 if(configurationMode){proof.scope='native initial configuration only; not renderer acceptance';proof.firstGate='NOT_RUN';proof.auditGate='NOT_RUN';proof.configuration={};}
+if(connectionMode){proof.scope='native Test only; configured setup and login injected; not renderer acceptance';proof.firstGate='NOT_RUN';proof.auditGate='NOT_RUN';proof.configurationGate='NOT_RUN';}
 const browser=spawn('/usr/lib/chromium/chromium',['--headless','--remote-debugging-pipe','--disable-background-networking','--no-first-run','--no-default-browser-check','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe','pipe','pipe'],detached:true});
 let closed=false,drained=false,closing=false,interrupted=false,serial=0,session,buffer=Buffer.alloc(0),stderrBytes=0;
 const pending=new Map();
@@ -59,10 +61,12 @@ browser.stdio[4].on('data',chunk=>{
    const entry=pending.get(message.id);pending.delete(message.id);clearTimeout(entry.timer);
    if(message.error)entry.reject(Error('CDP command failed: '+entry.method));else entry.resolve(message.result || {});
   }else if(message.method==='Browser.downloadWillBegin'){
-   if(configurationMode || download){rejectPending(Error('unexpected download'));interrupted=true;}
+   if(configurationMode || connectionMode || download){rejectPending(Error('unexpected download'));interrupted=true;}
    download=message.params;
   }else if(message.method==='Browser.downloadProgress'){
    if(download && message.params.guid===download.guid)downloadProgress=message.params;
+  }else if(connectionMode && message.method==='Network.requestWillBeSent' && message.sessionId===session && message.params.request.method==='POST'){
+   connectionPosts++;
   }else if(configurationMode && message.method==='Network.requestWillBeSent' && message.sessionId===session && message.params.request.method==='POST'){
    configurationPosts++; // never retain headers or body
   }else if(message.method==='Network.responseReceived' && message.sessionId===session && message.params.type==='Document'){
@@ -122,7 +126,7 @@ async function typeConfiguration(text){
  for(const ch of text)await call('Input.dispatchKeyEvent',{type:'char',text:ch,key:ch});
 }
 // Chromium 151 HTMLElement::HandleKeyboardActivation activates Enter on keypress CR,
-// not a bare keyDown/keyUp. Keep the admitted navigation/audit helper unchanged.
+// not a bare keyDown/keyUp. Shared by native form buttons; navigation/audit stays unchanged.
 async function configurationEnter(){
  await call('Input.dispatchKeyEvent',{type:'rawKeyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13});
  await call('Input.dispatchKeyEvent',{type:'char',key:'Enter',code:'Enter',text:'\r',unmodifiedText:'\r',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13});
@@ -181,6 +185,29 @@ async function runConfiguration(detail){
  proof.configuration.reloadPersisted=true;proof.configuration.posts=configurationPosts;
  proof.configurationGate='PASS';bootstrap.secret='';
 }
+async function runConnectionTest(detail){
+ await loaded(detail,(await call('Page.navigate',{url:origin.origin+detail})).loaderId);
+ if(proof.responses.at(-1)?.status!==200)throw Error('configured Test detail unavailable');
+ const before=await observe('({health:document.querySelector("#health")?.textContent,secretsBlank:Array.from(document.querySelectorAll("input[type=password]")).every(e=>e.value==="")})');
+ if(!before.health?.includes('tested revision 0; configuration revision 2') || !before.secretsBlank)throw Error('configured Test setup projection mismatch');
+ // Reuse only admitted native keyboard mechanics, never the configuration flow.
+ await focusConfiguration('#overview button[value="test"]');
+ const prior=(await call('Page.getFrameTree')).frameTree.frame.loaderId;
+ await configurationEnter();
+ let loader;
+ for(let i=0;i<200;i++){
+  loader=(await call('Page.getFrameTree')).frameTree.frame.loaderId;
+  if(loader!==prior)break;
+  await delay(50);
+ }
+ if(loader===prior){proof.productRed='native Test button did not navigate';throw Error(proof.productRed);}
+ await loaded(detail,loader);
+ if(proof.responses.at(-1)?.status!==200)throw Error('Test response failed; inspect independent Go oracle');
+ const after=await observe('({status:document.querySelector("p[role=status]")?.textContent,health:document.querySelector("#health")?.textContent,secretsBlank:Array.from(document.querySelectorAll("input[type=password]")).every(e=>e.value==="")})');
+ if(connectionPosts!==1 || after.status!=='extension operation accepted' || !after.health?.includes('extension.ready; tested revision 2; configuration revision 2') || !after.secretsBlank){proof.productRed='native Test result projection mismatch';throw Error(proof.productRed);}
+ proof.connection={posts:connectionPosts,readyProjection:true,passwordControlsBlank:true};
+ proof.connectionGate='PASS';
+}
 try{
  proof.version=await call('Browser.getVersion',{},null);
  const target=await call('Target.createTarget',{url:'about:blank'},null);
@@ -196,7 +223,9 @@ try{
  await call('Network.setCookies',{cookies:[{name:'gotth_mail_session',value:bootstrap.session,url:origin.origin,path:'/'},{name:'gotth_mail_csrf',value:bootstrap.csrf,url:origin.origin,path:'/'}]});
  bootstrap.session='';bootstrap.csrf='';
  const detail=list+'/'+bootstrap.id;
- if(configurationMode){
+ if(connectionMode){
+  await runConnectionTest(detail);
+ }else if(configurationMode){
   await runConfiguration(detail);
  }else if(auditMode){
   await call('Browser.setDownloadBehavior',{behavior:'allowAndName',downloadPath:downloads,eventsEnabled:true},null);
@@ -244,7 +273,7 @@ try{
  await inspectPage('detail');
  proof.firstGate='PASS';
  }
-}catch(e){if(configurationMode)proof.configurationGate=proof.productRed?'PRODUCT_RED':'FAIL';else if(auditMode)proof.auditGate='FAIL';else proof.firstGate=proof.productRed?'PRODUCT_RED':'EQUIPMENT_FAILURE';proof.error=e.message;process.exitCode=1;}
+}catch(e){if(connectionMode)proof.connectionGate=proof.productRed?'PRODUCT_RED':'FAIL';else if(configurationMode)proof.configurationGate=proof.productRed?'PRODUCT_RED':'FAIL';else if(auditMode)proof.auditGate='FAIL';else proof.firstGate=proof.productRed?'PRODUCT_RED':'EQUIPMENT_FAILURE';proof.error=e.message;process.exitCode=1;}
 finally{
  clearTimeout(timer);closing=true;
  try{if(!closed)await call('Browser.close',{},null);}catch{/* shutdown may close pipe before reply */}
@@ -260,6 +289,8 @@ finally{
  if(auditMode && (interrupted || !drained)){proof.auditGate='FAIL';proof.error='audit interrupted or event stream not drained before proof';process.exitCode=1;}
  if(configurationMode && (interrupted || !drained || proof.cleanupFailed)){proof.configurationGate='FAIL';proof.error='configuration interrupted or cleanup incomplete';process.exitCode=1;}
  if(configurationMode && credentialNeedles.some(s=>s && JSON.stringify(proof).includes(s))){proof.configurationGate='FAIL';proof.error='retained diagnostic credential leak';process.exitCode=1;for(const k of Object.keys(proof))if(!['configurationGate','error'].includes(k))delete proof[k];}
+ if(connectionMode && (interrupted || !drained || proof.cleanupFailed)){proof.connectionGate='FAIL';proof.error='connection-test interrupted or cleanup incomplete';process.exitCode=1;}
+ if(connectionMode && credentialNeedles.some(s=>s && JSON.stringify(proof).includes(s))){proof.connectionGate='FAIL';proof.error='retained diagnostic credential leak';process.exitCode=1;for(const k of Object.keys(proof))if(!['connectionGate','error'].includes(k))delete proof[k];}
  writeFileSync(join(output,'proof.json'),JSON.stringify(proof,null,2)+'\n',{mode:0o600});
- console.log(JSON.stringify({firstGate:proof.firstGate,auditGate:proof.auditGate,configurationGate:proof.configurationGate,audit:proof.audit,productRed:proof.productRed,cleanupFailed:!!proof.cleanupFailed,pages:(proof.pages||[]).map(x=>({name:x.name,client:x.client,scroll:x.scroll}))}));
+ console.log(JSON.stringify({firstGate:proof.firstGate,auditGate:proof.auditGate,configurationGate:proof.configurationGate,connectionGate:proof.connectionGate,audit:proof.audit,productRed:proof.productRed,cleanupFailed:!!proof.cleanupFailed,pages:(proof.pages||[]).map(x=>({name:x.name,client:x.client,scroll:x.scroll}))}));
 }
