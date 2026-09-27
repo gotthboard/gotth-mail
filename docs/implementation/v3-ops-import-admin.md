@@ -238,6 +238,15 @@ native checkbox adapter always supplies a boolean (unchecked means false).
 Native required constraints follow that contract; secret constraints remain
 write-only and status-dependent as above. Apply still verifies the exact
 preview-bound payload, actor, revision, confirmation and secret re-entry.
+Preview and Apply use sibling native forms: ordinary edits belong to Preview
+and are validated independently of the blank Apply confirmation. Apply shows
+the reviewed non-secret configuration and submits its own accepted controls;
+unchecked booleans remain absent, checked booleans remain present, and blank
+optional/default-backed scalars remain blank. Editing Preview does not change
+the reviewed Apply target. Secret re-entry is a separate blank password input,
+never a hidden or reflected value. Creating another preview does not consume
+prior previews; existing revision, expiry and single-use checks still govern
+which preview can apply.
 
 Configuration metadata admits only a closed set of bounded scalar field kinds,
 labels, validation constraints, defaults, and named secret slots. It admits no

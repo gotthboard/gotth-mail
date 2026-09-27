@@ -2,9 +2,54 @@
 
 ## Unreleased
 
-### 2026-09-26 18:34 CDT — Preserve native configuration preview values through Apply
+### 2026-09-26 18:52 CDT — Give configuration re-preview its own native form
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/httpui/extensions.go`
+- `internal/httpui/extensions_configuration_test.go`
+- `scripts/extensions-configuration-repreview-proof.mjs`
+- `scripts/extensions-configuration-roundtrip-proof.mjs`
+- `scripts/extensions-secret-constraint-proof.mjs`
+- `docs/implementation/v3-ops-import-admin.md`
+
+Explanation:
+
+- Separate configuration Preview and Apply into sibling native forms. Preview
+  validates ordinary editable controls without the Apply confirmation input.
+  Apply displays the reviewed configuration and submits its own accepted
+  non-secret controls, plus blank write-only secret re-entry and confirmation.
+- Preserve checkbox presence, scalar/default omission and escaping. Editing
+  Preview cannot silently change the displayed Apply target. No validation
+  bypass, JavaScript dependency or backend/service/route/permission changes.
+- Preserve existing prior-preview lifetime, revision, payload/secret binding,
+  confirmation, CSRF and single-use behavior. Add bounded render cost contract.
+
+Verification:
+
+- Before production changes, actual Chromium button.click re-preview red:
+  four captured forms, blank confirmation, zero native submit events.
+- Focused PostgreSQL16 race green covers re-preview, fresh confirmation,
+  no pre-Apply mutation, stale/changed/replayed payloads, empty/wrong
+  confirmation, CSRF and existing secret retention/rotation.
+- Native green proves edited Preview submits, invalid Preview stays blocked,
+  blank Apply stays blocked, and confirmed Apply submits the independently
+  checked accepted controls/visible summary even with invalid Preview edits.
+- Existing typed-roundtrip and secret-constraint native proofs pass with only
+  ownership-aware instrumentation/diagnostic changes. UI-package race/vet,
+  hashes, cleanup and limits recorded in
+  `workflow/features/v3.ops-import-admin/extension-management-ui/evidence/2026-09-26-configuration-repreview.md`.
+
+Risks / non-goals:
+
+- Captured native HTML and independent routed SQL are not full live-browser
+  acceptance. No audit issue, unchanged delivery rebuild, release or deploy.
+
+### 2026-09-26 18:34 CDT — Preserve native configuration preview values through Apply
+
+Commit: `f50e07cda3cd9d3003309888f595966b1238179e`
 
 Affected files:
 

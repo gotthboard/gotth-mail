@@ -17,7 +17,7 @@ const form=button.form;
 const secret=form.querySelector('input[type="password"]');
 const secretBlank=secret.value==='';
 const confirmation=form.querySelector('input[name="confirmation"]');
-const repreviewBlockedByConfirmation=!confirmation.checkValidity();
+const emptyApplyConfirmationInvalid=!confirmation.checkValidity();
 confirmation.value=Array.from(form.querySelectorAll('code')).map(n=>n.textContent).find(v=>v.startsWith('confirm-'));
 // A disposable stand-in tests native initial-secret validation, not backend binding.
 // The independent route test re-enters its actual random preview-bound secret.
@@ -33,7 +33,7 @@ form.addEventListener('submit',event=>{event.preventDefault();submitted++;});
 button.click();
 const proof=document.createElement('pre');proof.id='native-proof';
 // Encode JSON so HTML escaping of ampersands/angle brackets cannot alter the oracle.
-proof.textContent=encodeURIComponent(JSON.stringify({valid,submitted,values,secretBlank,noValidate:form.noValidate,formNoValidate:button.formNoValidate,repreviewBlockedByConfirmation}));
+proof.textContent=encodeURIComponent(JSON.stringify({valid,submitted,values,secretBlank,noValidate:form.noValidate,formNoValidate:button.formNoValidate,emptyApplyConfirmationInvalid}));
 document.body.appendChild(proof);
 `;
  const instrumented=join(out,name+'-instrumented.html');

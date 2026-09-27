@@ -32,8 +32,13 @@ import (
 // Chromium separately checks this oracle against actual FormData and validity.
 func configurationForm(t *testing.T, body string) (url.Values, string) {
 	t.Helper()
-	form, _, confirmation := updateForm(t, body, "configure-apply")
-	values := url.Values{"action": {"configure-apply"}}
+	return configurationActionForm(t, body, "configure-apply")
+}
+
+func configurationActionForm(t *testing.T, body, action string) (url.Values, string) {
+	t.Helper()
+	form, _, confirmation := updateForm(t, body, action)
+	values := url.Values{"action": {action}}
 	has := func(n *html.Node, key string) bool {
 		for _, a := range n.Attr {
 			if a.Key == key {
@@ -192,7 +197,41 @@ func TestExtensionConfigurationRoundtrip(t *testing.T) {
 			if !reflect.DeepEqual(before, current()) || row != secretRow() {
 				t.Fatal("preview mutated instance or secret")
 			}
+			oldApply, oldConfirmation := configurationForm(t, preview.Body.String())
+			oldApply.Set("confirmation", oldConfirmation)
+			if reentry != "" {
+				oldApply.Set("field.config.key", reentry)
+			}
+			previewForm, _, _ := updateForm(t, preview.Body.String(), "configure-preview")
+			walkUpdateHTML(previewForm, func(n *html.Node) {
+				if updateAttr(n, "name") == "confirmation" {
+					t.Error("Preview still owns Apply confirmation")
+				}
+			})
+			repreview, _ := configurationActionForm(t, preview.Body.String(), "configure-preview")
+			// Ordinary edits belong to Preview, not to the accepted Apply payload.
+			repreview.Set("field.config.text", "edited <target> & review")
+			if reentry != "" {
+				repreview.Set("field.config.key", reentry)
+			}
+			preview = request(repreview)
+			if preview.Code != 200 || !strings.Contains(preview.Body.String(), "extension operation accepted") {
+				t.Fatal("re-preview rejected")
+			}
+			if !reflect.DeepEqual(before, current()) || row != secretRow() {
+				t.Fatal("re-preview mutated instance or secret")
+			}
 			values, confirmation := configurationForm(t, preview.Body.String())
+			if values.Get("preview_id") == oldApply.Get("preview_id") || confirmation == oldConfirmation {
+				t.Fatal("re-preview did not create fresh confirmation")
+			}
+			var outstanding int
+			check(db.QueryRow("SELECT count(*) FROM extension_operation_previews WHERE id IN ($1,$2) AND consumed_at IS NULL", values.Get("preview_id"), oldApply.Get("preview_id")).Scan(&outstanding))
+			if outstanding != 2 {
+				t.Fatal("re-preview silently invalidated prior preview")
+			}
+			submitted.Set("field.config.text", "edited <target> & review")
+			want["config.text"] = submitted.Get("field.config.text")
 			if dir := os.Getenv("GOTTH_ROUNDTRIP_HTML_DIR"); dir != "" {
 				check(os.WriteFile(filepath.Join(dir, name+".html"), preview.Body.Bytes(), 0600))
 				expected := url.Values{"action": {"configure-apply"}, "csrf_token": {csrf}, "preview_id": {values.Get("preview_id")}, "confirmation": {confirmation}}
@@ -229,6 +268,16 @@ func TestExtensionConfigurationRoundtrip(t *testing.T) {
 				}
 				return v
 			}
+			emptyConfirmation := clone()
+			emptyConfirmation.Set("confirmation", "")
+			deny(emptyConfirmation, 200)
+			wrongConfirmation := clone()
+			wrongConfirmation.Set("confirmation", "wrong")
+			deny(wrongConfirmation, 200)
+			oldMixed := clone()
+			oldMixed.Set("preview_id", oldApply.Get("preview_id"))
+			oldMixed.Set("confirmation", oldConfirmation)
+			deny(oldMixed, 200) // fresh configuration cannot use the older payload binding
 			tampered := clone()
 			tampered.Set("field.config.text", "tampered")
 			deny(tampered, 200)
@@ -262,6 +311,7 @@ func TestExtensionConfigurationRoundtrip(t *testing.T) {
 				t.Error("matching secret re-entry not applied")
 			}
 			deny(values, 200)
+			deny(oldApply, 200) // older unconsumed preview is now revision-stale
 			invalid := url.Values{"action": {"configure-preview"}, "csrf_token": {csrf}, "field.config.number": {"not-an-integer"}}
 			res := request(invalid)
 			if !strings.Contains(res.Body.String(), "invalid integer extension field") || strings.Contains(res.Body.String(), "extension operation accepted") {
