@@ -32,11 +32,16 @@ type extensionPageView struct {
 	CSRF          string
 }
 
-// Complexity: route registration time/space O(1), Omega(1), Theta(1).
-// Per request, existing auth/SQL/render costs are delegated; quarantine adds
+// Complexity: registration time O(1+R), Omega(1); auxiliary space
+// O(1+S), Omega(1). No tight Theta bound for arbitrary supplied mux state.
+// Local fixed-pattern/closure setup is constant; R/S include delegated ServeMux
+// parsing, conflict scans, synchronization waits and tree/index allocation/growth.
+// Per request, existing auth/SQL/render costs are delegated.
+// Audit request costs are specified by registerExtensionAuditUI. Quarantine uses
 // O(P+F+W) time, Omega(1), and O(P) space, Omega(1), tight Theta not established
 // across errors: P tracked runtime dirs, F filesystem work, W lock wait.
 func registerExtensionUI(mux *http.ServeMux, ids *identity.Service, az authz.Authorizer, sessions authn.IdentitySessionStore, now func() time.Time, service *extensionsadmin.Service) {
+	registerExtensionAuditUI(mux, ids, az, sessions, now, service)
 	mux.HandleFunc("/admin/extensions", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/admin/extensions" || r.Method != http.MethodGet {
 			http.NotFound(w, r)
@@ -323,7 +328,7 @@ var extensionPage = template.Must(template.New("extensions").Funcs(template.Func
 <section id="secrets"><h2>Secrets</h2><ul>{{range .Item.Secrets}}<li>{{.Slot}}: {{if .Configured}}configured (value hidden){{else}}not configured{{end}}</li>{{end}}</ul><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button name="action" value="secrets-delete-preview">Preview deletion of all secrets</button>{{if eq .Preview.Operation "delete_secrets"}}<input type="hidden" name="preview_id" value="{{.Preview.ID}}"><p>Type <code>{{.Preview.Confirmation}}</code>.</p><input name="confirmation" required><button name="action" value="secrets-delete-apply">Delete secrets</button>{{end}}</form></section>
 <section id="permissions"><h2>Permissions</h2><p>Capabilities: <code>{{join .Item.Capabilities ", "}}</code></p><p>Interfaces: <code>{{join .Item.Interfaces ", "}}</code></p><p>Granted secret slots: <code>{{join .Item.SecretSlots ", "}}</code></p></section>
 <section id="health"><h2>Health</h2><p>{{.Item.HealthCode}}; tested revision {{.Item.TestedRevision}}; configuration revision {{.Item.ConfigurationRev}}</p></section>
-<section id="audit"><h2>Audit</h2><a href="/api/v1/audit/export?format=jsonl&resource_type=extension&resource_id={{.Item.InstanceID}}">Export redacted extension audit</a></section>
+<section id="audit"><h2>Audit</h2><a href="/admin/extensions/{{.Item.InstanceID}}/audit">Export recent redacted audit (up to 1,000 events)</a><p>Newest events only; this is not a complete-history export.</p></section>
 <section id="versions"><h2>Versions / update</h2><p>Previous pin: <code>{{.Item.PreviousArtifact}}</code>; available pin: <code>{{.Item.AvailableUpdate}}</code></p><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><input name="artifact_pin" placeholder="sha256:…" required><input name="manifest_sha256" placeholder="manifest SHA-256" required><input name="grant_sha256" placeholder="grant SHA-256" required><input name="session_sha256" placeholder="session SHA-256" required><input name="capabilities" value="{{join .Item.Capabilities ","}}"><input name="interfaces" value="{{join .Item.Interfaces ","}}"><input name="secret_slots" value="{{join .Item.SecretSlots ","}}"><button name="action" value="update-preview">Preview update</button></form>{{if eq .Preview.Operation "update"}}<form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><dl><dt>Target artifact</dt><dd><code>{{.UpdateTarget.ArtifactPin}}</code></dd><dt>Target manifest</dt><dd><code>{{.UpdateTarget.ManifestDigest}}</code></dd><dt>Target grant</dt><dd><code>{{.UpdateTarget.GrantDigest}}</code></dd><dt>Target session</dt><dd><code>{{.UpdateTarget.SessionDigest}}</code></dd></dl><p>Privilege diff: <code>{{join .Preview.PrivilegeDiff ", "}}</code></p><p>Configuration-schema diff: <code>{{join .Preview.ConfigurationDiff ", "}}</code></p><p>Secret-slot diff: <code>{{join .Preview.SecretSlotDiff ", "}}</code></p><p>Type <code>{{.Preview.Confirmation}}</code>.</p><input type="hidden" name="preview_id" value="{{.Preview.ID}}"><label>Update confirmation <input name="confirmation" autocomplete="off" required></label><button name="action" value="update-apply">Apply update</button></form>{{end}}</section>
 <section id="rollback"><h2>Rollback / uninstall</h2>{{if .Item.PreviousArtifact}}<form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><p>Type <code>rollback {{.Item.ExtensionID}} to {{.Item.PreviousArtifact}}</code>.</p><input name="confirmation" required><button name="action" value="rollback">Rollback</button></form>{{end}}<form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button name="action" value="uninstall-preview">Preview uninstall</button>{{if eq .Preview.Operation "uninstall"}}<input type="hidden" name="preview_id" value="{{.Preview.ID}}"><p>Type <code>{{.Preview.Confirmation}}</code>. Secrets must be deleted separately first.</p><input name="confirmation" required><button name="action" value="uninstall-apply">Uninstall</button>{{end}}</form></section>
 {{else}}

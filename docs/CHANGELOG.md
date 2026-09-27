@@ -2,9 +2,53 @@
 
 ## Unreleased
 
-### 2026-09-26 18:52 CDT — Give configuration re-preview its own native form
+### 2026-09-26 19:16 CDT — Repair the ordinary-browser extension audit link
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files:
+
+- `internal/httpui/extensions.go`
+- `internal/httpui/extensions_audit.go`
+- `internal/httpui/extensions_audit_test.go`
+- `cmd/gotth-mail/extensions_audit_test.go`
+- `docs/implementation/v3-ops-import-admin.md`
+
+Explanation:
+
+- Point extension detail at an exact installed-instance audit download route.
+  Reuse bound-cookie/paired-cookie authentication and extension-resource
+  authorization, preserving explicit bearer precedence and the old bearer API.
+- Reuse the SQL reader's fixed resource filter and newest-up-to-1,000 limit,
+  recursive redaction and JSONL exporter. Label recent, not complete history.
+  Static attachment filename, no-store/nosniff, sanitized route-local failures,
+  no query overrides or GET mutations. No new byte cap or memory-bound claim.
+- Keep existing prefix routing, constructors, service, auth, API and schema
+  unchanged; declare delegated SQL/serialization/materialization costs.
+
+Verification:
+
+- Before production edits, actual runtimeMux rendered-link follow with valid
+  cookies and real registry/audit SQL returned 401: honest regression red.
+- Dedicated PG16 fixtures exercise durable SQL sessions/current roles,
+  revoked/expired/disabled/mismatched bindings, explicit bearer precedence,
+  exact resource authorization, legacy nested redaction, selection before
+  LIMIT, 0/999/1000/1001/1200 boundaries, ordering, errors and read-only state.
+- Focused UI/cmd race, affected UI-package race, bearer API compatibility and
+  vet evidence, hashes, terminal exits and cleanup recorded in
+  `workflow/features/v3.ops-import-admin/extension-management-ui/evidence/2026-09-26-extension-audit-browser.md`.
+
+Risks / non-goals:
+
+- Existing reader/exporter materialize unbounded bytes within the row limit.
+  No streaming, complete-history, new byte policy or redaction-policy claim.
+- Physical browser/no-JavaScript attachment flow remains an open acceptance
+  gate; runtime link-follow and real durable session tests are not that proof.
+  No unchanged delivery rebuild, general audit UI, release or deployment.
+
+### 2026-09-26 18:52 CDT — Give configuration re-preview its own native form
+
+Commit: `69c0283038457a6a046256ab60d5bea3f563fec8`
 
 Affected files:
 

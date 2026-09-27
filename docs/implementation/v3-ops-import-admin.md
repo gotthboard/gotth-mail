@@ -188,6 +188,7 @@ Host-owned routes:
 ```text
 GET  /admin/extensions
 GET  /admin/extensions/{instance-id}
+GET  /admin/extensions/{instance-id}/audit
 POST /api/v1/extensions/{instance-id}/configure/preview
 POST /api/v1/extensions/{instance-id}/configure/apply
 POST /api/v1/extensions/{instance-id}/test
@@ -247,6 +248,30 @@ the reviewed Apply target. Secret re-entry is a separate blank password input,
 never a hidden or reflected value. Creating another preview does not consume
 prior previews; existing revision, expiry and single-use checks still govern
 which preview can apply.
+
+The extension Audit link is a dedicated read-only browser download for an
+installed Mail instance. It uses the existing bound identity cookie and paired
+CSRF-cookie binding, then ops:admin authorization on that exact extension;
+explicit Authorization still takes precedence. GET needs no submitted form
+token. The UUID is canonicalized to lowercase before resource authorization.
+The existing Mail registry must contain the instance before audit is queried.
+No query overrides are accepted. The fixed resource type/id filter is applied
+by SQL before the existing newest-first limit of 1,000 events. The page labels
+this recent export, not complete history; uninstalled history remains available
+through the unchanged bearer API, not this installed-only route.
+
+Success is NDJSON with static attachment filename extension-audit.jsonl,
+no-store and nosniff; zero events gives empty 200. Conditional headers do not
+bypass authentication or produce 304. Exact-route non-GET methods return 405
+with Allow: GET; invalid/missing installed IDs return 404, authenticated query
+overrides 400, unavailable service 503, and registry/audit failures sanitized
+500. Existing authentication/authorization failures remain 401/403. Route-local
+errors retain no-store/nosniff and do not carry attachment disposition.
+The existing reader and recursive redactor/JSONL exporter materialize rows and
+bytes; the 1,000-row limit is not a byte/memory bound or a database-work bound.
+No new export-byte cap, pagination, redaction policy or general API cookie
+fallback is introduced. A concurrent uninstall after the read-only registry
+check may still yield the already-authorized audit snapshot.
 
 Configuration metadata admits only a closed set of bounded scalar field kinds,
 labels, validation constraints, defaults, and named secret slots. It admits no
