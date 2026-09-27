@@ -2,9 +2,21 @@
 
 ## Unreleased
 
-### 2026-09-26 19:16 CDT — Repair the ordinary-browser extension audit link
+### 2026-09-26 21:51 CDT — Wrap extension identifiers and verify narrow-screen native navigation
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files: internal/httpui/extensions.go, cmd/gotth-mail/extensions_acceptance_test.go, cmd/gotth-mail/extensions_browser_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-acceptance.sh.
+
+Long inventory identifiers, detail headings, repository metadata and code digests now wrap only when needed using overflow-wrap:anywhere in the existing Extensions page. Full text, hrefs, forms, authorization, font sizes and normal layout are preserved; no clipping, hidden overflow or framework change. Test-only callback into the existing real archive/PG16/runtimeMux fixture and private-pipe Chromium driver verify the actual cookie-authenticated, script-disabled 320px path. Credentials travel through private stdin; retained diagnostics are whitelisted.
+
+Verification: unchanged live gate preserves inventory red354/320, then detail red738/305 after the inventory-only fix. Final inventory320/320 and detail305/305 pass with no horizontal overflow, native Tab/Enter traversal and visible focus samples. Cookie-free401 and authenticated200, read-only SQL/noPOST/noBearer/noReceiver/runtime-empty oracles and normal cleanup pass. Final affected UI-package race and scoped UI/cmd vet pass; binary build metadata records -race=true. Original packaged delivery/A-B-A regressions passed after shared fixture extraction before CSS-only repair and are reused, not claimed rerun on final CSS. Initial runner mount failure remains separate. Scoped notes: .artifacts/gotth-mail-live-browser-equipment-20260926.md and .artifacts/gotth-mail-browser-reflow-20260926.md.
+
+Risks/non-goals: first inventory-to-detail navigation only with injected login and initially unconfigured fields. No full keyboard/form lifecycle/download/theme/assistive-technology matrix, live OIDC, canonical renderer migration, beta acceptance, archive rebuild or deployment. Production change is one static CSS rule; no new runtime/data work or performance claim.
+
+### 2026-09-26 19:16 CDT — Repair the ordinary-browser extension audit link
+
+Commit: `dcd1a46a573eed34c343e398ebffca97966fc993`
 
 Affected files:
 

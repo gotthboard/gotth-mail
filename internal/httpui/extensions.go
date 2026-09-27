@@ -314,7 +314,7 @@ func renderExtensionPage(w http.ResponseWriter, view extensionPageView) {
 	_ = extensionPage.Execute(w, view)
 }
 
-var extensionPage = template.Must(template.New("extensions").Funcs(template.FuncMap{"join": strings.Join}).Parse(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>GOTTH Mail Extensions</title><style>body{font:1rem system-ui;max-width:72rem;margin:auto;padding:1rem}nav,section{margin-block:1rem}label{display:block;margin:.5rem 0}input,select,button{font:inherit;max-width:100%}input:focus,select:focus,button:focus,a:focus{outline:3px solid Highlight;outline-offset:2px}@media(max-width:40rem){form{display:grid;gap:.5rem}button{min-height:2.75rem}}</style></head><body><main>
+var extensionPage = template.Must(template.New("extensions").Funcs(template.FuncMap{"join": strings.Join}).Parse(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>GOTTH Mail Extensions</title><style>body{font:1rem system-ui;max-width:72rem;margin:auto;padding:1rem}main>ul a,h1,dd,code{overflow-wrap:anywhere}nav,section{margin-block:1rem}label{display:block;margin:.5rem 0}input,select,button{font:inherit;max-width:100%}input:focus,select:focus,button:focus,a:focus{outline:3px solid Highlight;outline-offset:2px}@media(max-width:40rem){form{display:grid;gap:.5rem}button{min-height:2.75rem}}</style></head><body><main>
 <p><a href="/">GOTTH Mail</a> / <a href="/admin/extensions">Extensions</a></p>
 {{if .Message}}<p role="status">{{.Message}}</p>{{end}}
 {{if .BlockedReason}}<p role="alert">{{.BlockedReason}}</p>{{end}}

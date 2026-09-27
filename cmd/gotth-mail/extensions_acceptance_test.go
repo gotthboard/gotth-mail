@@ -187,6 +187,11 @@ func TestExtensionRealArchiveDelivery(t *testing.T) { acceptanceLifecycle(t, fal
 func TestExtensionRealArchiveUpdateRollback(t *testing.T) { acceptanceLifecycle(t, true) }
 
 func acceptanceLifecycle(t *testing.T, updateRollback bool) {
+	acceptanceLifecycleDriver(t, updateRollback, nil)
+}
+
+// The optional test-only driver replaces actions, never the real setup or oracles.
+func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(acceptanceBrowserStart)) {
 	archive := os.Getenv("GOTTH_MAIL_ACCEPTANCE_ARCHIVE")
 	if archive == "" {
 		t.Skip("opt-in packaged acceptance; use namespace runner")
@@ -447,6 +452,10 @@ func acceptanceLifecycle(t *testing.T, updateRollback bool) {
 		}
 		t.Logf("delivery label=%s alert=%s correlation=%s status=%s reason=%s transport=%s verification=%s", label, alert.ID, alert.CorrelationID, stored.Status, stored.Reason, stored.Evidence.Transport, stored.Evidence.VerificationResult)
 		return rec, err
+	}
+	if browser != nil {
+		browser(acceptanceBrowserStart{Handler: handler, DB: db, ID: id, Session: sid, CSRF: csrf, Current: current, EmptyRuntime: emptyRuntime, Requests: requests.Load})
+		return
 	}
 	configure(untrusted.URL, key, "1")
 	testEnable()
