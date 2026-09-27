@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Bounded native gates; all writes are task evidence or private namespace state.
 set -euo pipefail
-[[ $# == 4 || $# == 5 ]] || { echo 'usage: TEST_BINARY ALPHA1_ARCHIVE PG16_BIN NEW_EVIDENCE_DIR [navigation|audit|configuration|connection-test]' >&2; exit 2; }
+[[ $# == 4 || $# == 5 ]] || { echo 'usage: TEST_BINARY ALPHA1_ARCHIVE PG16_BIN NEW_EVIDENCE_DIR [navigation|audit|configuration|connection-test|activation]' >&2; exit 2; }
 mode=${5:-navigation}
-[[ "$mode" == navigation || "$mode" == audit || "$mode" == configuration || "$mode" == connection-test ]] || exit 2
+[[ "$mode" == navigation || "$mode" == audit || "$mode" == configuration || "$mode" == connection-test || "$mode" == activation ]] || exit 2
 binary=$(realpath -e "$1"); archive=$(realpath -e "$2"); pgbin=$(realpath -e "$3")
 driver=$(realpath -e "$(dirname "$0")/extensions-browser-smoke.mjs")
 [[ -x "$binary" && -f "$archive" && -x "$pgbin/postgres" && -x "$pgbin/initdb" && -x "$pgbin/createdb" ]]

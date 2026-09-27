@@ -37,6 +37,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/extensionsruntime"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/store"
 	"forgejo/gotthboard/gotth-mail/internal/testpg"
 	extensioncore "github.com/gotthboard/gotth-extensions/pkg/extensions"
@@ -455,10 +456,23 @@ func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(a
 	}
 	if browser != nil {
 		var observation *nativeTestRuntime
-		if os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "connection-test" {
+		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "connection-test" || mode == "activation" {
 			configure(receiver.URL, key, "2") // Admitted handler-driven SETUP, not browser coverage.
+			if mode == "activation" {
+				action("test")
+				emptyRuntime()
+			} // SETUP, not native Test credit.
 			original := server.Extensions.Runtime
 			observation = &nativeTestRuntime{Runtime: original, root: r, executable: filepath.Join(stage, "gotth-extension-webhook"), expectedSHA: sha256.Sum256(files["gotth-extension-webhook"])}
+			if mode == "activation" {
+				supervisor, ok := original.(*extensionsruntime.Supervisor)
+				if !ok {
+					t.Fatal("real routing supervisor missing")
+				}
+				observation.routeHealth = func(ctx context.Context) (plugin.HealthResponse, error) {
+					return supervisor.Health(ctx, extensionsruntime.ExtensionID)
+				}
+			}
 			server.Extensions.Runtime = observation
 			defer func() { server.Extensions.Runtime = original }() // Restore before registered Disable cleanup.
 		}

@@ -2,9 +2,21 @@
 
 ## Unreleased
 
-### 2026-09-27 01:00 CDT — Observe native Test against the real packaged extension
+### 2026-09-27 01:30 CDT — Verify native Enable and Disable as one safe cycle
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files: cmd/gotth-mail/extensions_browser_test.go, cmd/gotth-mail/extensions_acceptance_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-smoke.test.mjs, scripts/extensions-browser-acceptance.sh.
+
+Adds isolated activation mode using handler configuration and Test as setup only. Reuses the existing private runtime observer and HTTP/SQL/privacy barrier for two native Enable/Disable POSTs. Requires exact Start/Probe/Admit/Revoke/Stop order, pinned live child/socket, public authenticated active-route Health, and route absence while the same child remains live immediately after revocation, before Stop. SQL requires exact enabled/ready then disabled/stopped transitions and two bound audits while preserving encrypted secrets, configuration, readiness and immutable authority. Unexpected sequence/results fail without replacing delegate returns or suppressing cleanup. Three states are one safety unit: admission without revocation leaves authority live; injected flags cannot prove route removal.
+
+Verification: first actual activation run PASS in 7.82s on development, Go1.26.6 race binary, PostgreSQL16.14/160014, Chromium151.0.7922.71. Exactly two native POSTs; pinned child observed through authenticated route admission and revocation-before-stop; SQL/audit/configuration/secret/readiness/privacy and quiet receiver checks pass. Browser exit0, no descendants, namespace zero live fixture processes/residual paths. Race compile and scoped command vet pass; 51 oracle subcases plus five sequence checks and 20 controlled driver shutdown cases plus native Enter contract pass. Initial synthetic activation shutdown failures caught proof publication before the failure latch; corrected before any physical run, with initial source/log/exit retained. Changelog history lost through a truncated read was restored from HEAD and checked before physical validation. No production edit, previous physical-gate rerun or canonical admission; exact source/build metadata and limits are retained in the task handoff.
+
+Risks/non-goals: extra Health observations perform real authenticated control RPCs, not receiver delivery or wire capture. Exact not-found/zero-response means route absence; arbitrary failure does not. Login/configuration/Test setup is injected; renderer/shared tokens and B1/beta remain open. No send, update, rollback, full-suite or old physical-gate rerun.
+
+### 2026-09-27 01:00 CDT — Observe native Test against the real packaged extension
+
+Commit: `c47827618936740fb603df5dcbad4838d0c5da65`
 
 Affected files: cmd/gotth-mail/extensions_browser_test.go, cmd/gotth-mail/extensions_acceptance_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-smoke.test.mjs, scripts/extensions-browser-acceptance.sh.
 

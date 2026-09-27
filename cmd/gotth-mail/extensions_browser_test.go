@@ -1,6 +1,6 @@
 package main
 
-// Bounded live-browser gates; routing and delivery admission remain outside this fixture.
+// Bounded live-browser gates; delivery and release admission remain outside this fixture.
 import (
 	"bytes"
 	"context"
@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"forgejo/gotthboard/gotth-mail/internal/extensionsadmin"
+	"forgejo/gotthboard/gotth-mail/internal/plugin"
 )
 
 type acceptanceBrowserStart struct {
@@ -51,7 +52,7 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 		}
 	}
 	acceptanceLifecycleDriver(t, false, func(f acceptanceBrowserStart) {
-		if os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "connection-test" {
+		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "connection-test" || mode == "activation" {
 			runConnectionBrowser(t, f, driver)
 			return
 		}
@@ -542,6 +543,8 @@ type nativeTestRuntime struct {
 	expectedSHA                                [32]byte
 	sequence                                   []string
 	liveStart, liveProbe, stopped              bool
+	routeHealth                                func(context.Context) (plugin.HealthResponse, error)
+	admitted, revokedLive                      bool
 }
 
 func (r *nativeTestRuntime) record(err error) {
@@ -661,7 +664,7 @@ func (r *nativeTestRuntime) absent() error {
 func (r *nativeTestRuntime) Start(ctx context.Context, i extensionsadmin.Instance, secrets map[string][]byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.sequence = append(r.sequence, "start")
+	r.step("start")
 	err := r.Runtime.Start(ctx, i, secrets)
 	if err != nil {
 		r.record(errors.New("real Start failed"))
@@ -675,7 +678,7 @@ func (r *nativeTestRuntime) Start(ctx context.Context, i extensionsadmin.Instanc
 func (r *nativeTestRuntime) Probe(ctx context.Context, i extensionsadmin.Instance) (extensionsadmin.Health, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.sequence = append(r.sequence, "probe")
+	r.step("probe")
 	health, err := r.Runtime.Probe(ctx, i)
 	if err != nil || !health.Healthy || health.Code != "extension.ready" {
 		r.record(errors.New("real Probe not ready"))
@@ -688,7 +691,7 @@ func (r *nativeTestRuntime) Probe(ctx context.Context, i extensionsadmin.Instanc
 func (r *nativeTestRuntime) Stop(ctx context.Context, i extensionsadmin.Instance) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.sequence = append(r.sequence, "stop")
+	r.step("stop")
 	err := r.Runtime.Stop(ctx, i)
 	if err != nil {
 		r.record(errors.New("real Stop failed"))
@@ -698,17 +701,120 @@ func (r *nativeTestRuntime) Stop(ctx context.Context, i extensionsadmin.Instance
 	r.stopped = err == nil && observation == nil
 	return err
 }
+
+// Activation uses the real public Health method with the fixed supported ID.
+// An arbitrary error is NOT evidence of route absence.
+func (r *nativeTestRuntime) route(ctx context.Context, active bool) error {
+	if r.routeHealth == nil {
+		return errors.New("routing observation missing")
+	}
+	h, err := r.routeHealth(ctx)
+	if active {
+		if err == nil && h.Healthy && h.Message == "extension.ready" {
+			return nil
+		}
+	} else if err != nil && err.Error() == "configured extension not found" && reflect.DeepEqual(h, plugin.HealthResponse{}) {
+		return nil
+	}
+	return errors.New("active-route Health observation mismatch")
+}
+func (r *nativeTestRuntime) step(name string) {
+	r.sequence = append(r.sequence, name)
+	expected := []string{"start", "probe", "stop"}
+	if r.routeHealth != nil {
+		expected = []string{"start", "probe", "admit", "revoke", "stop"}
+	}
+	if len(r.sequence) > len(expected) || !reflect.DeepEqual(r.sequence, expected[:len(r.sequence)]) {
+		r.record(errors.New("unexpected runtime sequence"))
+	}
+}
 func (r *nativeTestRuntime) AdmitRouting(ctx context.Context, i extensionsadmin.Instance) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.record(errors.New("unexpected routing admission"))
-	return r.Runtime.AdmitRouting(ctx, i)
+	r.step("admit")
+	if r.routeHealth == nil {
+		r.record(errors.New("unexpected routing admission"))
+		return r.Runtime.AdmitRouting(ctx, i)
+	}
+	r.record(r.route(ctx, false))
+	err := r.Runtime.AdmitRouting(ctx, i)
+	if err != nil {
+		r.record(errors.New("real AdmitRouting failed"))
+	}
+	live, route := r.live(), r.route(ctx, true)
+	r.record(live)
+	r.record(route)
+	r.admitted = err == nil && live == nil && route == nil
+	return err
 }
 func (r *nativeTestRuntime) RevokeRouting(ctx context.Context, i extensionsadmin.Instance) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.record(errors.New("unexpected routing revocation"))
-	return r.Runtime.RevokeRouting(ctx, i)
+	r.step("revoke")
+	if r.routeHealth == nil {
+		r.record(errors.New("unexpected routing revocation"))
+		return r.Runtime.RevokeRouting(ctx, i)
+	}
+	err := r.Runtime.RevokeRouting(ctx, i)
+	if err != nil {
+		r.record(errors.New("real RevokeRouting failed"))
+	}
+	// Critically observe route removal while the SAME child/socket are still live,
+	// before returning control to Service.Disable's Stop call.
+	route, live := r.route(ctx, false), r.live()
+	r.record(route)
+	r.record(live)
+	r.revokedLive = err == nil && route == nil && live == nil
+	return err
+}
+
+// Called under observer lock (or before installing the HTTP server).
+func (r *nativeTestRuntime) phase(ctx context.Context, posts int) error {
+	if r.failure != "" {
+		return errors.New(r.failure)
+	}
+	expected := []string{"start", "probe", "stop"}
+	if r.routeHealth != nil {
+		if posts < 0 || posts > 2 {
+			return errors.New("unknown activation phase")
+		}
+		if err := r.route(ctx, posts == 1); err != nil {
+			return err
+		}
+		expected = []string{"start", "probe", "admit", "revoke", "stop"}
+		if posts == 1 {
+			expected = expected[:3]
+			if err := r.live(); err != nil {
+				return err
+			}
+		}
+		if posts > 0 && !r.admitted {
+			return errors.New("routing admission not independently observed")
+		}
+		if posts == 2 && !r.revokedLive {
+			return errors.New("revocation before Stop not independently observed")
+		}
+	} else if posts < 0 || posts > 1 {
+		return errors.New("unknown Test phase")
+	}
+	if posts == 0 {
+		expected = nil
+	}
+	if !reflect.DeepEqual(r.sequence, expected) {
+		return errors.New("runtime sequence incomplete")
+	}
+	if posts > 0 && (!r.liveStart || !r.liveProbe) {
+		return errors.New("positive child proof incomplete")
+	}
+	if r.routeHealth == nil || posts != 1 {
+		if err := r.absent(); err != nil {
+			return err
+		}
+		if posts > 0 && !r.stopped {
+			return errors.New("Stop proof incomplete")
+		}
+	}
+	return nil
 }
 
 // Check only Test's SQL delta; the already-admitted configure pair is SETUP.
@@ -765,7 +871,72 @@ func connectionSQL(before, after [4]string, actor, id string) error {
 	return nil
 }
 
+// Compare one activation transition, preserving every field not explicitly changed.
+func activationSQL(before, after [4]string, actor, id string, enable bool) error {
+	if before[1] != after[1] || before[2] != after[2] {
+		return errors.New("activation changed secrets or previews")
+	}
+	var oldRows, rows, prior, events []map[string]any
+	if json.Unmarshal([]byte(before[0]), &oldRows) != nil || json.Unmarshal([]byte(after[0]), &rows) != nil || len(oldRows) != 1 || len(rows) != 1 {
+		return errors.New("activation instance cardinality")
+	}
+	old, row := oldRows[0], rows[0]
+	from, to := "ready", "stopped"
+	count, action := 4, "extension.disable"
+	payload := map[string]any{"enabled": false, "routed": false}
+	if enable {
+		from, to = "stopped", "ready"
+		count, action = 3, "extension.enable"
+		payload = map[string]any{"routed": true, "health_code": "extension.ready"}
+	}
+	if old["configuration_revision"] != float64(2) || old["tested_revision"] != float64(2) || old["health_code"] != "extension.ready" || old["enabled"] != !enable || old["routed"] != !enable || old["lifecycle"] != from || row["enabled"] != enable || row["routed"] != enable || row["lifecycle"] != to {
+		return errors.New("activation state delta mismatch")
+	}
+	for _, field := range []string{"enabled", "routed", "lifecycle", "updated_at"} {
+		delete(old, field)
+		delete(row, field)
+	}
+	if !reflect.DeepEqual(old, row) {
+		return errors.New("activation changed configuration, readiness or authority")
+	}
+	if json.Unmarshal([]byte(before[3]), &prior) != nil || json.Unmarshal([]byte(after[3]), &events) != nil || len(prior) != count || len(events) != count+1 {
+		return errors.New("activation audit cardinality")
+	}
+	remaining := map[any]map[string]any{}
+	for _, event := range prior {
+		remaining[event["id"]] = event
+	}
+	var added map[string]any
+	for _, event := range events {
+		if previous, ok := remaining[event["id"]]; ok {
+			if !reflect.DeepEqual(previous, event) {
+				return errors.New("activation changed prior audit")
+			}
+			delete(remaining, event["id"])
+		} else if added == nil {
+			added = event
+		} else {
+			return errors.New("extra activation audit")
+		}
+	}
+	if len(remaining) != 0 || added == nil || added["action"] != action || added["actor_type"] != "oidc_subject" || added["actor_id"] != actor || added["resource_type"] != "extension" || added["resource_id"] != id || added["result"] != "success" {
+		return errors.New("activation audit binding mismatch")
+	}
+	raw, ok := added["after_redacted_json"].(string)
+	var got map[string]any
+	if !ok || json.Unmarshal([]byte(raw), &got) != nil || !reflect.DeepEqual(got, payload) {
+		return errors.New("activation audit payload mismatch")
+	}
+	return nil
+}
+
 func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string) {
+	mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE")
+	activation := mode == "activation"
+	actions := []string{"test"}
+	if activation {
+		actions = []string{"enable", "disable"}
+	}
 	if f.TestRuntime == nil {
 		t.Fatal("missing real runtime observer")
 	}
@@ -773,11 +944,13 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 	before, err := configurationSnapshot(ctx, f.DB)
 	cancel()
 	acceptanceCheck(t, err)
-	acceptanceCheck(t, f.TestRuntime.absent())
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	acceptanceCheck(t, f.TestRuntime.phase(ctx, 0))
+	cancel()
 	var mu sync.Mutex
 	posts := 0
 	failure := ""
-	var applied [4]string
+	applied := before
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -802,7 +975,7 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 		}
 		if r.Method == "POST" {
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-			if posts != 0 || r.URL.Path != detail || r.ParseForm() != nil || r.PostForm.Get("action") != "test" {
+			if posts >= len(actions) || r.URL.Path != detail || r.ParseForm() != nil || len(r.PostForm["action"]) != 1 || r.PostForm.Get("action") != actions[posts] {
 				fail("unexpected connection-test action or phase")
 				return
 			}
@@ -848,7 +1021,7 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 			fail("Test reached webhook receiver")
 			return
 		}
-		if err := f.TestRuntime.absent(); err != nil {
+		if err := f.TestRuntime.phase(ctx, posts); err != nil {
 			fail(err.Error())
 			return
 		}
@@ -858,17 +1031,15 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 				return
 			}
 		} else {
-			if f.TestRuntime.failure != "" {
-				fail(f.TestRuntime.failure)
-				return
-			}
-			if !reflect.DeepEqual(f.TestRuntime.sequence, []string{"start", "probe", "stop"}) || !f.TestRuntime.liveStart || !f.TestRuntime.liveProbe || !f.TestRuntime.stopped {
-				fail("positive real Test runtime proof incomplete")
-				return
-			}
 			if r.Method == "POST" {
-				if err := connectionSQL(before, state, f.ActorID, f.ID); err != nil {
-					fail(err.Error())
+				var delta error
+				if activation {
+					delta = activationSQL(applied, state, f.ActorID, f.ID, posts == 1)
+				} else {
+					delta = connectionSQL(before, state, f.ActorID, f.ID)
+				}
+				if delta != nil {
+					fail(delta.Error())
 					return
 				}
 				if !bytes.Contains(body, []byte("extension operation accepted")) {
@@ -917,7 +1088,7 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 	}
 	t.Cleanup(shutdown)
 	go func() { served <- srv.Serve(listener) }()
-	input := map[string]string{"origin": "http://" + listener.Addr().String(), "id": f.ID, "session": f.Session, "csrf": f.CSRF, "mode": "connection-test"}
+	input := map[string]string{"origin": "http://" + listener.Addr().String(), "id": f.ID, "session": f.Session, "csrf": f.CSRF, "mode": mode}
 	bootstrap, err := json.Marshal(input)
 	acceptanceCheck(t, err)
 	runctx, runcancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -937,11 +1108,14 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 	if failure != "" {
 		t.Error(failure)
 	}
-	if posts != 1 || f.TestRuntime.failure != "" || !reflect.DeepEqual(f.TestRuntime.sequence, []string{"start", "probe", "stop"}) || !f.TestRuntime.liveStart || !f.TestRuntime.liveProbe || !f.TestRuntime.stopped {
-		t.Error("native Test or positive runtime sequence incomplete")
+	if posts != len(actions) {
+		t.Error("native lifecycle POST sequence incomplete")
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	state, err := configurationSnapshot(ctx, f.DB)
+	if phaseErr := f.TestRuntime.phase(ctx, posts); phaseErr != nil {
+		t.Error(phaseErr.Error())
+	}
 	cancel()
 	if err != nil || state != applied {
 		t.Error("final tested SQL mismatch")
@@ -967,7 +1141,7 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 		t.Errorf("native Test browser failed: %v", runErr)
 	}
 	if !t.Failed() {
-		t.Logf("PASS native Test: one POST; Start/Probe/Stop real child pid=%s executable_sha256=%x private socket; stopped/disabled/unrouted; SQL/audit/secret retention/privacy; receiver quiet; login injected", f.TestRuntime.pid, f.TestRuntime.expectedSHA)
+		t.Logf("PASS native %s: posts=%d; positive ordered runtime and route observations; real child pid=%s executable_sha256=%x private socket; stopped/disabled/unrouted; SQL/audit/secret retention/privacy; receiver quiet; login injected", mode, posts, f.TestRuntime.pid, f.TestRuntime.expectedSHA)
 	}
 }
 
@@ -1071,5 +1245,148 @@ func TestNativeTestSQLDelta(t *testing.T) {
 				t.Fatal("SQL delta oracle accepted corruption or rejected valid delta")
 			}
 		})
+	}
+}
+
+func TestNativeActivationRouteOracle(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		active, healthy  bool
+		message, failure string
+		pass             bool
+	}{
+		{"absent", false, false, "", "configured extension not found", true},
+		{"active", true, true, "extension.ready", "", true},
+		{"timeout", false, false, "", "context deadline exceeded", false},
+		{"blocked", false, false, "extension.runtime-blocked", "configured extension not found", false},
+		{"unhealthy", true, false, "extension.ready", "", false},
+		{"auth-error", true, true, "extension.ready", "unauthenticated", false},
+		{"wrong-code", true, true, "extension.unknown", "", false},
+		{"nil-negative", false, false, "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &nativeTestRuntime{routeHealth: func(context.Context) (plugin.HealthResponse, error) {
+				var err error
+				if tc.failure != "" {
+					err = errors.New(tc.failure)
+				}
+				return plugin.HealthResponse{Healthy: tc.healthy, Message: tc.message}, err
+			}}
+			if (r.route(context.Background(), tc.active) == nil) != tc.pass {
+				t.Fatal("route oracle accepted wrong evidence")
+			}
+		})
+	}
+}
+func TestNativeActivationObserverPreservesDelegate(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "observation-fails", true: "delegate-fails"}[failed], func(t *testing.T) {
+			var want error
+			if failed {
+				want = errors.New("synthetic failure")
+			}
+			d := &nativeTestDelegate{result: want, health: extensionsadmin.Health{Healthy: true, Code: "extension.ready"}}
+			r := &nativeTestRuntime{Runtime: d, root: "/nonexistent-native-activation", routeHealth: func(context.Context) (plugin.HealthResponse, error) {
+				return plugin.HealthResponse{}, errors.New("configured extension not found")
+			}}
+			ctx := context.Background()
+			i := extensionsadmin.Instance{}
+			if r.Start(ctx, i, nil) != want {
+				t.Fatal("Start changed")
+			}
+			h, err := r.Probe(ctx, i)
+			if h != d.health || err != want {
+				t.Fatal("Probe changed")
+			}
+			if r.AdmitRouting(ctx, i) != want || r.RevokeRouting(ctx, i) != want || r.Stop(ctx, i) != want {
+				t.Fatal("routing/cleanup result changed")
+			}
+			if !reflect.DeepEqual(d.calls, []string{"start", "probe", "admit", "revoke", "stop"}) || r.failure == "" || r.admitted || r.revokedLive || r.stopped {
+				t.Fatal("observation fabricated or cleanup suppressed")
+			}
+		})
+	}
+	for _, sequence := range [][]string{{"start", "probe", "admit", "revoke", "stop"}, {"start", "probe", "stop", "revoke"}, {"admit"}, {"start", "start"}, {"start", "probe", "admit", "revoke", "stop", "stop"}} {
+		r := &nativeTestRuntime{routeHealth: func(context.Context) (plugin.HealthResponse, error) { return plugin.HealthResponse{}, nil }}
+		for _, call := range sequence {
+			r.step(call)
+		}
+		if (r.failure == "") != reflect.DeepEqual(sequence, []string{"start", "probe", "admit", "revoke", "stop"}) {
+			t.Fatal("sequence guard mismatch")
+		}
+	}
+}
+func TestNativeActivationSQLDelta(t *testing.T) {
+	encode := func(v any) string { b, err := json.Marshal(v); acceptanceCheck(t, err); return string(b) }
+	for _, enable := range []bool{true, false} {
+		for _, kind := range []string{"valid", "configuration", "grant", "readiness", "health", "secret", "preview", "enabled", "routed", "lifecycle", "actor", "resource", "action", "payload", "prior-audit", "extra-audit"} {
+			t.Run(map[bool]string{true: "enable/", false: "disable/"}[enable]+kind, func(t *testing.T) {
+				from, to := "ready", "stopped"
+				action := "extension.disable"
+				count := 4
+				payload := map[string]any{"enabled": false, "routed": false}
+				if enable {
+					from, to = "stopped", "ready"
+					action = "extension.enable"
+					count = 3
+					payload = map[string]any{"routed": true, "health_code": "extension.ready"}
+				}
+				old := map[string]any{"configuration_revision": 2, "tested_revision": 2, "health_code": "extension.ready", "enabled": !enable, "routed": !enable, "lifecycle": from, "configuration_json": "fixed", "grant_digest": "bound", "updated_at": "before"}
+				row := map[string]any{}
+				for k, v := range old {
+					row[k] = v
+				}
+				row["enabled"] = enable
+				row["routed"] = enable
+				row["lifecycle"] = to
+				row["updated_at"] = "after"
+				prior := []any{}
+				for n := 0; n < count; n++ {
+					prior = append(prior, map[string]any{"id": n, "action": "setup"})
+				}
+				event := map[string]any{"id": 99, "action": action, "actor_type": "oidc_subject", "actor_id": "actor", "resource_type": "extension", "resource_id": "instance", "result": "success", "after_redacted_json": encode(payload)}
+				before := [4]string{encode([]any{old}), "ciphertext", "consumed", encode(prior)}
+				after := [4]string{"", "ciphertext", "consumed", ""}
+				switch kind {
+				case "configuration":
+					row["configuration_json"] = "changed"
+				case "grant":
+					row["grant_digest"] = "changed"
+				case "readiness":
+					row["tested_revision"] = nil
+				case "health":
+					row["health_code"] = "changed"
+				case "secret":
+					after[1] = "changed"
+				case "preview":
+					after[2] = "changed"
+				case "enabled":
+					row["enabled"] = !enable
+				case "routed":
+					row["routed"] = !enable
+				case "lifecycle":
+					row["lifecycle"] = from
+				case "actor":
+					event["actor_id"] = "other"
+				case "resource":
+					event["resource_id"] = "other"
+				case "action":
+					event["action"] = "extension.test"
+				case "payload":
+					event["after_redacted_json"] = "{}"
+				case "prior-audit":
+					prior[0] = map[string]any{"id": 0, "action": "changed"}
+				}
+				events := append(prior, event)
+				if kind == "extra-audit" {
+					events = append(events, event)
+				}
+				after[0] = encode([]any{row})
+				after[3] = encode(events)
+				if (activationSQL(before, after, "actor", "instance", enable) == nil) != (kind == "valid") {
+					t.Fatal("activation SQL accepted corruption or rejected valid transition")
+				}
+			})
+		}
 	}
 }
