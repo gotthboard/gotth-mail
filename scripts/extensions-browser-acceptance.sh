@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # Bounded native gates; all writes are task evidence or private namespace state.
 set -euo pipefail
-[[ $# == 4 || $# == 5 ]] || { echo 'usage: TEST_BINARY ALPHA1_ARCHIVE PG16_BIN NEW_EVIDENCE_DIR [navigation|audit|configuration|connection-test|activation]' >&2; exit 2; }
+[[ $# == 4 || $# == 5 || $# == 6 ]] || { echo 'usage: TEST_BINARY ALPHA1_ARCHIVE PG16_BIN NEW_EVIDENCE_DIR [navigation|audit|configuration|connection-test|activation|update] [ALPHA2_FOR_UPDATE]' >&2; exit 2; }
 mode=${5:-navigation}
-[[ "$mode" == navigation || "$mode" == audit || "$mode" == configuration || "$mode" == connection-test || "$mode" == activation ]] || exit 2
+archive_b=""
+if [[ "$mode" == update ]]; then
+ [[ $# == 6 && -f "$6" ]] || exit 2
+ archive_b=$(realpath -e "$6")
+else
+ [[ $# == 4 || $# == 5 ]] || exit 2
+ [[ "$mode" == navigation || "$mode" == audit || "$mode" == configuration || "$mode" == connection-test || "$mode" == activation ]] || exit 2
+fi
 binary=$(realpath -e "$1"); archive=$(realpath -e "$2"); pgbin=$(realpath -e "$3")
 driver=$(realpath -e "$(dirname "$0")/extensions-browser-smoke.mjs")
 [[ -x "$binary" && -f "$archive" && -x "$pgbin/postgres" && -x "$pgbin/initdb" && -x "$pgbin/createdb" ]]
@@ -14,6 +21,7 @@ bwrap --unshare-user --unshare-pid --unshare-ipc --unshare-uts --unshare-net \
  --tmpfs /etc/ssl/certs --bind "$output" "$output" --clearenv \
  --setenv PATH "$pgbin:/usr/bin:/bin" --setenv HOME /tmp/browser-home \
  --setenv TMPDIR /tmp --setenv GOTMPDIR /tmp --setenv GOMAXPROCS 4 \
+ --setenv GOTTH_MAIL_ACCEPTANCE_ARCHIVE_B "$archive_b" \
  --setenv GOTTH_MAIL_ACCEPTANCE_NAMESPACE 1 --setenv GOTTH_MAIL_ACCEPTANCE_ARCHIVE "$archive" \
  --setenv GOTTH_MAIL_ACCEPTANCE_CERT /tmp/tls/server.crt --setenv GOTTH_MAIL_ACCEPTANCE_KEY /tmp/tls/server.key \
  --setenv GOTTH_MAIL_BROWSER_MODE "$mode" --setenv GOTTH_MAIL_BROWSER_DRIVER "$driver" --setenv GOTTH_MAIL_BROWSER_OUTPUT "$output/browser" \

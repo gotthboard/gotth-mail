@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -19,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,7 +32,333 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 )
 
+func TestNativeUpdatePreviewOracle(t *testing.T) {
+	encode := func(v any) string { b, e := json.Marshal(v); acceptanceCheck(t, e); return string(b) }
+	for _, kind := range []string{"valid", "actor", "target", "hash", "confirmation", "expiry", "secret", "revision", "consumed", "audit"} {
+		t.Run(kind, func(t *testing.T) {
+			key := bytes.Repeat([]byte{7}, 32)
+			phrase := "confirm-" + strings.Repeat("a", 32)
+			target := extensionsadmin.UpdateInput{ArtifactPin: "sha256:" + acceptanceArchiveBSHA}
+			raw, _ := json.Marshal(target)
+			hash := sha256.Sum256(raw)
+			var payload any
+			_ = json.Unmarshal(raw, &payload)
+			base := map[string]any{"artifact_pin": "sha256:" + acceptanceArchiveSHA, "configuration_revision": 2, "tested_revision": 2, "health_code": "extension.ready", "lifecycle": "stopped", "enabled": false, "routed": false}
+			prior := map[string]any{"id": "setup"}
+			created := time.Now().UTC().Truncate(time.Microsecond)
+			layout := "2006-01-02T15:04:05.999999999"
+			mac := hmac.New(sha256.New, key)
+			mac.Write([]byte("extension-preview-confirmation\x00"))
+			mac.Write([]byte(phrase))
+			empty := hmac.New(sha256.New, key)
+			p := map[string]any{"id": "preview", "instance_id": "id", "actor_type": "oidc_subject", "actor_id": "actor", "operation": "update", "base_revision": 2, "payload_json": payload, "payload_sha256": hex.EncodeToString(hash[:]), "confirmation_sha256": hex.EncodeToString(mac.Sum(nil)), "secret_binding_sha256": hex.EncodeToString(empty.Sum(nil)), "created_at": created.Format(layout), "expires_at": created.Add(10 * time.Minute).Format(layout)}
+			before := [4]string{encode([]any{base}), "[{}]", encode([]any{prior}), "[{},{},{}]"}
+			after := before
+			switch kind {
+			case "actor":
+				p["actor_id"] = "wrong"
+			case "target":
+				p["payload_json"] = nil
+			case "hash":
+				p["payload_sha256"] = "wrong"
+			case "confirmation":
+				p["confirmation_sha256"] = "wrong"
+			case "expiry":
+				p["expires_at"] = created.Format(layout)
+			case "secret":
+				after[1] = "[]"
+			case "revision":
+				p["base_revision"] = 3
+			case "consumed":
+				p["consumed_at"] = "now"
+			case "audit":
+				after[3] = "[]"
+			}
+			after[2] = encode([]any{prior, p})
+			u := &nativeUpdateOracle{key: key, baseline: before, f: acceptanceBrowserStart{ID: "id", ActorID: "actor", Update: &nativeUpdateSetup{Target: target}}}
+			if (u.check(context.Background(), 1, after, []byte("<code>"+phrase+"</code>")) == nil) != (kind == "valid") {
+				t.Fatal("preview oracle corruption mismatch")
+			}
+		})
+	}
+}
+
+// Update-only SQL/crypto oracle; values stay in memory.
+type nativeUpdateOracle struct {
+	f                 acceptanceBrowserStart
+	key               []byte
+	baseline, preview [4]string
+}
+
+func (u *nativeUpdateOracle) quiet(ctx context.Context) error {
+	for _, exe := range []string{u.f.Executable, u.f.Update.Executable} {
+		f := u.f
+		f.Executable = exe
+		if err := (&configurationBrowserOracle{f: f}).quiet(); err != nil {
+			return err
+		}
+	}
+	return (&nativeTestRuntime{routeHealth: u.f.Update.Route}).route(ctx, false)
+}
+func updateRows(state [4]string) ([4][]map[string]any, error) {
+	var rows [4][]map[string]any
+	for i := range state {
+		if json.Unmarshal([]byte(state[i]), &rows[i]) != nil {
+			return rows, errors.New("update SQL decode")
+		}
+	}
+	if len(rows[0]) != 1 {
+		return rows, errors.New("update instance count")
+	}
+	return rows, nil
+}
+func updateAudit(before, after string, actor, id, action string, payload map[string]any) error {
+	var old, rows []map[string]any
+	if json.Unmarshal([]byte(before), &old) != nil || json.Unmarshal([]byte(after), &rows) != nil || len(rows) != len(old)+1 {
+		return errors.New("update audit count")
+	}
+	remaining := map[any]map[string]any{}
+	for _, e := range old {
+		remaining[e["id"]] = e
+	}
+	var added map[string]any
+	for _, e := range rows {
+		if p, ok := remaining[e["id"]]; ok {
+			if !reflect.DeepEqual(p, e) {
+				return errors.New("prior audit changed")
+			}
+			delete(remaining, e["id"])
+		} else if added == nil {
+			added = e
+		} else {
+			return errors.New("extra audit")
+		}
+	}
+	if len(remaining) != 0 || added == nil || added["actor_type"] != "oidc_subject" || added["actor_id"] != actor || added["resource_type"] != "extension" || added["resource_id"] != id || added["action"] != action || added["result"] != "success" {
+		return errors.New("update audit binding")
+	}
+	raw, ok := added["after_redacted_json"].(string)
+	var got map[string]any
+	if !ok || json.Unmarshal([]byte(raw), &got) != nil || !reflect.DeepEqual(got, payload) {
+		return errors.New("update audit payload")
+	}
+	return nil
+}
+func (u *nativeUpdateOracle) check(ctx context.Context, phase int, state [4]string, body []byte) error {
+	old, err := updateRows(u.baseline)
+	if err != nil {
+		return err
+	}
+	rows, err := updateRows(state)
+	if err != nil {
+		return err
+	}
+	if state[1] != u.baseline[1] || len(old[1]) != 1 || len(old[2]) != 1 || len(old[3]) != 3 {
+		return errors.New("update baseline/secret mismatch")
+	}
+	base := old[0][0]
+	if base["artifact_pin"] != "sha256:"+acceptanceArchiveSHA || base["configuration_revision"] != float64(2) || base["tested_revision"] != float64(2) || base["health_code"] != "extension.ready" || base["lifecycle"] != "stopped" || base["enabled"] != false || base["routed"] != false {
+		return errors.New("update A setup")
+	}
+	if len(rows[2]) != 2 {
+		return errors.New("update preview count")
+	}
+	var p map[string]any
+	foundPrior := false
+	for _, candidate := range rows[2] {
+		if candidate["id"] == old[2][0]["id"] {
+			foundPrior = true
+			if !reflect.DeepEqual(candidate, old[2][0]) {
+				return errors.New("setup preview changed")
+			}
+		} else {
+			p = candidate
+		}
+	}
+	if !foundPrior || p == nil || p["instance_id"] != u.f.ID || p["actor_type"] != "oidc_subject" || p["actor_id"] != u.f.ActorID || p["operation"] != "update" || p["base_revision"] != float64(2) {
+		return errors.New("update preview binding")
+	}
+	payload, err := json.Marshal(u.f.Update.Target)
+	if err != nil {
+		return errors.New("target encoding")
+	}
+	var target any
+	_ = json.Unmarshal(payload, &target)
+	digest := sha256.Sum256(payload)
+	if !reflect.DeepEqual(p["payload_json"], target) || p["payload_sha256"] != hex.EncodeToString(digest[:]) {
+		return errors.New("update target/hash")
+	}
+	for _, field := range []string{"privilege_diff_json", "configuration_diff_json", "secret_slot_diff_json"} {
+		if p[field] != nil {
+			if a, ok := p[field].([]any); !ok || len(a) != 0 {
+				return errors.New("unexpected update diff")
+			}
+		}
+	}
+	if phase == 1 {
+		if state[0] != u.baseline[0] || state[3] != u.baseline[3] || p["consumed_at"] != nil {
+			return errors.New("preview mutated authority")
+		}
+		match := regexp.MustCompile("<code>(confirm-[a-f0-9]{32})</code>").FindSubmatch(body)
+		if len(match) != 2 {
+			return errors.New("update confirmation absent")
+		}
+		mac := hmac.New(sha256.New, u.key)
+		mac.Write([]byte("extension-preview-confirmation\x00"))
+		mac.Write(match[1])
+		empty := hmac.New(sha256.New, u.key)
+		if p["confirmation_sha256"] != hex.EncodeToString(mac.Sum(nil)) || p["secret_binding_sha256"] != hex.EncodeToString(empty.Sum(nil)) {
+			return errors.New("preview crypto binding")
+		}
+		created, cok := p["created_at"].(string)
+		expires, eok := p["expires_at"].(string)
+		ct, ce := time.Parse("2006-01-02T15:04:05.999999999", created)
+		et, ee := time.Parse("2006-01-02T15:04:05.999999999", expires)
+		if !cok || !eok || ce != nil || ee != nil || et.Sub(ct) != 10*time.Minute || !et.After(time.Now()) {
+			return errors.New("preview expiry")
+		}
+		u.preview = state
+		return nil
+	}
+	if phase != 2 {
+		return errors.New("unknown update phase")
+	}
+	preview, err := updateRows(u.preview)
+	if err != nil {
+		return err
+	}
+	var previous map[string]any
+	for _, v := range preview[2] {
+		if v["id"] == p["id"] {
+			previous = v
+		}
+	}
+	if previous == nil || p["consumed_at"] == nil {
+		return errors.New("preview not consumed")
+	}
+	delete(p, "consumed_at")
+	delete(previous, "consumed_at")
+	if !reflect.DeepEqual(p, previous) {
+		return errors.New("consumed preview changed")
+	}
+	row := rows[0][0]
+	targetB := u.f.Update.Target
+	expected := map[string]any{"artifact_pin": targetB.ArtifactPin, "manifest_sha256": targetB.ManifestDigest, "grant_sha256": targetB.GrantDigest, "session_sha256": targetB.SessionDigest, "previous_artifact_pin": base["artifact_pin"], "available_update_pin": nil, "configuration_revision": float64(3), "tested_revision": nil, "health_code": "extension.unknown", "lifecycle": "stopped"}
+	snapshot := map[string]any{}
+	for to, from := range map[string]string{"artifact_pin": "artifact_pin", "manifest_sha256": "manifest_sha256", "grant_sha256": "grant_sha256", "session_sha256": "session_sha256", "capabilities": "capabilities_json", "interfaces": "interfaces_json", "secret_slots": "secret_slots_json", "metadata": "metadata_json", "configuration": "configuration_json"} {
+		snapshot[to] = base[from]
+	}
+	expected["previous_version_json"] = snapshot
+	for field, want := range expected {
+		if !reflect.DeepEqual(row[field], want) {
+			return errors.New("update instance/snapshot delta")
+		}
+		delete(row, field)
+		delete(base, field)
+	}
+	delete(row, "updated_at")
+	delete(base, "updated_at")
+	if !reflect.DeepEqual(row, base) {
+		return errors.New("update unrelated authority/configuration")
+	}
+	if err := updateAudit(u.baseline[3], state[3], u.f.ActorID, u.f.ID, "extension.update", map[string]any{"from": "sha256:" + acceptanceArchiveSHA, "to": targetB.ArtifactPin, "privilege_diff": p["privilege_diff_json"], "configuration_diff": p["configuration_diff_json"], "secret_slot_diff": "[REDACTED]"}); err != nil {
+		return err
+	}
+	return u.secret(ctx)
+}
+func (u *nativeUpdateOracle) secret(ctx context.Context) error {
+	var nonce, ciphertext []byte
+	var slot string
+	if err := u.f.DB.QueryRowContext(ctx, "SELECT slot,nonce,ciphertext FROM extension_secrets WHERE instance_id=$1", u.f.ID).Scan(&slot, &nonce, &ciphertext); err != nil {
+		return errors.New("update secret query")
+	}
+	block, err := aes.NewCipher(u.key)
+	if err != nil {
+		return errors.New("update AES key")
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return errors.New("update GCM")
+	}
+	if len(nonce) != gcm.NonceSize() {
+		return errors.New("update AES nonce")
+	}
+	plain, err := gcm.Open(nil, nonce, ciphertext, []byte(u.f.ID+"\x00"+slot))
+	defer clear(plain)
+	if err != nil || slot != "webhook.hmac-key" || !bytes.Equal(plain, []byte(u.f.Secret)) {
+		return errors.New("update secret authentication")
+	}
+	return nil
+}
+func (u *nativeUpdateOracle) testB(t *testing.T, before [4]string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := u.quiet(ctx); err != nil {
+		return err
+	}
+	r := &nativeTestRuntime{Runtime: u.f.TestRuntime.Runtime, root: u.f.RuntimeRoot, executable: u.f.Update.Executable, expectedSHA: u.f.Update.SHA}
+	if err := u.f.Update.TestB(ctx, r); err != nil {
+		return errors.New("nonbrowser B Service.Test failed")
+	}
+	if err := r.phase(ctx, 1); err != nil {
+		return err
+	}
+	if err := u.quiet(ctx); err != nil {
+		return err
+	}
+	state, err := configurationSnapshot(ctx, u.f.DB)
+	if err != nil {
+		return err
+	}
+	old, err := updateRows(before)
+	if err != nil {
+		return err
+	}
+	rows, err := updateRows(state)
+	if err != nil {
+		return err
+	}
+	if before[1] != state[1] || before[2] != state[2] {
+		return errors.New("B Test changed secret/preview")
+	}
+	row, base := rows[0][0], old[0][0]
+	if row["tested_revision"] != float64(3) || row["health_code"] != "extension.ready" {
+		return errors.New("B readiness mismatch")
+	}
+	for _, f := range []string{"tested_revision", "health_code", "updated_at"} {
+		delete(row, f)
+		delete(base, f)
+	}
+	if !reflect.DeepEqual(row, base) {
+		return errors.New("B Test changed authority")
+	}
+	if err := updateAudit(before[3], state[3], u.f.ActorID, u.f.ID, "extension.test", map[string]any{"configuration_revision": float64(3), "health_code": "extension.ready"}); err != nil {
+		return err
+	}
+	for _, table := range state {
+		for _, needle := range []string{u.f.Secret, u.f.Session, u.f.CSRF, r.token} {
+			if needle != "" && strings.Contains(table, needle) {
+				return errors.New("B SQL private leak")
+			}
+		}
+	}
+	if err := u.secret(ctx); err != nil {
+		return err
+	}
+	t.Logf("PASS nonbrowser B only: pid=%s executable_sha256=%x Start/Probe/Stop; private socket removed; revision3 tested3; route absent receiver0", r.pid, r.expectedSHA)
+	return nil
+}
+
+type nativeUpdateSetup struct {
+	Target     extensionsadmin.UpdateInput
+	Executable string
+	SHA        [32]byte
+	Route      func(context.Context) (plugin.HealthResponse, error)
+	TestB      func(context.Context, *nativeTestRuntime) error
+}
+
 type acceptanceBrowserStart struct {
+	Update                                                         *nativeUpdateSetup
 	TestRuntime                                                    *nativeTestRuntime
 	Handler                                                        http.Handler
 	DB                                                             *sql.DB
@@ -52,7 +380,7 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 		}
 	}
 	acceptanceLifecycleDriver(t, false, func(f acceptanceBrowserStart) {
-		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "connection-test" || mode == "activation" {
+		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "connection-test" || mode == "activation" || mode == "update" {
 			runConnectionBrowser(t, f, driver)
 			return
 		}
@@ -933,9 +1261,26 @@ func activationSQL(before, after [4]string, actor, id string, enable bool) error
 func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string) {
 	mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE")
 	activation := mode == "activation"
+	update := mode == "update"
+	var u *nativeUpdateOracle
+	if update {
+		if f.Update == nil {
+			t.Fatal("missing verified B setup")
+		}
+		raw, err := os.ReadFile(f.MasterFile)
+		acceptanceCheck(t, err)
+		key, err := hex.DecodeString(string(raw))
+		clear(raw)
+		acceptanceCheck(t, err)
+		defer clear(key)
+		u = &nativeUpdateOracle{f: f, key: key}
+	}
 	actions := []string{"test"}
 	if activation {
 		actions = []string{"enable", "disable"}
+	}
+	if update {
+		actions = []string{"update-preview", "update-apply"}
 	}
 	if f.TestRuntime == nil {
 		t.Fatal("missing real runtime observer")
@@ -951,6 +1296,11 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 	posts := 0
 	failure := ""
 	applied := before
+	if update {
+		u.baseline = before
+		acceptanceCheck(t, u.quiet(context.Background()))
+	}
+	reloads := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -1021,7 +1371,11 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 			fail("Test reached webhook receiver")
 			return
 		}
-		if err := f.TestRuntime.phase(ctx, posts); err != nil {
+		runtimePhase := posts
+		if update {
+			runtimePhase = 0
+		}
+		if err := f.TestRuntime.phase(ctx, runtimePhase); err != nil {
 			fail(err.Error())
 			return
 		}
@@ -1033,7 +1387,9 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 		} else {
 			if r.Method == "POST" {
 				var delta error
-				if activation {
+				if update {
+					delta = u.check(ctx, posts, state, body)
+				} else if activation {
 					delta = activationSQL(applied, state, f.ActorID, f.ID, posts == 1)
 				} else {
 					delta = connectionSQL(before, state, f.ActorID, f.ID)
@@ -1050,6 +1406,15 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 			} else if state != applied {
 				fail("GET changed tested state")
 				return
+			}
+		}
+		if update {
+			if err := u.quiet(ctx); err != nil {
+				fail(err.Error())
+				return
+			}
+			if posts == 2 && r.Method == "GET" && r.URL.Path == detail {
+				reloads++
 			}
 		}
 		for _, table := range state {
@@ -1089,6 +1454,11 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 	t.Cleanup(shutdown)
 	go func() { served <- srv.Serve(listener) }()
 	input := map[string]string{"origin": "http://" + listener.Addr().String(), "id": f.ID, "session": f.Session, "csrf": f.CSRF, "mode": mode}
+	if update {
+		target, err := json.Marshal(f.Update.Target)
+		acceptanceCheck(t, err)
+		input["update_target"] = string(target)
+	}
 	bootstrap, err := json.Marshal(input)
 	acceptanceCheck(t, err)
 	runctx, runcancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -1113,7 +1483,11 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	state, err := configurationSnapshot(ctx, f.DB)
-	if phaseErr := f.TestRuntime.phase(ctx, posts); phaseErr != nil {
+	finalPhase := posts
+	if update {
+		finalPhase = 0
+	}
+	if phaseErr := f.TestRuntime.phase(ctx, finalPhase); phaseErr != nil {
 		t.Error(phaseErr.Error())
 	}
 	cancel()
@@ -1139,6 +1513,31 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 	}
 	if runErr != nil {
 		t.Errorf("native Test browser failed: %v", runErr)
+	}
+	if update && !t.Failed() {
+		if reloads < 1 {
+			t.Error("update reload missing")
+			return
+		}
+		var diagnostic struct {
+			UpdateGate  string
+			BrowserExit struct{ Code int }
+			Cleanup     struct {
+				MainExited bool
+				Remaining  []any
+			}
+		}
+		if json.Unmarshal(proof, &diagnostic) != nil || diagnostic.UpdateGate != "PASS" || !diagnostic.Cleanup.MainExited || len(diagnostic.Cleanup.Remaining) != 0 || diagnostic.BrowserExit.Code != 0 {
+			t.Error("native update proof incomplete")
+			return
+		}
+		t.Log("native update SQL/proof frozen; browser and HTTP stopped; B execution NOT YET proven")
+		if err := u.testB(t, applied); err != nil {
+			t.Error(err.Error())
+			return
+		}
+		t.Log("PASS combined native update/reload plus separately nonbrowser B Service.Test; no routing/delivery/rollback credit")
+		return
 	}
 	if !t.Failed() {
 		t.Logf("PASS native %s: posts=%d; positive ordered runtime and route observations; real child pid=%s executable_sha256=%x private socket; stopped/disabled/unrouted; SQL/audit/secret retention/privacy; receiver quiet; login injected", mode, posts, f.TestRuntime.pid, f.TestRuntime.expectedSHA)

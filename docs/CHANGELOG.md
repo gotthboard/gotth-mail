@@ -2,9 +2,21 @@
 
 ## Unreleased
 
-### 2026-09-27 01:30 CDT — Verify native Enable and Disable as one safe cycle
+### 2026-09-27 01:50 CDT — Exercise native pinned update and separate B readiness
 
 Commit: current commit; hash assigned by Git after commit
+
+Affected files: cmd/gotth-mail/extensions_acceptance_test.go, cmd/gotth-mail/extensions_browser_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-smoke.test.mjs, scripts/extensions-browser-acceptance.sh.
+
+Adds isolated native Update Preview/blank-confirmation denial/Apply/reload, independent SQL/crypto/snapshot/secret/audit checks and no runtime calls. After browser shutdown and frozen native proof, one separately labeled Service.Test proves pinned B Start/Probe/Stop. Combined success requires both. Extracts only existing B staging, preserving its closed trust and old call order; sixth runner argument is B only for update.
+
+Verification: development Go1.26.6 race compile and scoped command vet pass; 10 update-preview crypto/SQL cases, 51 directly affected shared oracle subcases, 25 controlled driver shutdown cases plus native Enter helper, and 10 runner argument guards pass. Native run2 PASS10.59s: two POSTs, blank denial, independent update SQL/AES-GCM/audit/previous-A snapshot and reload; browser exit0 before separate B Test observes actual binary6248244f… PID231/socket Start/Probe/Stop, revision3 readiness audit, no route/receiver. Namespace zero live fixture processes/residual paths. Run1 was equipment red: RFC3339 expected a zone on SQL timestamp-without-time-zone JSON; corrected parser preserves exact ten-minute expiry checks, failure source/log retained. B staging block verified byte-identical at its original old-path position. No old physical/full-suite reruns, production changes or canonical admission.
+
+Limits: unpublished version-only alpha.2; injected setup/login; no Enable/send/rollback/schema migration; renderer/shared tokens and B1/beta remain binding.
+
+### 2026-09-27 01:30 CDT — Verify native Enable and Disable as one safe cycle
+
+Commit: `ecf3cd53c50797ce4aa838945bf3a4d958b16fdb`
 
 Affected files: cmd/gotth-mail/extensions_browser_test.go, cmd/gotth-mail/extensions_acceptance_test.go, scripts/extensions-browser-smoke.mjs, scripts/extensions-browser-smoke.test.mjs, scripts/extensions-browser-acceptance.sh.
 

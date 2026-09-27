@@ -31,6 +31,7 @@ import (
 	"testing"
 	"time"
 
+	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/authn"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/extensionsadmin"
@@ -456,9 +457,10 @@ func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(a
 	}
 	if browser != nil {
 		var observation *nativeTestRuntime
-		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "connection-test" || mode == "activation" {
+		var update *nativeUpdateSetup
+		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "connection-test" || mode == "activation" || mode == "update" {
 			configure(receiver.URL, key, "2") // Admitted handler-driven SETUP, not browser coverage.
-			if mode == "activation" {
+			if mode == "activation" || mode == "update" {
 				action("test")
 				emptyRuntime()
 			} // SETUP, not native Test credit.
@@ -473,10 +475,27 @@ func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(a
 					return supervisor.Health(ctx, extensionsruntime.ExtensionID)
 				}
 			}
+			if mode == "update" {
+				_, filesB, stageB, mdB, grantB, sessionB := acceptanceStageB(t, a, manifest, metadata, grant, profile)
+				supervisor, ok := original.(*extensionsruntime.Supervisor)
+				if !ok {
+					t.Fatal("real update supervisor missing")
+				}
+				update = &nativeUpdateSetup{Target: extensionsadmin.UpdateInput{ArtifactPin: "sha256:" + acceptanceArchiveBSHA, ManifestDigest: mdB, GrantDigest: sessionB.GrantDigest, SessionDigest: sessionB.Fingerprint, Capabilities: grantB.Capabilities, Interfaces: []string{extensionsruntime.Interface}, SecretSlots: grantB.Secrets, Metadata: metadata}, Executable: filepath.Join(stageB, "gotth-extension-webhook"), SHA: sha256.Sum256(filesB["gotth-extension-webhook"])}
+				update.Route = func(ctx context.Context) (plugin.HealthResponse, error) {
+					return supervisor.Health(ctx, extensionsruntime.ExtensionID)
+				}
+				update.TestB = func(ctx context.Context, observer *nativeTestRuntime) error {
+					server.Extensions.Runtime = observer
+					defer func() { server.Extensions.Runtime = observation }()
+					_, err := server.Extensions.Test(ctx, audit.ActorRef{Type: "oidc_subject", ID: server.OIDCStore.(acceptanceSessions).bound.IdentityRefID}, id)
+					return err
+				}
+			}
 			server.Extensions.Runtime = observation
 			defer func() { server.Extensions.Runtime = original }() // Restore before registered Disable cleanup.
 		}
-		browser(acceptanceBrowserStart{TestRuntime: observation, Handler: handler, DB: db, ID: id, Session: sid, CSRF: csrf, Current: current, EmptyRuntime: emptyRuntime, Requests: requests.Load, Endpoint: receiver.URL, Secret: key, MasterFile: master, RuntimeRoot: r, Executable: filepath.Join(stage, "gotth-extension-webhook"), ActorID: server.OIDCStore.(acceptanceSessions).bound.IdentityRefID})
+		browser(acceptanceBrowserStart{Update: update, TestRuntime: observation, Handler: handler, DB: db, ID: id, Session: sid, CSRF: csrf, Current: current, EmptyRuntime: emptyRuntime, Requests: requests.Load, Endpoint: receiver.URL, Secret: key, MasterFile: master, RuntimeRoot: r, Executable: filepath.Join(stage, "gotth-extension-webhook"), ActorID: server.OIDCStore.(acceptanceSessions).bound.IdentityRefID})
 		return
 	}
 	configure(untrusted.URL, key, "1")
@@ -517,60 +536,7 @@ func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(a
 		t.Log("PASS real registration/configure/readiness/enable/HTTPS-HMAC/SQL/disable; login mocked; no browser claim")
 		return
 	}
-	// Candidate B is an independently admitted version-only test artifact, not a release.
-	archiveB := os.Getenv("GOTTH_MAIL_ACCEPTANCE_ARCHIVE_B")
-	f, err := os.Open(archiveB)
-	acceptanceCheck(t, err)
-	dataB, err := io.ReadAll(io.LimitReader(f, (8<<20)+1))
-	acceptanceCheck(t, f.Close())
-	acceptanceCheck(t, err)
-	filesB, err := acceptanceArchive(dataB, "1.0.0-alpha.2")
-	acceptanceCheck(t, err)
-	if _, err := acceptanceArchive(dataB, "1.0.0-alpha.1"); err == nil {
-		t.Fatal("B admitted under A pin")
-	}
-	var manifestB extensioncore.Manifest
-	acceptanceCheck(t, json.Unmarshal(filesB["manifest.json"], &manifestB))
-	canonicalB, err := extensioncore.CanonicalManifest(manifestB)
-	acceptanceCheck(t, err)
-	if !bytes.Equal(canonicalB, filesB["manifest.json"]) || manifestB.Version != "1.0.0-alpha.2" || manifestB.ID != manifest.ID {
-		t.Fatal("wrong B manifest")
-	}
-	var metadataB extensionsadmin.Metadata
-	acceptanceCheck(t, json.Unmarshal(filesB["configuration-metadata.json"], &metadataB))
-	acceptanceCheck(t, extensionsadmin.ValidateMetadata(metadataB))
-	if !reflect.DeepEqual(metadataB, metadata) {
-		t.Fatal("version-only candidate metadata changed")
-	}
-	mdB, err := extensioncore.ManifestDigest(manifestB)
-	acceptanceCheck(t, err)
-	binaryB := fmt.Sprintf("%x", sha256.Sum256(filesB["gotth-extension-webhook"]))
-	if mdB != "4093f2b17c2b8062d0f3ceb27480c77865289ec883c642798cd19352a8cab9ea" || binaryB != "6248244fa56bf39554d961019d40d71ece7a68eb5801eca0ef87602272818652" {
-		t.Fatal("B member provenance mismatch")
-	}
-	grantB := grant
-	grantB.ManifestDigest = mdB
-	grantB.Capabilities = manifestB.Capabilities
-	sessionB, err := extensioncore.Negotiate(manifestB, grantB, profile)
-	acceptanceCheck(t, err)
-	stageB := filepath.Join(a, acceptanceArchiveBSHA)
-	acceptanceCheck(t, os.Mkdir(stageB, 0700))
-	for name, b := range filesB {
-		mode := os.FileMode(0400)
-		if name == "gotth-extension-webhook" {
-			mode = 0500
-		}
-		acceptanceCheck(t, os.WriteFile(filepath.Join(stageB, name), b, mode))
-	}
-	acceptanceCheck(t, os.WriteFile(filepath.Join(stageB, "artifact-pin"), []byte("sha256:"+acceptanceArchiveBSHA), 0400))
-	acceptanceCheck(t, os.Chmod(stageB, 0500))
-	t.Cleanup(func() { acceptanceCheck(t, os.Chmod(stageB, 0700)) })
-	outB, err := exec.Command(filepath.Join(stageB, "gotth-extension-webhook"), "--version").CombinedOutput()
-	acceptanceCheck(t, err)
-	if strings.TrimSpace(string(outB)) != "1.0.0-alpha.2" {
-		t.Fatal("B binary version mismatch")
-	}
-	t.Logf("B archive=%s binary=%s manifest=%s grant=%s session=%s version=%s", acceptanceArchiveBSHA, binaryB, mdB, sessionB.GrantDigest, sessionB.Fingerprint, strings.TrimSpace(string(outB)))
+	archiveB, filesB, stageB, mdB, grantB, sessionB := acceptanceStageB(t, a, manifest, metadata, grant, profile)
 	// /proc is namespace-private. Match the actual child executable and hash its open inode,
 	// not the registry pin or a separate --version process. Require exactly one live match.
 	liveIdentity := func(dir string, expectedBinary []byte) {
@@ -731,4 +697,64 @@ func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(a
 		}
 	}
 	t.Log("PASS A->B->A actual live binaries, confirmed update/rollback, restored A configuration, retained rotated secret; login mocked; no browser claim")
+}
+
+// Exactly the admitted B verification/staging block; not a generic artifact loader.
+func acceptanceStageB(t *testing.T, a string, manifest extensioncore.Manifest, metadata extensionsadmin.Metadata, grant extensioncore.Grant, profile extensioncore.HostProfile) (string, map[string][]byte, string, string, extensioncore.Grant, extensioncore.Session) {
+	t.Helper()
+	// Candidate B is an independently admitted version-only test artifact, not a release.
+	archiveB := os.Getenv("GOTTH_MAIL_ACCEPTANCE_ARCHIVE_B")
+	f, err := os.Open(archiveB)
+	acceptanceCheck(t, err)
+	dataB, err := io.ReadAll(io.LimitReader(f, (8<<20)+1))
+	acceptanceCheck(t, f.Close())
+	acceptanceCheck(t, err)
+	filesB, err := acceptanceArchive(dataB, "1.0.0-alpha.2")
+	acceptanceCheck(t, err)
+	if _, err := acceptanceArchive(dataB, "1.0.0-alpha.1"); err == nil {
+		t.Fatal("B admitted under A pin")
+	}
+	var manifestB extensioncore.Manifest
+	acceptanceCheck(t, json.Unmarshal(filesB["manifest.json"], &manifestB))
+	canonicalB, err := extensioncore.CanonicalManifest(manifestB)
+	acceptanceCheck(t, err)
+	if !bytes.Equal(canonicalB, filesB["manifest.json"]) || manifestB.Version != "1.0.0-alpha.2" || manifestB.ID != manifest.ID {
+		t.Fatal("wrong B manifest")
+	}
+	var metadataB extensionsadmin.Metadata
+	acceptanceCheck(t, json.Unmarshal(filesB["configuration-metadata.json"], &metadataB))
+	acceptanceCheck(t, extensionsadmin.ValidateMetadata(metadataB))
+	if !reflect.DeepEqual(metadataB, metadata) {
+		t.Fatal("version-only candidate metadata changed")
+	}
+	mdB, err := extensioncore.ManifestDigest(manifestB)
+	acceptanceCheck(t, err)
+	binaryB := fmt.Sprintf("%x", sha256.Sum256(filesB["gotth-extension-webhook"]))
+	if mdB != "4093f2b17c2b8062d0f3ceb27480c77865289ec883c642798cd19352a8cab9ea" || binaryB != "6248244fa56bf39554d961019d40d71ece7a68eb5801eca0ef87602272818652" {
+		t.Fatal("B member provenance mismatch")
+	}
+	grantB := grant
+	grantB.ManifestDigest = mdB
+	grantB.Capabilities = manifestB.Capabilities
+	sessionB, err := extensioncore.Negotiate(manifestB, grantB, profile)
+	acceptanceCheck(t, err)
+	stageB := filepath.Join(a, acceptanceArchiveBSHA)
+	acceptanceCheck(t, os.Mkdir(stageB, 0700))
+	for name, b := range filesB {
+		mode := os.FileMode(0400)
+		if name == "gotth-extension-webhook" {
+			mode = 0500
+		}
+		acceptanceCheck(t, os.WriteFile(filepath.Join(stageB, name), b, mode))
+	}
+	acceptanceCheck(t, os.WriteFile(filepath.Join(stageB, "artifact-pin"), []byte("sha256:"+acceptanceArchiveBSHA), 0400))
+	acceptanceCheck(t, os.Chmod(stageB, 0500))
+	t.Cleanup(func() { acceptanceCheck(t, os.Chmod(stageB, 0700)) })
+	outB, err := exec.Command(filepath.Join(stageB, "gotth-extension-webhook"), "--version").CombinedOutput()
+	acceptanceCheck(t, err)
+	if strings.TrimSpace(string(outB)) != "1.0.0-alpha.2" {
+		t.Fatal("B binary version mismatch")
+	}
+	t.Logf("B archive=%s binary=%s manifest=%s grant=%s session=%s version=%s", acceptanceArchiveBSHA, binaryB, mdB, sessionB.GrantDigest, sessionB.Fingerprint, strings.TrimSpace(string(outB)))
+	return archiveB, filesB, stageB, mdB, grantB, sessionB
 }
