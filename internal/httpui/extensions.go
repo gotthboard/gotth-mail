@@ -41,11 +41,16 @@ type extensionPageView struct {
 // auxiliary O(L+B), Omega(B). A auth time, Q SQL time (including existing
 // per-instance secret-status queries), N rows, B escaped bytes, L List storage.
 // Tight bounds depend on delegated auth/SQL/rendering; no fixed size bound.
+// Terminal response adds O(U+Rt+Bt+Wt) time, Omega(Bt) on complete rendering,
+// and O(U+St+Bt) auxiliary space, Omega(Bt) for complete buffered output.
+// U raw-query parsing bytes, Rt/St delegated templ costs, Bt receipt bytes,
+// Wt transport. No general tight bound or new SQL query.
 // Audit request costs are specified by registerExtensionAuditUI. Quarantine uses
 // O(P+F+W) time, Omega(1), and O(P) space, Omega(1), tight Theta not established
 // across errors: P tracked runtime dirs, F filesystem work, W lock wait.
 func registerExtensionUI(mux *http.ServeMux, ids *identity.Service, az authz.Authorizer, sessions authn.IdentitySessionStore, now func() time.Time, service *extensionsadmin.Service) {
 	registerInventoryAssets(mux)
+	registerExtensionDetailAsset(mux)
 	registerExtensionAuditUI(mux, ids, az, sessions, now, service)
 	mux.HandleFunc("/admin/extensions", func(w http.ResponseWriter, r *http.Request) {
 		inventoryHeaders(w)
@@ -119,6 +124,12 @@ func registerExtensionUI(mux *http.ServeMux, ids *identity.Service, az authz.Aut
 		if service.RuntimeBlockReason != nil {
 			view.BlockedReason = service.RuntimeBlockReason()
 		}
+		if r.Method == http.MethodPost && r.Form.Get("action") == "uninstall-apply" && err == nil && view.Item.InstanceID == "" {
+			if err := writeExtensionDetailComponent(w, r, extensionTerminalDocument(inventoryTheme(r.URL.Query().Get("theme")), view.BlockedReason)); err != nil {
+				log.Print("extension terminal render/transport failure")
+			}
+			return
+		}
 		renderExtensionPage(w, view)
 	})
 }
@@ -156,7 +167,9 @@ func requireExtensionUIActor(w http.ResponseWriter, r *http.Request, ids *identi
 // B form/configuration bytes, P/A time/space of extensionFields (at most three
 // projections, including copied options); F fields, O option entries. D/M
 // delegated service time/memory include validation, hashing, serialization,
-// SQL/audit, filesystem/runtime work and lock waits. No extra service calls;
+// SQL/audit, filesystem/runtime work and lock waits. Target-bound Apply adds
+// one parameterized SQL query inside the existing service call, not a preflight Get; actual driver/protocol cost is delegated.
+// No extra service calls;
 // successful configure preview retains its input projection, never stored values.
 func applyExtensionUIAction(r *http.Request, service *extensionsadmin.Service, actor audit.ActorRef, item extensionsadmin.Instance) (extensionPageView, error) {
 	view := extensionPageView{Item: item, Fields: extensionFields(item, nil)}
@@ -175,7 +188,7 @@ func applyExtensionUIAction(r *http.Request, service *extensionsadmin.Service, a
 		if inputErr != nil {
 			return view, inputErr
 		}
-		view.Item, err = service.ApplyConfigure(r.Context(), actor, r.Form.Get("preview_id"), r.Form.Get("confirmation"), input)
+		view.Item, err = service.ApplyConfigure(r.Context(), actor, item.InstanceID, r.Form.Get("preview_id"), r.Form.Get("confirmation"), input)
 	case "test":
 		view.Item, err = service.Test(r.Context(), actor, item.InstanceID)
 	case "enable":
@@ -189,17 +202,17 @@ func applyExtensionUIAction(r *http.Request, service *extensionsadmin.Service, a
 			view.UpdateTarget = input
 		}
 	case "update-apply":
-		view.Item, err = service.ApplyUpdate(r.Context(), actor, r.Form.Get("preview_id"), r.Form.Get("confirmation"))
+		view.Item, err = service.ApplyUpdate(r.Context(), actor, item.InstanceID, r.Form.Get("preview_id"), r.Form.Get("confirmation"))
 	case "rollback":
 		view.Item, err = service.Rollback(r.Context(), actor, item.InstanceID, r.Form.Get("confirmation"))
 	case "secrets-delete-preview":
 		view.Preview, err = service.PreviewDeleteSecrets(r.Context(), actor, item.InstanceID)
 	case "secrets-delete-apply":
-		view.Item, err = service.ApplyDeleteSecrets(r.Context(), actor, r.Form.Get("preview_id"), r.Form.Get("confirmation"))
+		view.Item, err = service.ApplyDeleteSecrets(r.Context(), actor, item.InstanceID, r.Form.Get("preview_id"), r.Form.Get("confirmation"))
 	case "uninstall-preview":
 		view.Preview, err = service.PreviewUninstall(r.Context(), actor, item.InstanceID)
 	case "uninstall-apply":
-		err = service.ApplyUninstall(r.Context(), actor, r.Form.Get("preview_id"), r.Form.Get("confirmation"))
+		err = service.ApplyUninstall(r.Context(), actor, item.InstanceID, r.Form.Get("preview_id"), r.Form.Get("confirmation"))
 		if err == nil {
 			return extensionPageView{Message: "extension uninstalled"}, nil
 		}

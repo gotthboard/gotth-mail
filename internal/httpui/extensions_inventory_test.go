@@ -130,6 +130,8 @@ func TestInventoryGeneratorContract(t *testing.T) {
 		for name, data := range map[string]string{
 			"internal/httpui/extensions_inventory.templ":            "package httpui\n\ntempl GeneratorFixture() {\n <p class=\"grid p-4 text-ink md:grid-cols-2\">Safe fixture</p>\n}\n",
 			"internal/httpui/assets/extensions-inventory.input.css": "@layer theme, base, components, utilities;\n@import \"tailwindcss/theme.css\" layer(theme);\n@import \"tailwindcss/utilities.css\" layer(utilities) source(none);\n@source \"../extensions_inventory.templ\";\n@theme inline { --color-ink: var(--text); }\n",
+			"internal/httpui/extensions_detail.templ":               "package httpui\n\ntempl DetailGeneratorFixture() {\n <p class=\"text-ink p-3\">Detail fixture</p>\n}\n",
+			"internal/httpui/assets/extensions-detail.input.css":    "@layer theme, base, components, utilities;\n@import \"tailwindcss/theme.css\" layer(theme);\n@import \"tailwindcss/utilities.css\" layer(utilities) source(none);\n@source \"../extensions_detail.templ\";\n@theme inline { --color-ink: var(--text); }\n",
 			"unrelated.html": "<div class=\"rotate-45\">ignored</div>",
 		} {
 			target := filepath.Join(dst, name)
@@ -186,7 +188,7 @@ func TestInventoryGeneratorContract(t *testing.T) {
 			t.Fatalf("generate: %v %s", err, out)
 		}
 	}
-	for _, name := range []string{"internal/httpui/extensions_inventory_templ.go", "internal/httpui/assets/inventory.css"} {
+	for _, name := range []string{"internal/httpui/extensions_inventory_templ.go", "internal/httpui/assets/inventory.css", "internal/httpui/extensions_detail_templ.go", "internal/httpui/assets/detail.css"} {
 		left, err := os.ReadFile(filepath.Join(a, name))
 		if err != nil {
 			t.Fatal(err)
@@ -206,25 +208,62 @@ func TestInventoryGeneratorContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clean generation check: %v %s", err, out)
 	}
-	output := filepath.Join(a, "internal/httpui/assets/inventory.css")
-	f, err := os.OpenFile(output, os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		t.Fatal(err)
+	outputs := []string{"internal/httpui/extensions_inventory_templ.go", "internal/httpui/assets/inventory.css", "internal/httpui/extensions_detail_templ.go", "internal/httpui/assets/detail.css"}
+	originals := map[string][]byte{}
+	for _, name := range outputs {
+		output := filepath.Join(a, name)
+		original, err := os.ReadFile(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originals[name] = original
+		t.Run("stale-"+filepath.Base(name), func(t *testing.T) {
+			dirty := append(append([]byte(nil), original...), []byte("/* stale */")...)
+			if err := os.WriteFile(output, dirty, 0600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := run(a, twBin, "--check")
+			if err == nil || !bytes.Contains(out, []byte("stale")) {
+				t.Fatalf("dirty output accepted: %v %s", err, out)
+			}
+			actual, _ := os.ReadFile(output)
+			if !bytes.Equal(actual, dirty) {
+				t.Fatal("check changed dirty output")
+			}
+			if err := os.WriteFile(output, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+		})
+		t.Run("missing-"+filepath.Base(name), func(t *testing.T) {
+			if err := os.Remove(output); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := run(a, twBin, "--check"); err == nil {
+				t.Fatalf("missing output accepted: %s", out)
+			}
+			if _, err := os.Stat(output); !os.IsNotExist(err) {
+				t.Fatal("check repaired missing output")
+			}
+			if err := os.WriteFile(output, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
-	_, err = f.WriteString("/* stale */")
-	f.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	before, _ := os.ReadFile(output)
-	out, err = run(a, twBin, "--check")
-	if err == nil || !bytes.Contains(out, []byte("stale")) {
-		t.Fatalf("dirty generation accepted: %v %s", err, out)
-	}
-	after, _ := os.ReadFile(output)
-	if !bytes.Equal(before, after) {
-		t.Fatal("check mutated stale output")
-	}
+	t.Run("partial-generation-not-published", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(a, "internal/httpui/extensions_detail.templ"), []byte("package httpui\n templ Broken("), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := run(a, twBin, "--write"); err == nil {
+			t.Fatal("invalid detail source accepted")
+		}
+		for _, name := range outputs {
+			actual, err := os.ReadFile(filepath.Join(a, name))
+			if err != nil || !bytes.Equal(actual, originals[name]) {
+				t.Fatal("partial generation published", name)
+			}
+		}
+	})
+
 }
 
 func TestInventoryHomeNavigation(t *testing.T) {
@@ -449,7 +488,7 @@ func TestInventoryReadOnlyProjectionPG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = svc.ApplyConfigure(context.Background(), actor, preview.ID, preview.Confirmation, input); err != nil {
+	if _, err = svc.ApplyConfigure(context.Background(), actor, id, preview.ID, preview.Confirmation, input); err != nil {
 		t.Fatal(err)
 	}
 	svc.RuntimeBlockReason = func() string { return "fixture runtime quarantined" }

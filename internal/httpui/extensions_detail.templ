@@ -1,0 +1,33 @@
+package httpui
+
+// Complexity on successful render: time O(B+W), Omega(B); auxiliary O(B),
+// Omega(1), tight bounds depend on templ buffering and delegated writer W.
+// B escaped blocker text plus fixed receipt markup. No registry/secret reads.
+templ extensionTerminalDocument(theme string, blockedReason string) {
+ <!DOCTYPE html>
+ <html lang="en" data-theme={ inventoryTheme(theme) }>
+  <head>
+   <meta charset="utf-8"/>
+   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+   <title>Extension uninstalled — GOTTH Mail</title>
+   <link rel="stylesheet" href="/admin/extensions/assets/tokens.css"/>
+   <link rel="stylesheet" href="/admin/extensions/assets/detail.css"/>
+  </head>
+  <body class="bg-bg text-ink font-sans p-4 sm:p-6">
+   <main class="mx-auto max-w-6xl min-w-0 grid gap-4">
+    <nav aria-label="Breadcrumb"><a href="/">GOTTH Mail</a> / <a href={ "/admin/extensions?theme=" + inventoryTheme(theme) }>Extensions</a></nav>
+    <h1 class="text-2xl font-bold">Extension uninstalled</h1>
+    <p role="status">Selected extension uninstalled. Other installed extensions are unchanged.</p>
+    <p><a href={ "/admin/extensions?theme=" + inventoryTheme(theme) }>Return to Extensions</a></p>
+    <nav aria-label="Inventory theme" class="flex flex-wrap gap-4">
+     <a href="/admin/extensions?theme=system">System theme</a>
+     <a href="/admin/extensions?theme=light">Light theme</a>
+     <a href="/admin/extensions?theme=dark">Dark theme</a>
+    </nav>
+    if blockedReason != "" {
+     <p role="alert" class="text-danger break-words">Runtime blocked: { blockedReason }</p>
+    }
+   </main>
+  </body>
+ </html>
+}

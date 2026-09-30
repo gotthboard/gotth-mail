@@ -31,7 +31,7 @@ func restartFixture(t *testing.T) (*Service, *recordingRuntime, audit.ActorRef, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ApplyConfigure(context.Background(), actor, p.ID, p.Confirmation, input); err != nil {
+	if _, err = s.ApplyConfigure(context.Background(), actor, id, p.ID, p.Confirmation, input); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.Test(context.Background(), actor, id); err != nil {

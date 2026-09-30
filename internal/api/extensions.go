@@ -13,6 +13,12 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/identity"
 )
 
+// Complexity: registration time O(R), Omega(1), space O(M), Omega(1); R/M
+// include mux parsing/conflict checks/allocation. Tight Theta is not established.
+// Requests: time O(B+D), Omega(1), space O(B+S), Omega(1), no tight Theta
+// across routes/errors. B is request/response bytes; D/S include delegated auth,
+// JSON and service SQL/runtime/lock costs. Apply target binding adds one
+// parameterized SQL query in the transaction, not a preflight Get; actual driver/protocol cost is delegated.
 func (s Server) registerExtensions(mux *http.ServeMux, ids *identity.Service) {
 	requireAdmin := func(w http.ResponseWriter, r *http.Request) (audit.ActorRef, bool) {
 		a, err := ids.AuthenticateBearer(r.Header.Get("Authorization"), "api_token")
@@ -113,7 +119,7 @@ func (s Server) registerExtensions(mux *http.ServeMux, ids *identity.Service) {
 				http.Error(w, "invalid extension configuration", http.StatusBadRequest)
 				return
 			}
-			result, err = s.Extensions.ApplyConfigure(r.Context(), actor, input.PreviewID, input.Confirmation, extensionsadmin.ConfigureInput{Configuration: input.Configuration, Secrets: input.Secrets})
+			result, err = s.Extensions.ApplyConfigure(r.Context(), actor, id, input.PreviewID, input.Confirmation, extensionsadmin.ConfigureInput{Configuration: input.Configuration, Secrets: input.Secrets})
 		case "test":
 			result, err = s.Extensions.Test(r.Context(), actor, id)
 		case "enable":
@@ -133,7 +139,7 @@ func (s Server) registerExtensions(mux *http.ServeMux, ids *identity.Service) {
 				http.Error(w, "invalid extension update", http.StatusBadRequest)
 				return
 			}
-			result, err = s.Extensions.ApplyUpdate(r.Context(), actor, input.PreviewID, input.Confirmation)
+			result, err = s.Extensions.ApplyUpdate(r.Context(), actor, id, input.PreviewID, input.Confirmation)
 		case "rollback":
 			var input struct {
 				Confirmation string `json:"confirmation"`
@@ -151,7 +157,7 @@ func (s Server) registerExtensions(mux *http.ServeMux, ids *identity.Service) {
 				http.Error(w, "invalid secret deletion", http.StatusBadRequest)
 				return
 			}
-			result, err = s.Extensions.ApplyDeleteSecrets(r.Context(), actor, input.PreviewID, input.Confirmation)
+			result, err = s.Extensions.ApplyDeleteSecrets(r.Context(), actor, id, input.PreviewID, input.Confirmation)
 		case "uninstall/preview":
 			preview, err = s.Extensions.PreviewUninstall(r.Context(), actor, id)
 		case "uninstall/apply":
@@ -160,7 +166,7 @@ func (s Server) registerExtensions(mux *http.ServeMux, ids *identity.Service) {
 				http.Error(w, "invalid extension uninstall", http.StatusBadRequest)
 				return
 			}
-			err = s.Extensions.ApplyUninstall(r.Context(), actor, input.PreviewID, input.Confirmation)
+			err = s.Extensions.ApplyUninstall(r.Context(), actor, id, input.PreviewID, input.Confirmation)
 			if err == nil {
 				writeJSON(w, map[string]bool{"uninstalled": true})
 				return

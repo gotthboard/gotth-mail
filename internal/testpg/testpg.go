@@ -8,24 +8,56 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
 	_ "github.com/lib/pq"
 )
 
+// VersionEnv optionally declares the exact SQL server_version_num for this test lane.
+// Unset retains ordinary developer behavior; a present declaration is fail-closed.
+const VersionEnv = "GOTTH_MAIL_TEST_PG_VERSION_NUM"
+
+// DB creates a private fixture, attesting a declared version before migration.
+// Complexity: for a successful call, time O(E+L+S+Q+M), Omega(E+L+S+Q+M),
+// tight Theta(E+L+S+Q+M), where E is declaration length, L executable lookup,
+// S fixture startup/readiness, Q the optional SQL version query, M migration cost.
+// These delegated costs are not constant-time claims. Early failures have time
+// O(E+L+S+Q+M), Omega(1); no uniform tight Theta bound is established.
+// Auxiliary space O(E+A), Omega(1); tight Theta is not established because A
+// includes delegated process/SQL/migration memory. The returned live cluster and
+// registered shutdown also have delegated storage/lifecycle costs, not O(1).
 func DB(t *testing.T, migrate func(context.Context, *sql.DB) error) *sql.DB {
 	t.Helper()
+	raw, declared := os.LookupEnv(VersionEnv)
+	var expected uint64
+	if declared {
+		var err error
+		expected, err = strconv.ParseUint(raw, 10, 31)
+		if err != nil || expected == 0 {
+			t.Fatalf("invalid %s: expected decimal SQL version 1..2147483647", VersionEnv)
+		}
+	}
 	initdb, err := exec.LookPath("initdb")
 	if err != nil {
+		if declared {
+			t.Fatal("declared PostgreSQL lane requires initdb")
+		}
 		t.Skip("local initdb not available")
 	}
 	postgres, err := exec.LookPath("postgres")
 	if err != nil {
+		if declared {
+			t.Fatal("declared PostgreSQL lane requires postgres")
+		}
 		t.Skip("local postgres not available")
 	}
 	createdb, err := exec.LookPath("createdb")
 	if err != nil {
+		if declared {
+			t.Fatal("declared PostgreSQL lane requires createdb")
+		}
 		t.Skip("local createdb not available")
 	}
 	port := freePort(t)
@@ -72,6 +104,16 @@ func DB(t *testing.T, migrate func(context.Context, *sql.DB) error) *sql.DB {
 	t.Cleanup(func() { _ = db.Close() })
 	if err := db.Ping(); err != nil {
 		t.Fatal(err)
+	}
+	if declared {
+		var actual uint64
+		if err := db.QueryRow("SHOW server_version_num").Scan(&actual); err != nil {
+			t.Fatalf("PostgreSQL version attestation failed: %v", err)
+		}
+		t.Logf("PostgreSQL lane expected=%d actual=%d", expected, actual)
+		if actual != expected {
+			t.Fatalf("PostgreSQL version mismatch: expected=%d actual=%d", expected, actual)
+		}
 	}
 	if migrate != nil {
 		if err := migrate(context.Background(), db); err != nil {

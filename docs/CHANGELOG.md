@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### 2026-09-30 07:04 CDT — Checkpoint target-bound administrator operations and uninstall receipt
+
+Commit: current commit; hash assigned by Git after commit
+
+Affected files: internal/extensionsadmin/service.go and associated target, boundary,
+concurrency, uninstall, service and restart tests; internal/api/extensions.go and
+boundary/target tests; internal/httpui/extensions.go, detail templ/generated Go/CSS,
+detail/target/boundary tests and existing audit/configuration/inventory tests;
+internal/testpg/testpg.go and lane tests; scripts/generate-extension-inventory.sh;
+this changelog and the 2026-09-30 administrator checkpoint evidence.
+
+Require all four Apply paths to bind the authorized route target to their locked
+preview before mutation. Preserve PostgreSQL UUID identity/aliases and existing
+authorization and confirmation behavior; reject intrinsically oversized UUID text
+before a database cast. Add real authority, no-delta, recovery and concurrency
+regressions and explicit PostgreSQL test-lane validation.
+
+After successful uninstall, return a buffered, escaped templ receipt rather than
+claiming that the entire registry is empty. Add isolated generated detail CSS and
+extend the pinned generator to two explicit component pairs. Other detail views,
+service behavior and existing inventory assets remain unchanged.
+
+Verification reused from sealed candidates, not rerun for this documentation-only
+closeout: selected target suites: 189 named passes on each native PostgreSQL 16.14 and
+17.10 lane; current D1 HTTP UI: 119 named passes/two disclosed opt-in skips; separate
+actual generator: 26 passes/zero skips; two fresh generations matched. Target-repair
+and D1 source each received two independent scoped clean reviews. See checkpoint
+evidence for identities, applicability and limitations.
+
+This is an owner-requested development checkpoint, NOT feature or beta admission.
+D2–D4, native visual/browser floors, coverage/resource/bounds and performance gates
+remain open. No release, tag, deployment or workflow-state transition.
+
 ### 2026-09-27 09:07 CDT — Admit the bounded inventory renderer development checkpoint
 
 Commit: current commit; hash assigned by Git after commit

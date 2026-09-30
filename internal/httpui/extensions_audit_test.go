@@ -87,7 +87,7 @@ func TestExtensionAuditBrowser(t *testing.T) {
 	input := extensionsadmin.ConfigureInput{Secrets: map[string]string{"audit.key": "synthetic-write-only-key"}}
 	p, err := svc.PreviewConfigure(context.Background(), audit.ActorRef{Type: "local_admin", ID: "fixture"}, a, input)
 	check(err)
-	_, err = svc.ApplyConfigure(context.Background(), audit.ActorRef{Type: "local_admin", ID: "fixture"}, p.ID, p.Confirmation, input)
+	_, err = svc.ApplyConfigure(context.Background(), audit.ActorRef{Type: "local_admin", ID: "fixture"}, a, p.ID, p.Confirmation, input)
 	check(err)
 	sessions := authn.SQLStore{DB: db}
 	handler := func(service *extensionsadmin.Service, az authz.Authorizer, s authn.IdentitySessionStore) http.Handler {

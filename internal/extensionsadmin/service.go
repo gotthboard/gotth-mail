@@ -21,9 +21,13 @@ import (
 	"unicode/utf8"
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
+	"github.com/lib/pq"
 )
 
 const previewTTL = 10 * time.Minute
+
+// PostgreSQL UUID grammar:32 hex digits, at most7 hyphens and2 braces.
+const maxUUIDTextBytes = 32 + 7 + 2
 
 var (
 	repositoryPattern = regexp.MustCompile(`^https://github\.com/gotthboard/gotth-extension-[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -156,7 +160,16 @@ func scanInstance(row rowScanner) (Instance, error) {
 	return out, nil
 }
 
+// Impossible-long IDs fail before SQL, including before cancellation/closed-DB errors.
+// Short inputs retain PostgreSQL grammar, errors and no-row handling.
+// Complexity: long rejection time/auxiliary space O(1), Omega(1), Theta(1).
+// Otherwise time O(B+Q), Omega(1), space O(B+M), Omega(1); tight Theta
+// not established across errors/SQL waits. B is decoded instance/secret-status
+// bytes; Q/M include both queries, driver decoding and metadata allocations.
 func (s *Service) Get(ctx context.Context, id string) (Instance, error) {
+	if len(id) > maxUUIDTextBytes {
+		return Instance{}, errors.New("invalid extension instance ID")
+	}
 	out, err := scanInstance(s.DB.QueryRowContext(ctx, `SELECT `+instanceColumns+` FROM extension_instances WHERE instance_id=$1 AND product=$2`, id, Product))
 	if err != nil {
 		return Instance{}, err
@@ -355,7 +368,41 @@ func (s *Service) verifyPreview(p storedPreview, actor audit.ActorRef, operation
 	return nil
 }
 
-func (s *Service) ApplyConfigure(ctx context.Context, actor audit.ActorRef, previewID, confirmation string, input ConfigureInput) (Instance, error) {
+// verifyPreviewTarget preserves PostgreSQL UUID input aliases without changing authz.
+// Complexity: local length rejection time/space Theta(1), O(1), Omega(1).
+// Bounded-input query time O(1+Q), Omega(1), space O(1+M), Omega(1);
+// tight Theta not established across SQL/driver errors and waits.
+// Q/M include one parameterized SQL query; actual driver/protocol costs are delegated;
+// the caller holds its preview lock throughout. No durable writes occur here.
+func verifyPreviewTarget(ctx context.Context, tx *sql.Tx, expected, stored string) error {
+	// PostgreSQL16/17 string_to_uuid accepts exactly32 hex digits, at most7
+	// optional hyphens and2 braces: max41 bytes, not a canonical-spelling rule.
+	// Avoid oversized error responses; DB remains grammar/equality authority.
+	// stored is the canonical UUID read from the locked preview, not request text.
+	if len(expected) > maxUUIDTextBytes {
+		return ErrConfirmation
+	}
+	var same bool
+	err := tx.QueryRowContext(ctx, "SELECT $1::uuid = $2::uuid", expected, stored).Scan(&same)
+	if err != nil {
+		var pgErr *pq.Error
+		if errors.As(err, &pgErr) && pgErr.Code == "22P02" {
+			return ErrConfirmation
+		}
+		return err
+	}
+	if !same {
+		return ErrConfirmation
+	}
+	return nil
+}
+
+// Complexity: time O(B+Q), Omega(1); auxiliary space O(B+M), Omega(1).
+// B includes submitted config/secrets/target and decoded preview/instance bytes;
+// Q/M include SQL, locks, validation, sorting, encryption, audit and final Get.
+// Tight Theta is not established across delegated/error paths. Target verification
+// adds one parameterized SQL query before instance lock, under the preview lock; actual driver/protocol cost is delegated.
+func (s *Service) ApplyConfigure(ctx context.Context, actor audit.ActorRef, expectedInstanceID, previewID, confirmation string, input ConfigureInput) (Instance, error) {
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return Instance{}, err
@@ -364,6 +411,9 @@ func (s *Service) ApplyConfigure(ctx context.Context, actor audit.ActorRef, prev
 	p, err := s.loadPreview(ctx, tx, previewID)
 	if err != nil || s.verifyPreview(p, actor, "configure", confirmation, input.Secrets) != nil {
 		return Instance{}, ErrConfirmation
+	}
+	if err := verifyPreviewTarget(ctx, tx, expectedInstanceID, p.InstanceID); err != nil {
+		return Instance{}, err
 	}
 	instance, err := scanInstance(tx.QueryRowContext(ctx, `SELECT `+instanceColumns+` FROM extension_instances WHERE instance_id=$1 AND product=$2 FOR UPDATE`, p.InstanceID, Product))
 	if err != nil {
@@ -402,7 +452,11 @@ func (s *Service) ApplyConfigure(ctx context.Context, actor audit.ActorRef, prev
 	return s.Get(ctx, instance.InstanceID)
 }
 
-func (s *Service) ApplyUpdate(ctx context.Context, actor audit.ActorRef, previewID, confirmation string) (Instance, error) {
+// Complexity: time O(B+Q), Omega(1); space O(B+M), Omega(1); tight Theta
+// not established across errors/delegates. B is target/preview/instance bytes;
+// Q/M include SQL, locks, JSON, validation/sorting, audit and Get. One scalar
+// target query holds the preview lock before taking the instance lock.
+func (s *Service) ApplyUpdate(ctx context.Context, actor audit.ActorRef, expectedInstanceID, previewID, confirmation string) (Instance, error) {
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return Instance{}, err
@@ -411,6 +465,9 @@ func (s *Service) ApplyUpdate(ctx context.Context, actor audit.ActorRef, preview
 	p, err := s.loadPreview(ctx, tx, previewID)
 	if err != nil || s.verifyPreview(p, actor, "update", confirmation, nil) != nil {
 		return Instance{}, ErrConfirmation
+	}
+	if err := verifyPreviewTarget(ctx, tx, expectedInstanceID, p.InstanceID); err != nil {
+		return Instance{}, err
 	}
 	instance, err := scanInstance(tx.QueryRowContext(ctx, `SELECT `+instanceColumns+` FROM extension_instances WHERE instance_id=$1 AND product=$2 FOR UPDATE`, p.InstanceID, Product))
 	if err != nil {
@@ -449,7 +506,11 @@ func (s *Service) ApplyUpdate(ctx context.Context, actor audit.ActorRef, preview
 	return s.Get(ctx, instance.InstanceID)
 }
 
-func (s *Service) ApplyDeleteSecrets(ctx context.Context, actor audit.ActorRef, previewID, confirmation string) (Instance, error) {
+// Complexity: time O(B+Q), Omega(1); space O(B+M), Omega(1); tight Theta
+// not established across errors/delegates. B is target/preview/instance bytes;
+// Q/M include SQL, locks, deleting all retained slot rows, audit and Get.
+// One scalar target query holds the preview lock before the instance lock.
+func (s *Service) ApplyDeleteSecrets(ctx context.Context, actor audit.ActorRef, expectedInstanceID, previewID, confirmation string) (Instance, error) {
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return Instance{}, err
@@ -458,6 +519,9 @@ func (s *Service) ApplyDeleteSecrets(ctx context.Context, actor audit.ActorRef, 
 	p, err := s.loadPreview(ctx, tx, previewID)
 	if err != nil || s.verifyPreview(p, actor, "delete_secrets", confirmation, nil) != nil {
 		return Instance{}, ErrConfirmation
+	}
+	if err := verifyPreviewTarget(ctx, tx, expectedInstanceID, p.InstanceID); err != nil {
+		return Instance{}, err
 	}
 	instance, err := scanInstance(tx.QueryRowContext(ctx, `SELECT `+instanceColumns+` FROM extension_instances WHERE instance_id=$1 AND product=$2 FOR UPDATE`, p.InstanceID, Product))
 	if err != nil {
@@ -481,7 +545,12 @@ func (s *Service) ApplyDeleteSecrets(ctx context.Context, actor audit.ActorRef, 
 	return s.Get(ctx, instance.InstanceID)
 }
 
-func (s *Service) ApplyUninstall(ctx context.Context, actor audit.ActorRef, previewID, confirmation string) error {
+// Complexity: time O(B+Q), Omega(1); auxiliary space O(B+M), Omega(1).
+// Tight Theta is not established across errors/delegates. B is target, preview
+// and instance bytes; Q/M include SQL, locks, retained-secret count, audit and
+// cascading deletion. Target comparison adds one scalar query while holding the
+// preview lock, before the instance lock; long-input rejection adds no query.
+func (s *Service) ApplyUninstall(ctx context.Context, actor audit.ActorRef, expectedInstanceID, previewID, confirmation string) error {
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return err
@@ -490,6 +559,9 @@ func (s *Service) ApplyUninstall(ctx context.Context, actor audit.ActorRef, prev
 	p, err := s.loadPreview(ctx, tx, previewID)
 	if err != nil || s.verifyPreview(p, actor, "uninstall", confirmation, nil) != nil {
 		return ErrConfirmation
+	}
+	if err := verifyPreviewTarget(ctx, tx, expectedInstanceID, p.InstanceID); err != nil {
+		return err
 	}
 	instance, err := scanInstance(tx.QueryRowContext(ctx, `SELECT `+instanceColumns+` FROM extension_instances WHERE instance_id=$1 AND product=$2 FOR UPDATE`, p.InstanceID, Product))
 	if err != nil {
@@ -725,6 +797,11 @@ func (s *Service) Disable(ctx context.Context, actor audit.ActorRef, id string) 
 	return s.Get(ctx, id)
 }
 
+// Complexity: time O(B+Q), Omega(1), auxiliary space O(B+M), Omega(1);
+// tight Theta not established across errors/SQL waits. B is actor, confirmation
+// and version/configuration bytes; Q/M include BeginTx/rollback, row locking,
+// decoding, validation, update, audit and final Get. Long-ID rejection adds
+// constant local work after actor validation and transaction setup, before the first UUID lookup.
 func (s *Service) Rollback(ctx context.Context, actor audit.ActorRef, id, confirmation string) (Instance, error) {
 	if err := validateActor(actor); err != nil {
 		return Instance{}, err
@@ -734,6 +811,9 @@ func (s *Service) Rollback(ctx context.Context, actor audit.ActorRef, id, confir
 		return Instance{}, err
 	}
 	defer tx.Rollback()
+	if len(id) > maxUUIDTextBytes {
+		return Instance{}, errors.New("invalid extension instance ID")
+	}
 	instance, err := scanInstance(tx.QueryRowContext(ctx, `SELECT `+instanceColumns+` FROM extension_instances WHERE instance_id=$1 AND product=$2 FOR UPDATE`, id, Product))
 	if err != nil {
 		return Instance{}, err

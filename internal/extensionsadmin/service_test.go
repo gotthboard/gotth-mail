@@ -93,10 +93,10 @@ func TestExtensionLifecyclePreservesSecretsAndRollbackState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ApplyConfigure(ctx, actor, preview.ID, "wrong-confirmation", configure); !errors.Is(err, ErrConfirmation) {
+	if _, err := service.ApplyConfigure(ctx, actor, installed.InstanceID, preview.ID, "wrong-confirmation", configure); !errors.Is(err, ErrConfirmation) {
 		t.Fatalf("wrong confirmation err=%v", err)
 	}
-	configured, err := service.ApplyConfigure(ctx, actor, preview.ID, preview.Confirmation, configure)
+	configured, err := service.ApplyConfigure(ctx, actor, installed.InstanceID, preview.ID, preview.Confirmation, configure)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestExtensionLifecyclePreservesSecretsAndRollbackState(t *testing.T) {
 	if !reflect.DeepEqual(updatePreview.ConfigurationDiff, []string{"+telegram.secondary-token", "+telegram.topic"}) || !reflect.DeepEqual(updatePreview.SecretSlotDiff, []string{"+telegram.secondary-token"}) {
 		t.Fatalf("configuration diff=%v secret diff=%v", updatePreview.ConfigurationDiff, updatePreview.SecretSlotDiff)
 	}
-	updated, err := service.ApplyUpdate(ctx, actor, updatePreview.ID, updatePreview.Confirmation)
+	updated, err := service.ApplyUpdate(ctx, actor, installed.InstanceID, updatePreview.ID, updatePreview.Confirmation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,14 +179,14 @@ func TestExtensionLifecyclePreservesSecretsAndRollbackState(t *testing.T) {
 
 	if uninstall, err := service.PreviewUninstall(ctx, actor, installed.InstanceID); err != nil {
 		t.Fatal(err)
-	} else if err := service.ApplyUninstall(ctx, actor, uninstall.ID, uninstall.Confirmation); !errors.Is(err, ErrConflict) {
+	} else if err := service.ApplyUninstall(ctx, actor, installed.InstanceID, uninstall.ID, uninstall.Confirmation); !errors.Is(err, ErrConflict) {
 		t.Fatalf("uninstall with retained secrets err=%v", err)
 	}
 	deletePreview, err := service.PreviewDeleteSecrets(ctx, actor, installed.InstanceID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	withoutSecrets, err := service.ApplyDeleteSecrets(ctx, actor, deletePreview.ID, deletePreview.Confirmation)
+	withoutSecrets, err := service.ApplyDeleteSecrets(ctx, actor, installed.InstanceID, deletePreview.ID, deletePreview.Confirmation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestExtensionLifecyclePreservesSecretsAndRollbackState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.ApplyUninstall(ctx, actor, uninstall.ID, uninstall.Confirmation); err != nil {
+	if err := service.ApplyUninstall(ctx, actor, installed.InstanceID, uninstall.ID, uninstall.Confirmation); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.Get(ctx, installed.InstanceID); !errors.Is(err, ErrNotFound) {
@@ -274,7 +274,7 @@ func TestRuntimeFailuresNeverAdmitOrSilentlyStopRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ApplyConfigure(ctx, actor, preview.ID, preview.Confirmation, input); err != nil {
+	if _, err := service.ApplyConfigure(ctx, actor, instance.InstanceID, preview.ID, preview.Confirmation, input); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.Test(ctx, actor, instance.InstanceID); !errors.Is(err, ErrUnavailable) {
@@ -334,10 +334,10 @@ func TestRuntimeFailuresNeverAdmitOrSilentlyStopRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ApplyConfigure(ctx, actor, second.ID, second.Confirmation, ConfigureInput{Configuration: map[string]any{"config.channel": "tertiary"}}); err != nil {
+	if _, err := service.ApplyConfigure(ctx, actor, instance.InstanceID, second.ID, second.Confirmation, ConfigureInput{Configuration: map[string]any{"config.channel": "tertiary"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ApplyConfigure(ctx, actor, first.ID, first.Confirmation, ConfigureInput{Configuration: map[string]any{"config.channel": "secondary"}}); !errors.Is(err, ErrConflict) {
+	if _, err := service.ApplyConfigure(ctx, actor, instance.InstanceID, first.ID, first.Confirmation, ConfigureInput{Configuration: map[string]any{"config.channel": "secondary"}}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale preview err=%v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO extension_instances(instance_id,product,extension_id,repository,artifact_pin,manifest_sha256,grant_sha256,session_sha256,metadata_json,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000021','other-product','other.extension','https://github.com/gotthboard/gotth-extension-other','sha256:` + strings.Repeat("1", 64) + `','` + strings.Repeat("2", 64) + `','` + strings.Repeat("3", 64) + `','` + strings.Repeat("4", 64) + `','{"schema":"gotth.mail.extension.config.v1","fields":[]}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err == nil {

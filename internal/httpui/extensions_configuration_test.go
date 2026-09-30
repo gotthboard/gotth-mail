@@ -151,7 +151,7 @@ func TestExtensionConfigurationRoundtrip(t *testing.T) {
 				seed := extensionsadmin.ConfigureInput{Configuration: map[string]any{"config.text": "old", "config.number": int64(1), "config.flag": index == 1, "config.mode": "first", "config.optional": "old optional", "config.optionalnumber": int64(8), "config.optionalmode": "one"}, Secrets: map[string]string{"config.key": key}}
 				p, err := svc.PreviewConfigure(context.Background(), actor, id, seed)
 				check(err)
-				_, err = svc.ApplyConfigure(context.Background(), actor, p.ID, p.Confirmation, seed)
+				_, err = svc.ApplyConfigure(context.Background(), actor, id, p.ID, p.Confirmation, seed)
 				check(err)
 			}
 			request := func(v url.Values) *httptest.ResponseRecorder {

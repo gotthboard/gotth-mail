@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build-only, single-component generator. Acquisition is a separate reviewed step.
+# Build-only, two explicitly named component pairs. Acquisition is a separate reviewed step.
 # Complexity (successful run): time O(T+I+O+G), Omega(T+I+O);
 # auxiliary space O(1+S), Omega(1); tight Theta not established for delegated
 # generator/compiler time G and memory S. T tool bytes, I input bytes, O output
@@ -38,8 +38,8 @@ mkdir -p "$stage/tools/renderer" "$stage/internal/httpui/assets" "$stage/tmp"
 cp -- "$root/tools/renderer/go.mod" "$root/tools/renderer/go.sum" "$stage/tools/renderer/"
 # templ checks the source module runtime version; this does not merge tool MVS.
 cp -- "$root/go.mod" "$root/go.sum" "$stage/"
-cp -- "$root/internal/httpui/extensions_inventory.templ" "$stage/internal/httpui/"
-cp -- "$root/internal/httpui/assets/extensions-inventory.input.css" "$stage/internal/httpui/assets/"
+cp -- "$root/internal/httpui/extensions_inventory.templ" "$root/internal/httpui/extensions_detail.templ" "$stage/internal/httpui/"
+cp -- "$root/internal/httpui/assets/extensions-inventory.input.css" "$root/internal/httpui/assets/extensions-detail.input.css" "$stage/internal/httpui/assets/"
 # Never trust an environment flag claiming that a parent disabled networking.
 # The tool process has read-only source and only staging/private-cache writes.
 bwrap --ro-bind / / --bind "$stage" "$stage" --bind "$GOCACHE" "$GOCACHE" --bind "$GOMODCACHE" "$GOMODCACHE" --proc /proc --dev /dev --unshare-net --unshare-pid --die-with-parent /bin/bash -s -- "$stage" "$GO_BIN" "$TAILWINDCSS_BIN" <<'GENERATE'
@@ -49,18 +49,20 @@ export TMPDIR=$stage/tmp GOTMPDIR=$stage/tmp
 cd "$stage/tools/renderer"
 [[ "$("$go" list -mod=readonly -m -f '{{.Version}}' github.com/a-h/templ)" == v0.3.1020 ]] || { echo 'templ 0.3.1020 required' >&2; exit 1; }
 "$go" tool templ generate -path ../.. -f ../../internal/httpui/extensions_inventory.templ -include-version=true -include-timestamp=false
+"$go" tool templ generate -path ../.. -f ../../internal/httpui/extensions_detail.templ -include-version=true -include-timestamp=false
 cd "$stage"
 "$tailwind" -i internal/httpui/assets/extensions-inventory.input.css -o internal/httpui/assets/inventory.css
+"$tailwind" -i internal/httpui/assets/extensions-detail.input.css -o internal/httpui/assets/detail.css
 GENERATE
-for file in internal/httpui/extensions_inventory_templ.go internal/httpui/assets/inventory.css; do
+for file in internal/httpui/extensions_inventory_templ.go internal/httpui/assets/inventory.css internal/httpui/extensions_detail_templ.go internal/httpui/assets/detail.css; do
  [[ -s "$stage/$file" ]] || { echo 'generator did not produce complete outputs' >&2; exit 1; }
 done
 if [[ "$mode" == --check ]]; then
- for file in internal/httpui/extensions_inventory_templ.go internal/httpui/assets/inventory.css; do
+ for file in internal/httpui/extensions_inventory_templ.go internal/httpui/assets/inventory.css internal/httpui/extensions_detail_templ.go internal/httpui/assets/detail.css; do
   cmp -s -- "$stage/$file" "$root/$file" || { echo "stale generated output: $file" >&2; exit 1; }
  done
 else
- # Both generated files are complete before replacement. Filesystem errors are
+ # All four generated files are complete before replacement. Filesystem errors are
  # visible failures, not an atomic multi-file transaction; regenerate after one.
- for file in internal/httpui/extensions_inventory_templ.go internal/httpui/assets/inventory.css; do cp -- "$stage/$file" "$root/$file"; done
+ for file in internal/httpui/extensions_inventory_templ.go internal/httpui/assets/inventory.css internal/httpui/extensions_detail_templ.go internal/httpui/assets/detail.css; do cp -- "$stage/$file" "$root/$file"; done
 fi
