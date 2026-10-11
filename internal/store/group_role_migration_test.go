@@ -17,8 +17,8 @@ func TestGroupRoleProjectionMigrationParity(t *testing.T) {
 		t.Fatal(err)
 	}
 	sqlText := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 {
-		t.Fatalf("upgrade count=%d want 19", len(upgradeMigrations))
+	if len(upgradeMigrations) != 20 {
+		t.Fatalf("upgrade count=%d want 20", len(upgradeMigrations))
 	}
 	migration := upgradeMigrations[17]
 	sum := sha256.Sum256([]byte(sqlText))
@@ -28,7 +28,7 @@ func TestGroupRoleProjectionMigrationParity(t *testing.T) {
 }
 
 func TestGroupRoleProjectionMigrationLegacyDefaults(t *testing.T) {
-	db := testpg.DB(t, nil)
+	db := testpg.MigrationDB(t, nil)
 	ctx := context.Background()
 	// Exercise the actual prior schema, including a legacy binding, before 0019.
 	for _, stmt := range InitialSchema {
@@ -81,7 +81,7 @@ INSERT INTO role_bindings(id,identity_ref_id,role,created_at,updated_at) VALUES 
 }
 
 func TestGroupRoleProjectionMappingConstraints(t *testing.T) {
-	db := testpg.DB(t, MigrateSQL)
+	db := testpg.MigrationDB(t, MigrateSQL)
 	const mapping = "00000000-0000-4000-8000-000000000911"
 	const binding = "00000000-0000-4000-8000-000000000912"
 	const identity = "00000000-0000-4000-8000-000000000913"

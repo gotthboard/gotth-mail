@@ -14,7 +14,8 @@ services:
       GOTTH_MAIL_LISTEN: ":8080"
       GOTTH_MAIL_REFERENCE_FIXTURE: "1"
       GOTTH_MAIL_POSTFIX_POLICY_LISTEN: ":10025"
-      GOTTH_MAIL_DATABASE_URL: postgres://gotth_mail:gotth-mail-dev-only@database:5432/gotth_mail?sslmode=disable
+      GOTTH_MAIL_DATABASE_URL_FILE: /run/secrets/database-url
+      GOTTH_MAIL_MIGRATION_DATABASE_URL_FILE: /run/secrets/migration-database-url
       GOTTH_MAIL_POSTFIX_HELPER_URL: http://postfix:10026
       GOTTH_MAIL_POSTFIX_HELPER_TOKEN: ${GOTTH_MAIL_POSTFIX_HELPER_TOKEN:-reference-postfix-helper-token-32bytes}
       GOTTH_MAIL_POSTFIX_RELEASE_TOKEN: ${GOTTH_MAIL_POSTFIX_RELEASE_TOKEN:-reference-postfix-release-token-32byte}
@@ -29,12 +30,15 @@ services:
       GOTTH_MAIL_POSTFIX_AUTOMATIC_SENDER_ADDRESS: mailer-daemon@example.test
     ports:
       - "8080:8080"
+    secrets:
+      - database-url
+      - migration-database-url
     volumes:
       - notification-sockets:/run/gotth-mail-plugins
       - ./config/telegram-actors.json:/run/reference/telegram-actors.json:ro
     depends_on:
-      database:
-        condition: service_healthy
+      authority-bootstrap:
+        condition: service_completed_successfully
       external-webmail-plugin:
         condition: service_started
       manual-dns-plugin:
@@ -55,14 +59,63 @@ services:
     volumes:
       - notification-sockets:/run/gotth-mail-plugins
 
+  authority-principals:
+    image: postgres:17-alpine
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: gotth-mail-installer-dev-only
+      GOTTH_MAIL_APP_PASSWORD: "${GOTTH_MAIL_APP_PASSWORD:-gotth-mail-app-dev-only}"
+      GOTTH_MAIL_MIGRATOR_PASSWORD: "${GOTTH_MAIL_MIGRATOR_PASSWORD:-gotth-mail-migrator-dev-only}"
+    volumes:
+      - ../../scripts:/authority:ro
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        psql -h database -U postgres -d gotth_mail -v ON_ERROR_STOP=1 -f /authority/bootstrap-migration-authority-fresh.sql
+        psql -h database -U postgres -d gotth_mail -v ON_ERROR_STOP=1 <<'SQL'
+        SET password_encryption='scram-sha-256';
+        \getenv app_password GOTTH_MAIL_APP_PASSWORD
+        \getenv migrator_password GOTTH_MAIL_MIGRATOR_PASSWORD
+        ALTER ROLE gotth_mail_app PASSWORD :'app_password';
+        ALTER ROLE gotth_mail_migrator PASSWORD :'migrator_password';
+        SQL
+        psql -h database -U postgres -d gotth_mail -v ON_ERROR_STOP=1 -f /authority/bootstrap-migration-authority-fresh.sql
+
+  migrate-0020:
+    build:
+      context: ../..
+    entrypoint: ["/usr/local/bin/gotth-mail"]
+    command: ["migrate", "--through", "0020_final_queue_artifact_binding"]
+    environment:
+      GOTTH_MAIL_MIGRATION_DATABASE_URL_FILE: /run/secrets/migration-database-url
+    secrets:
+      - migration-database-url
+    depends_on:
+      authority-principals:
+        condition: service_completed_successfully
+
+  authority-bootstrap:
+    image: postgres:17-alpine
+    depends_on:
+      migrate-0020:
+        condition: service_completed_successfully
+    environment:
+      PGPASSWORD: gotth-mail-installer-dev-only
+    volumes:
+      - ../../scripts:/authority:ro
+    command: ["psql", "-h", "database", "-U", "postgres", "-d", "gotth_mail", "-v", "ON_ERROR_STOP=1", "-f", "/authority/bootstrap-migration-authority-fresh-0020.sql"]
+
   database:
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: gotth_mail
-      POSTGRES_USER: gotth_mail
-      POSTGRES_PASSWORD: gotth-mail-dev-only
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: gotth-mail-installer-dev-only
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gotth_mail -d gotth_mail"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gotth_mail"]
       interval: 1s
       timeout: 3s
       retries: 30
@@ -114,8 +167,8 @@ services:
     environment:
       AUTHENTIK_SECRET_KEY: dev-only-change-me
       AUTHENTIK_POSTGRESQL__HOST: database
-      AUTHENTIK_POSTGRESQL__USER: gotth_mail
-      AUTHENTIK_POSTGRESQL__PASSWORD: gotth-mail-dev-only
+      AUTHENTIK_POSTGRESQL__USER: gotth_mail_app
+      AUTHENTIK_POSTGRESQL__PASSWORD: gotth-mail-app-dev-only
       AUTHENTIK_POSTGRESQL__NAME: gotth_mail
   postfix:
     build:
@@ -328,3 +381,9 @@ volumes:
   mailu-dkim:
   mailu-redis:
   notification-sockets:
+
+secrets:
+  database-url:
+    file: ./config/database-url
+  migration-database-url:
+    file: ./config/migration-database-url

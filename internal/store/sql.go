@@ -10,17 +10,40 @@ import (
 )
 
 func MigrateSQL(ctx context.Context, db *sql.DB) error {
-	return migrateSQL(ctx, db, false)
+	return migrateSQL(ctx, db, false, upgradeMigrations)
+}
+
+// MigrateSQLThrough runs the normal migration runner against the exact
+// registered prefix ending at target. It intentionally supports only 0020,
+// the fresh-install authority handoff boundary. Complexity: for U registered
+// upgrades and delegated migration cost M, successful-path time O(U+M),
+// Omega(U); auxiliary space O(U+A), Omega(U). No uniform tight bounds exist
+// because migration SQL and runner/database memory are delegated.
+func MigrateSQLThrough(ctx context.Context, db *sql.DB, target string) error {
+	if target != finalQueueArtifactBindingMigrationVersion {
+		return fmt.Errorf("unsupported migration target %q", target)
+	}
+	for index, migration := range upgradeMigrations {
+		if migration.Version == target {
+			return migrateSQL(ctx, db, false, upgradeMigrations[:index+1])
+		}
+	}
+	return fmt.Errorf("migration target %q is not registered", target)
 }
 
 // MigrateEmptySQL initializes a database only when the target schema has no
 // user relations. Isolated restore callers use this stricter boundary so an
 // existing database cannot be mistaken for a disposable restore target.
 func MigrateEmptySQL(ctx context.Context, db *sql.DB) error {
-	return migrateSQL(ctx, db, true)
+	return migrateSQL(ctx, db, true, upgradeMigrations)
 }
 
-func migrateSQL(ctx context.Context, db *sql.DB, requireEmpty bool) error {
+// migrateSQL validates and applies the supplied ordered migration prefix in
+// one transaction. Complexity: for U upgrades, L ledger rows, and delegated
+// SQL cost Q, successful-path time O(U+L log L+Q), Omega(U+L);
+// auxiliary space O(U+L+S), Omega(U+L). No uniform tight bounds exist because
+// Q and S are delegated database/driver work and state.
+func migrateSQL(ctx context.Context, db *sql.DB, requireEmpty bool, migrations []Migration) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -68,10 +91,10 @@ func migrateSQL(ctx context.Context, db *sql.DB, requireEmpty bool) error {
 	if err != nil {
 		return err
 	}
-	if err := validateMigrationLedger(ledger, baseMigrations, upgradeMigrations); err != nil {
+	if err := validateMigrationLedger(ledger, baseMigrations, migrations); err != nil {
 		return err
 	}
-	for _, m := range upgradeMigrations {
+	for _, m := range migrations {
 		if _, applied := ledger[m.Version]; applied {
 			continue
 		}

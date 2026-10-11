@@ -23,7 +23,7 @@ func TestMigrateSQLUpgradesRealBaseLedgerAndPersistsEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db := testpg.DB(t, func(ctx context.Context, db *sql.DB) error {
+	db := testpg.MigrationDB(t, func(ctx context.Context, db *sql.DB) error {
 		if err := createBaseLedger(ctx, db); err != nil {
 			return err
 		}
@@ -77,7 +77,7 @@ func TestMigrateSQLUpgradesRealBaseLedgerAndPersistsEvidence(t *testing.T) {
 }
 
 func TestOIDCBindingMigrationInvalidatesUnboundLegacyAttemptsAndSessions(t *testing.T) {
-	db := testpg.DB(t, func(ctx context.Context, db *sql.DB) error {
+	db := testpg.MigrationDB(t, func(ctx context.Context, db *sql.DB) error {
 		if err := createBaseLedger(ctx, db); err != nil {
 			return err
 		}
@@ -116,7 +116,7 @@ func TestOIDCBindingMigrationInvalidatesUnboundLegacyAttemptsAndSessions(t *test
 }
 
 func TestSCIMResourcesMigrationCreatesOpaqueDurableStore(t *testing.T) {
-	db := testpg.DB(t, store.MigrateSQL)
+	db := testpg.MigrationDB(t, store.MigrateSQL)
 	for _, relation := range []string{"scim_resources", "scim_index_contracts", "scim_resource_indexes", "scim_tombstones"} {
 		var exists bool
 		if err := db.QueryRow(`SELECT to_regclass('public.' || $1) IS NOT NULL`, relation).Scan(&exists); err != nil {
@@ -212,7 +212,7 @@ func TestMigrateSQLRejectsInvalidAppliedUpgradeLedger(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			db := testpg.DB(t, store.MigrateSQL)
+			db := testpg.MigrationDB(t, store.MigrateSQL)
 			if _, err := db.Exec(tc.mutate); err != nil {
 				t.Fatal(err)
 			}
@@ -238,8 +238,8 @@ func TestMigrateSQLRejectsPreexistingWrongEvidenceColumnShape(t *testing.T) {
 }
 
 func TestFreshAndBaseUpgradeLedgerChecksumsMatch(t *testing.T) {
-	fresh := testpg.DB(t, store.MigrateSQL)
-	upgraded := testpg.DB(t, func(ctx context.Context, db *sql.DB) error {
+	fresh := testpg.MigrationDB(t, store.MigrateSQL)
+	upgraded := testpg.MigrationDB(t, func(ctx context.Context, db *sql.DB) error {
 		if err := createBaseLedger(ctx, db); err != nil {
 			return err
 		}
@@ -253,7 +253,7 @@ func TestFreshAndBaseUpgradeLedgerChecksumsMatch(t *testing.T) {
 }
 
 func TestMigrateEmptySQLRejectsAnyExistingUserRelationWithoutDDL(t *testing.T) {
-	db := testpg.DB(t, nil)
+	db := testpg.MigrationDB(t, nil)
 	if _, err := db.Exec(`CREATE TABLE sentinel (id integer primary key, value text NOT NULL); INSERT INTO sentinel(id, value) VALUES (1, 'untouched')`); err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestMigrateEmptySQLRejectsAnyExistingUserRelationWithoutDDL(t *testing.T) {
 }
 
 func TestMigrateEmptySQLPinsPublicTargetUnderHostileSearchPath(t *testing.T) {
-	db := testpg.DB(t, nil)
+	db := testpg.MigrationDB(t, nil)
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	if _, err := db.Exec(`CREATE SCHEMA shadow; CREATE TABLE shadow.sentinel (id integer primary key, value text NOT NULL); INSERT INTO shadow.sentinel(id, value) VALUES (1, 'untouched'); SET search_path = shadow, public`); err != nil {
@@ -305,7 +305,7 @@ func TestMigrateEmptySQLPinsPublicTargetUnderHostileSearchPath(t *testing.T) {
 
 func baseDB(t *testing.T) *sql.DB {
 	t.Helper()
-	return testpg.DB(t, createBaseLedger)
+	return testpg.MigrationDB(t, createBaseLedger)
 }
 
 func createBaseLedger(ctx context.Context, db *sql.DB) error {

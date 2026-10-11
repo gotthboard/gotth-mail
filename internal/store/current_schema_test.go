@@ -8,7 +8,7 @@ import (
 )
 
 func TestValidateCurrentSQLReadOnlyAndMissing(t *testing.T) {
-	db := testpg.DB(t, store.MigrateSQL)
+	db := testpg.MigrationDB(t, store.MigrateSQL)
 	ctx := context.Background()
 	if e := store.ValidateCurrentSQL(ctx, nil); e == nil {
 		t.Fatal("nil transaction")

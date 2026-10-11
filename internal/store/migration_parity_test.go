@@ -70,7 +70,7 @@ func TestNotificationDeliveryEvidenceMigrationFileMatchesRuntime(t *testing.T) {
 	if fileSQL != notificationDeliveryEvidenceMigrationSQL {
 		t.Fatalf("migration file/runtime drift\nfile: %q\nruntime: %q", fileSQL, notificationDeliveryEvidenceMigrationSQL)
 	}
-	if len(upgradeMigrations) != 19 || upgradeMigrations[0].Version != notificationDeliveryEvidenceMigrationVersion || upgradeMigrations[0].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[0].Version != notificationDeliveryEvidenceMigrationVersion || upgradeMigrations[0].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -85,7 +85,7 @@ func TestOIDCProtectedAttemptsMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[1].Version != oidcProtectedAttemptsMigrationVersion || upgradeMigrations[1].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[1].Version != oidcProtectedAttemptsMigrationVersion || upgradeMigrations[1].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -100,7 +100,7 @@ func TestSCIMResourcesMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[2].Version != scimResourcesMigrationVersion || upgradeMigrations[2].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[2].Version != scimResourcesMigrationVersion || upgradeMigrations[2].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -115,7 +115,7 @@ func TestAppPasswordContractMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[3].Version != appPasswordContractMigrationVersion || upgradeMigrations[3].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[3].Version != appPasswordContractMigrationVersion || upgradeMigrations[3].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -130,7 +130,7 @@ func TestOIDCSCIMIdentityBindingMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[4].Version != oidcSCIMIdentityBindingMigrationVersion || upgradeMigrations[4].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[4].Version != oidcSCIMIdentityBindingMigrationVersion || upgradeMigrations[4].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -145,7 +145,7 @@ func TestSCIMGroupMembersMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[5].Version != scimGroupMembersMigrationVersion || upgradeMigrations[5].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[5].Version != scimGroupMembersMigrationVersion || upgradeMigrations[5].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -160,7 +160,7 @@ func TestOutboundPolicyMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[6].Version != outboundPolicyMigrationVersion || upgradeMigrations[6].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[6].Version != outboundPolicyMigrationVersion || upgradeMigrations[6].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -175,7 +175,7 @@ func TestOutboundQueueMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[7].Version != outboundQueueMigrationVersion || upgradeMigrations[7].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[7].Version != outboundQueueMigrationVersion || upgradeMigrations[7].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -190,7 +190,7 @@ func TestOutboundQueueReleaseMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[8].Version != outboundQueueReleaseMigrationVersion || upgradeMigrations[8].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[8].Version != outboundQueueReleaseMigrationVersion || upgradeMigrations[8].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -205,7 +205,7 @@ func TestWebmailCCBCCMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[9].Version != webmailCCBCCMigrationVersion || upgradeMigrations[9].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[9].Version != webmailCCBCCMigrationVersion || upgradeMigrations[9].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -220,7 +220,7 @@ func TestWebmailDeliveryUncertainMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[10].Version != webmailDeliveryUncertainMigrationVersion || upgradeMigrations[10].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[10].Version != webmailDeliveryUncertainMigrationVersion || upgradeMigrations[10].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -235,7 +235,7 @@ func TestNotificationApprovalBindingMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[11].Version != notificationApprovalBindingMigrationVersion || upgradeMigrations[11].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[11].Version != notificationApprovalBindingMigrationVersion || upgradeMigrations[11].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -250,7 +250,7 @@ func TestNotificationApprovalExecutionMigrationFileMatchesRuntime(t *testing.T) 
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[12].Version != notificationApprovalExecutionMigrationVersion || upgradeMigrations[12].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[12].Version != notificationApprovalExecutionMigrationVersion || upgradeMigrations[12].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -265,7 +265,7 @@ func TestNotificationTelegramUpdatesMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[13].Version != notificationTelegramUpdatesMigrationVersion || upgradeMigrations[13].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[13].Version != notificationTelegramUpdatesMigrationVersion || upgradeMigrations[13].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -280,7 +280,7 @@ func TestNotificationEventStatesMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[14].Version != notificationEventStatesMigrationVersion || upgradeMigrations[14].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[14].Version != notificationEventStatesMigrationVersion || upgradeMigrations[14].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -295,7 +295,7 @@ func TestExtensionAdministratorMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[15].Version != extensionAdministratorMigrationVersion || upgradeMigrations[15].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[15].Version != extensionAdministratorMigrationVersion || upgradeMigrations[15].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -310,7 +310,7 @@ func TestRoleBindingAuthorityMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[16].Version != roleBindingAuthorityMigrationVersion || upgradeMigrations[16].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[16].Version != roleBindingAuthorityMigrationVersion || upgradeMigrations[16].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -325,7 +325,7 @@ func TestGroupRoleProjectionMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[17].Version != groupRoleProjectionMigrationVersion || upgradeMigrations[17].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[17].Version != groupRoleProjectionMigrationVersion || upgradeMigrations[17].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -340,7 +340,7 @@ func TestFinalQueueArtifactBindingMigrationFileMatchesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileSQL := strings.TrimSpace(string(data))
-	if len(upgradeMigrations) != 19 || upgradeMigrations[18].Version != finalQueueArtifactBindingMigrationVersion || upgradeMigrations[18].SQL != fileSQL {
+	if len(upgradeMigrations) != 20 || upgradeMigrations[18].Version != finalQueueArtifactBindingMigrationVersion || upgradeMigrations[18].SQL != fileSQL {
 		t.Fatalf("runtime migration registration drift: %#v", upgradeMigrations)
 	}
 	sum := sha256.Sum256([]byte(fileSQL))
@@ -358,7 +358,7 @@ func TestRoleBindingAuthorityMigrationRejectsAmbiguousExistingRows(t *testing.T)
 		{"duplicate global", `INSERT INTO role_bindings VALUES ('00000000-0000-4000-8000-000000000304','00000000-0000-4000-8000-000000000302','global_admin',NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP), ('00000000-0000-4000-8000-000000000305','00000000-0000-4000-8000-000000000302','global_admin',NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			db := testpg.DB(t, func(ctx context.Context, db *sql.DB) error {
+			db := testpg.MigrationDB(t, func(ctx context.Context, db *sql.DB) error {
 				_, err := db.ExecContext(ctx, `CREATE TABLE role_bindings (id uuid primary key, identity_ref_id uuid not null, role text not null, domain_id uuid null, created_at timestamp not null, updated_at timestamp not null)`)
 				return err
 			})
@@ -373,7 +373,7 @@ func TestRoleBindingAuthorityMigrationRejectsAmbiguousExistingRows(t *testing.T)
 }
 
 func TestOutboundPolicyMigrationPreservesUnrestrictedDefault(t *testing.T) {
-	db := testpg.DB(t, func(ctx context.Context, db *sql.DB) error {
+	db := testpg.MigrationDB(t, func(ctx context.Context, db *sql.DB) error {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
@@ -426,7 +426,7 @@ func TestOutboundPolicyMigrationPreservesUnrestrictedDefault(t *testing.T) {
 }
 
 func TestAppPasswordContractMigrationBackfillsLegacyPublicIDAndSeparatesLabel(t *testing.T) {
-	db := testpg.DB(t, func(ctx context.Context, db *sql.DB) error {
+	db := testpg.MigrationDB(t, func(ctx context.Context, db *sql.DB) error {
 		var runner Runner
 		if err := runner.MigrateEmpty(); err != nil {
 			return err
@@ -477,5 +477,32 @@ func TestAppPasswordContractMigrationBackfillsLegacyPublicIDAndSeparatesLabel(t 
 	}
 	if publicID != "app_legacy_public_id" || label != "phone" {
 		t.Fatalf("separated public_id=%q label=%q", publicID, label)
+	}
+}
+
+func TestOutboundAuthorityV2MigrationFileMatchesRuntimeExactly(t *testing.T) {
+	data, err := os.ReadFile("../../migrations/0021_outbound_authority_v2.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(data), 21724; got != want {
+		t.Fatalf("migration size=%d want=%d", got, want)
+	}
+	if got := string(data); got != outboundAuthorityV2MigrationSQL {
+		t.Fatal("0021 migration file/runtime byte drift")
+	}
+	if got, want := len(upgradeMigrations), 20; got != want {
+		t.Fatalf("runtime migration count=%d want=%d", got, want)
+	}
+	migration := upgradeMigrations[19]
+	if migration.Version != outboundAuthorityV2MigrationVersion || migration.SQL != string(data) {
+		t.Fatalf("runtime migration index 19 drift: version=%q", migration.Version)
+	}
+	sum := sha256.Sum256(data)
+	if got, want := hex.EncodeToString(sum[:]), "dd72b1a6140ff76799e9febbe7d81407c54dff21ad81d90633d2acef303d785b"; got != want {
+		t.Fatalf("migration hash=%s want=%s", got, want)
+	}
+	if migration.Checksum != hex.EncodeToString(sum[:]) {
+		t.Fatalf("runtime checksum=%s file checksum=%s", migration.Checksum, hex.EncodeToString(sum[:]))
 	}
 }

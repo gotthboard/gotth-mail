@@ -1576,7 +1576,7 @@ func TestV3BackupVerifyRecordsSQLVerificationWhenConfigured(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt := ops.NewV3Runtime()
-	restoreDB := testpg.DB(t, nil)
+	restoreDB := testpg.MigrationDB(t, nil)
 	rt.RestoreEngine = ops.SQLIsolatedRestoreEngine{DB: restoreDB, Ref: "api-isolated-restore"}
 	rt.BackupStore.Artifacts["artifact"] = ops.BackupArtifact{SchemaVersion: "schema_migrations", ConfigSetID: "cfg", Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"user@example.test": {Address: "user@example.test", Enabled: true}}, Aliases: map[string]daemon.Alias{}}
 	h := Server{AuditDB: db, Identity: ids, V3: rt}.Handler()

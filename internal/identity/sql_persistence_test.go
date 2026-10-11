@@ -18,7 +18,9 @@ import (
 )
 
 func TestSQLServicePersistsMailboxAppPasswordAndTokensAcrossRestart(t *testing.T) {
-	db := identityTestDB(t)
+	db := testpg.RuntimeDB(t, "fresh", func(ctx context.Context, db *sql.DB) error {
+		return store.MigrateSQLThrough(ctx, db, "0020_final_queue_artifact_binding")
+	}, store.MigrateSQL, store.ValidateCurrentSQL)
 	d := daemon.Service{}
 	s, err := NewSQLService(context.Background(), db, "example.test")
 	if err != nil {

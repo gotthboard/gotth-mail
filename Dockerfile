@@ -1,4 +1,5 @@
 FROM golang:1.26.6-alpine AS build
+RUN apk add --no-cache bash
 RUN adduser -D -h /home/gotthmail gotthmail \
     && mkdir -p /src /out /go \
     && chown -R gotthmail:gotthmail /src /out /go /home/gotthmail

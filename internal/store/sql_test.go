@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigrateSQLOnPostgres(t *testing.T) {
-	db := testpg.DB(t, MigrateSQL)
+	db := testpg.MigrationDB(t, MigrateSQL)
 	var count int
 	if err := db.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatal(err)

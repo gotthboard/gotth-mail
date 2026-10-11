@@ -8,9 +8,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"forgejo/gotthboard/gotth-mail/internal/store"
-	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
 
 const (
@@ -21,7 +18,7 @@ const (
 
 func finalQueuePolicyDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db := testpg.DB(t, store.MigrateSQL)
+	db := runtimeAuthorityDB(t, "upgrade")
 	if _, err := db.Exec(`INSERT INTO domains(id,name,enabled,created_at,updated_at) VALUES ($1,'example.test',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, finalQueueDomainID); err != nil {
 		t.Fatal(err)
 	}

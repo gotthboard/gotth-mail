@@ -77,6 +77,41 @@ the complete stack is admitted.
 - **Webmail (`v4` historical ID):** durable mailbox-owned draft storage, production IMAP/SMTP adapters, protected per-mailbox runtime credentials, quota, stable UID reads/actions, reply/forward linkage, safe attachment download, mandatory OpenPGP/MIME signing, exact-sender verification, and ambiguous-delivery state are implemented. `/webmail` is now an interactive session-bound three-pane client with responsive drill-down, compose/send, saved-draft list/reopen/edit, search, sorting, pane placement/resizing, keyboard commands, visible action parity, light/dark themes, and a strict CSP; a real headless Chromium smoke exercises those behaviors. Hostile HTML remains conservative text by design and Roundcube remains usable as the external reference. Live deployment still requires operator-supplied protected credentials/key custody and the separate live Authentik boundary; neither is faked by repository tests.
 - **Notifications (`v5` historical ID):** production Telegram and mandatory-OpenPGP signed-email backends are selectable through the control plane, delivery state/evidence is durable, and a persisted transition monitor—not status reads—dispatches doctor/certificate/backup/queue/abuse/deployment/plugin events with deduplication and retry. Telegram commands use authoritative runtime/SQL summaries, an owner-provided private actor-mapping file, authenticated webhook reception, fixed safe denial text, and durable update deduplication. Authenticated queue endpoints create Telegram approvals instead of mutating an in-memory queue. Approvals bind the live Postfix JSON snapshot, execute only documented `postqueue -f` or exact-ID `postqueue -i` operations through the privileged helper, and use an inactive-before-prompt state plus a leased SQL execution state with transactional audit and ambiguous-success recovery. Notification gRPC crosses only loopback or a shared Unix socket; the reference Compose topology uses the Unix socket and a separate signed-email overlay selects exactly one sink. No live credential, webhook registration, queue action, deployment, or signing key was created. The historical root remains open only through its declared `v3` dependency; per-user/role/delegation email identities, public-key discovery, full key lifecycle automation, and production custody remain later release scope rather than alpha claims.
 
+
+## Migration-authority deployment protocol
+
+These protocols require dedicated product principals and a dedicated product database cluster. Besides templates, only the current product database and a clean maintenance database named `postgres` are allowed. Retain a verified backup and the old image/config reference, stop every service, and give one trusted superuser an exclusive administration window from the first preflight through the final `COMMIT`. During that window no other actor may create, alter, rename, or drop roles/databases; change memberships, settings, ACLs, or owners; open product sessions; prepare transactions; or run object DDL.
+
+READ COMMITTED catalog reads and advisory locks do not serialize an uncooperative superuser. “One transaction” means rollback atomicity only, not concurrent-superuser exclusion.
+
+Fresh databases use this exact sequence:
+
+1. The distinct installer creates seven passwordless `NOLOGIN` principals and the database/OID-bound phase marker:
+   ```sh
+   psql --set=ON_ERROR_STOP=1 --dbname "$GOTTH_MAIL_INSTALLER_DATABASE_URL" --file scripts/bootstrap-migration-authority-fresh.sql
+   ```
+2. Outside repository SQL, provision both app and migrator with SCRAM verifiers using `password_encryption=scram-sha-256`. Do not record plaintext or verifier bytes in SQL files, logs, receipts, or the phase marker.
+3. Run the same script a second time. It requires the exact marker, transitional role model, and both SCRAM verifiers; activates only the migrator and advances the marker to prefix-ready. The app remains `NOLOGIN`:
+   ```sh
+   psql --set=ON_ERROR_STOP=1 --dbname "$GOTTH_MAIL_INSTALLER_DATABASE_URL" --file scripts/bootstrap-migration-authority-fresh.sql
+   ```
+4. With only `GOTTH_MAIL_MIGRATION_DATABASE_URL[_FILE]`, run `gotth-mail migrate --through 0020_final_queue_artifact_binding`.
+5. The installer executes the atomic cutover. It rechecks marker, verifiers, roles, ledger, owners, inventory, and ACL provenance; transfers database/object authority, enables the app, and consumes the marker:
+   ```sh
+   psql --set=ON_ERROR_STOP=1 --dbname "$GOTTH_MAIL_INSTALLER_DATABASE_URL" --file scripts/bootstrap-migration-authority-fresh-0020.sql
+   ```
+6. Start normally with distinct app and migrator secrets. Startup applies 0021, closes the migration pool, opens the app pool, validates the current ledger, then wires database-backed services.
+
+Existing exact <=0020 legacy deployments use the upgrade script only after the same backup, dedicated-cluster, stopped-service, and exclusive-window checks:
+
+```sh
+psql --set=ON_ERROR_STOP=1 --dbname "$GOTTH_MAIL_INSTALLER_DATABASE_URL" --file scripts/bootstrap-migration-authority-upgrade-0020.sql
+```
+
+The first legacy transition requires the current database and every sealed public object to be owned solely by the exact legacy login, exact legacy ACL state, no remote database/dependency/session/prepared-transaction use, and a NULL or SCRAM verifier. MD5 and every other verifier format refuse. After the script commits but before startup, provision the new `gotth_mail_migrator` SCRAM verifier outside repository SQL; if the preserved legacy app verifier was NULL, provision `gotth_mail_app` too. Keep verifier/plaintext bytes out of commands, logs, and receipts, then install the distinct app and migration secret references used by normal startup. An already-app invocation succeeds only as a no-op from the exact completed <=0020 owner/ACL/dependency structure; partial or older cutovers refuse and require restore or separately reviewed remediation.
+
+Plain `psql -f` without `ON_ERROR_STOP` is unsupported. After 0021 commits, rollback means restoring the pre-upgrade database and old secrets/image together; never start the <=0020 binary against a committed 0021 database.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

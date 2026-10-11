@@ -1,5 +1,6 @@
 GOTTH_MAIL_LISTEN=:8080
 GOTTH_MAIL_DATABASE_URL_FILE=/run/secrets/database-url
+GOTTH_MAIL_MIGRATION_DATABASE_URL_FILE=/run/secrets/migration-database-url
 GOTTH_MAIL_FRONT_AUTH_TOKEN_FILE=/run/secrets/front-auth-token
 GOTTH_MAIL_EXTENSION_MASTER_KEY_FILE=/run/secrets/master-key
 GOTTH_MAIL_EXTENSION_ARTIFACT_ROOT=/var/lib/gotth-mail/extensions/artifacts

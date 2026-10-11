@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -165,18 +167,12 @@ func TestSecretFromEnvOrFileReadsOneBoundedSource(t *testing.T) {
 }
 
 func TestConfigureDatabaseFromEnvMigratesAndWiresDurableServices(t *testing.T) {
-	seed := testpg.DB(t, nil)
-	if err := store.MigrateSQL(context.Background(), seed); err != nil {
-		t.Fatal(err)
-	}
+	seed, port := prepareRuntimeAuthority(t)
 	if _, err := seed.Exec(`INSERT INTO domains(id,name,enabled,created_at,updated_at) VALUES ('20000000-0000-4000-8000-000000000001','example.test',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP); INSERT INTO mailboxes(id,domain_id,local_part,enabled,created_at,updated_at) VALUES ('20000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000001','user',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
 		t.Fatal(err)
 	}
-	var port int
-	if err := seed.QueryRow(`SELECT inet_server_port()`).Scan(&port); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GOTTH_MAIL_DATABASE_URL", fmt.Sprintf("postgres://gotth_mail@127.0.0.1:%d/gotth_mail?sslmode=disable", port))
+	t.Setenv("GOTTH_MAIL_DATABASE_URL", fmt.Sprintf("postgres://gotth_mail_app@127.0.0.1:%d/gotth_mail?sslmode=disable", port))
+	t.Setenv("GOTTH_MAIL_MIGRATION_DATABASE_URL", fmt.Sprintf("postgres://gotth_mail_migrator@127.0.0.1:%d/gotth_mail?sslmode=disable", port))
 	server := api.Server{}
 	db, err := configureDatabaseFromEnv(context.Background(), &server)
 	if err != nil {
@@ -230,12 +226,9 @@ func TestConfigurePostfixHelperRequiresCompleteDurableConfiguration(t *testing.T
 }
 
 func TestConfigureDatabaseSeedsExplicitReferencePolicyFixture(t *testing.T) {
-	seed := testpg.DB(t, nil)
-	var port int
-	if err := seed.QueryRow(`SELECT inet_server_port()`).Scan(&port); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GOTTH_MAIL_DATABASE_URL", fmt.Sprintf("postgres://gotth_mail@127.0.0.1:%d/gotth_mail?sslmode=disable", port))
+	_, port := prepareRuntimeAuthority(t)
+	t.Setenv("GOTTH_MAIL_DATABASE_URL", fmt.Sprintf("postgres://gotth_mail_app@127.0.0.1:%d/gotth_mail?sslmode=disable", port))
+	t.Setenv("GOTTH_MAIL_MIGRATION_DATABASE_URL", fmt.Sprintf("postgres://gotth_mail_migrator@127.0.0.1:%d/gotth_mail?sslmode=disable", port))
 	t.Setenv("GOTTH_MAIL_REFERENCE_FIXTURE", "1")
 	server := api.Server{}
 	db, err := configureDatabaseFromEnv(context.Background(), &server)
@@ -251,4 +244,120 @@ func TestConfigureDatabaseSeedsExplicitReferencePolicyFixture(t *testing.T) {
 	if scope != "same_domain_only" || revision != 2 {
 		t.Fatalf("scope=%q revision=%d", scope, revision)
 	}
+}
+
+func TestConfigureDatabaseRequiresMigrationSecretWithRuntimeSecret(t *testing.T) {
+	t.Setenv("GOTTH_MAIL_DATABASE_URL", "postgres://runtime")
+	if _, err := configureDatabaseFromEnv(context.Background(), &api.Server{}); err == nil || !strings.Contains(err.Error(), "required together") {
+		t.Fatalf("missing migration secret error=%v", err)
+	}
+}
+
+func TestConfigureDatabaseRejectsAmbiguousMigrationSecretSource(t *testing.T) {
+	t.Setenv("GOTTH_MAIL_DATABASE_URL", "postgres://runtime")
+	t.Setenv("GOTTH_MAIL_MIGRATION_DATABASE_URL", "postgres://migration")
+	t.Setenv("GOTTH_MAIL_MIGRATION_DATABASE_URL_FILE", "/run/secrets/migration-database-url")
+	if _, err := configureDatabaseFromEnv(context.Background(), &api.Server{}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("ambiguous migration secret error=%v", err)
+	}
+}
+
+func TestMigrationOnlyCommandStopsAtExact0020WithoutServiceWork(t *testing.T) {
+	db := testpg.MigrationDB(t, nil)
+	var port int
+	if err := db.QueryRow("SELECT inet_server_port()").Scan(&port); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOTTH_MAIL_MIGRATION_DATABASE_URL", fmt.Sprintf("postgres://gotth_mail_migrator@127.0.0.1:%d/gotth_mail?sslmode=disable", port))
+	if err := runOperatorCommand(context.Background(), []string{"migrate", "--through", "0020_final_queue_artifact_binding"}); err != nil {
+		t.Fatal(err)
+	}
+	var checksum string
+	if err := db.QueryRow("SELECT checksum FROM schema_migrations WHERE version='0020_final_queue_artifact_binding'").Scan(&checksum); err != nil {
+		t.Fatal(err)
+	}
+	if checksum != "70ba885e190d0e0907f6d93e6256d36998964c9acc50b88829bfd8a3a5ed823b" {
+		t.Fatalf("0020 checksum=%q", checksum)
+	}
+	var candidateRows, serviceRows int
+	if err := db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version='0021_outbound_authority_v2'").Scan(&candidateRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT count(*) FROM domains").Scan(&serviceRows); err != nil {
+		t.Fatal(err)
+	}
+	if candidateRows != 0 || serviceRows != 0 {
+		t.Fatalf("candidate=%d service-work=%d", candidateRows, serviceRows)
+	}
+	if err := runOperatorCommand(context.Background(), []string{"migrate", "--through", "0019_group_role_projection"}); err == nil || !strings.Contains(err.Error(), "unsupported migration target") {
+		t.Fatalf("unsupported target error=%v", err)
+	}
+}
+
+func TestConfigureDatabaseMigrationCloseFailureOpensNoRuntimePool(t *testing.T) {
+	_, port := prepareRuntimeAuthority(t)
+	t.Setenv("GOTTH_MAIL_DATABASE_URL", fmt.Sprintf("postgres://gotth_mail_app@127.0.0.1:%d/gotth_mail?sslmode=disable", port))
+	t.Setenv("GOTTH_MAIL_MIGRATION_DATABASE_URL", fmt.Sprintf("postgres://gotth_mail_migrator@127.0.0.1:%d/gotth_mail?sslmode=disable", port))
+	poolWasSingleConnection := false
+	closeMigration := func(db *sql.DB) error {
+		poolWasSingleConnection = db.Stats().MaxOpenConnections == 1
+		if err := db.Close(); err != nil {
+			return err
+		}
+		return errors.New("injected close failure")
+	}
+	server := api.Server{}
+	db, err := configureDatabaseFromEnvWithMigrationClose(context.Background(), &server, closeMigration)
+	if db != nil || err == nil || !strings.Contains(err.Error(), "close migration database") {
+		t.Fatalf("db=%v err=%v", db, err)
+	}
+	if !poolWasSingleConnection {
+		t.Fatal("migration pool was not limited to one connection")
+	}
+	if server.AuditDB != nil || server.Identity != nil || server.OIDCStore != nil {
+		t.Fatalf("runtime service initialized after migration close failure: %#v", server)
+	}
+}
+
+func prepareRuntimeAuthority(t *testing.T) (*sql.DB, int) {
+	t.Helper()
+	admin := testpg.AuthorityDB(t)
+	var port int
+	if err := admin.QueryRow("SELECT inet_server_port()").Scan(&port); err != nil {
+		t.Fatal(err)
+	}
+	principal, err := os.ReadFile("../../scripts/bootstrap-migration-authority-fresh.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(string(principal)); err != nil {
+		t.Fatalf("exact fresh principal creation: %v", err)
+	}
+	if _, err := admin.Exec("SET password_encryption='scram-sha-256'; ALTER ROLE gotth_mail_app PASSWORD 'command-fixture-app'; ALTER ROLE gotth_mail_migrator PASSWORD 'command-fixture-migrator'"); err != nil {
+		t.Fatalf("provision fresh SCRAM verifiers: %v", err)
+	}
+	if _, err := admin.Exec(string(principal)); err != nil {
+		t.Fatalf("exact fresh principal activation: %v", err)
+	}
+	migrator, err := sql.Open("postgres", fmt.Sprintf("postgres://gotth_mail_migrator@127.0.0.1:%d/gotth_mail?sslmode=disable", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = migrator.Close() })
+	migrator.SetMaxOpenConns(1)
+	migrator.SetMaxIdleConns(1)
+	if err := store.MigrateSQLThrough(context.Background(), migrator, "0020_final_queue_artifact_binding"); err != nil {
+		t.Fatal(err)
+	}
+	cutover, err := os.ReadFile("../../scripts/bootstrap-migration-authority-fresh-0020.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(string(cutover)); err != nil {
+		t.Fatalf("exact fresh-0020 bootstrap: %v", err)
+	}
+	if err := store.MigrateSQL(context.Background(), migrator); err != nil {
+		t.Fatalf("candidate migration: %v", err)
+	}
+	return migrator, port
 }

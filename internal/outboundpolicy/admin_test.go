@@ -374,3 +374,13 @@ func contains(s, part string) bool {
 	}
 	return false
 }
+
+func adminRuntimeDB(t *testing.T) (*sql.DB, string) {
+	t.Helper()
+	db := runtimeAuthorityDB(t, "upgrade")
+	domainID := "00000000-0000-4000-8000-000000000201"
+	if _, err := db.Exec("INSERT INTO domains(id,name,enabled,outbound_scope,outbound_policy_revision,created_at,updated_at) VALUES ($1,'example.test',true,'unrestricted',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", domainID); err != nil {
+		t.Fatal(err)
+	}
+	return db, domainID
+}

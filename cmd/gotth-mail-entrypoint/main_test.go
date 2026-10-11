@@ -9,7 +9,7 @@ import (
 
 func TestControlEnvironmentClosedAndDeterministic(t *testing.T) {
 	path := t.TempDir() + "/environment"
-	if err := os.WriteFile(path, []byte("GOTTH_MAIL_LISTEN=:8080\nGOTTH_MAIL_DATABASE_URL_FILE=/run/secrets/database-url\nGOTTH_MAIL_DNS_PLAN_FILE=/etc/gotth-mail/control/dns-plan.json\n"), 0o440); err != nil {
+	if err := os.WriteFile(path, []byte("GOTTH_MAIL_LISTEN=:8080\nGOTTH_MAIL_DATABASE_URL_FILE=/run/secrets/database-url\nGOTTH_MAIL_MIGRATION_DATABASE_URL_FILE=/run/secrets/migration-database-url\nGOTTH_MAIL_DNS_PLAN_FILE=/etc/gotth-mail/control/dns-plan.json\n"), 0o440); err != nil {
 		t.Fatal(err)
 	}
 	first, err := controlEnvironment(path)
@@ -22,6 +22,9 @@ func TestControlEnvironmentClosedAndDeterministic(t *testing.T) {
 	}
 	if !slices.Contains(first, "GOTTH_MAIL_DNS_PLAN_FILE=/etc/gotth-mail/control/dns-plan.json") {
 		t.Fatalf("DNS plan path missing from control environment: %v", first)
+	}
+	if !slices.Contains(first, "GOTTH_MAIL_MIGRATION_DATABASE_URL_FILE=/run/secrets/migration-database-url") {
+		t.Fatalf("migration database path missing from control environment: %v", first)
 	}
 	badPath := t.TempDir() + "/environment"
 	if err := os.WriteFile(badPath, []byte("PATH=/attacker\n"), 0o440); err != nil {

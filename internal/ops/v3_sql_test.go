@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"strings"
 	"testing"
@@ -86,7 +87,7 @@ func TestSQLAuditStoreRetentionDeletesOnlyExpiredWithAudit(t *testing.T) {
 }
 
 func TestSQLIsolatedRestoreEngineVerifiesThroughRestoredDatabase(t *testing.T) {
-	restoreDB := testpg.DB(t, nil)
+	restoreDB := testpg.MigrationDB(t, nil)
 	storage := MemoryBackupStorage{Artifacts: map[string]BackupArtifact{"artifact": {SchemaVersion: "schema_migrations", ConfigSetID: "cfg", Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"user@example.test": {Address: "user@example.test", Enabled: true, QuotaBytes: 1024}}, Aliases: map[string]daemon.Alias{"alias@example.test": {Address: "alias@example.test", Enabled: true, Targets: []string{"user@example.test"}}}}}}
 	b := VerifyBackupWithRestore(context.Background(), storage, "artifact", SQLIsolatedRestoreEngine{DB: restoreDB, Ref: "restore-db"})
 	if b.Status != "verified" || b.IsolatedRestoreRef != "restore-db" || b.SchemaVersion != "schema_migrations" || b.ConfigSetID != "cfg" {
@@ -135,7 +136,7 @@ func TestSQLIsolatedRestorePreservesOutboundPolicyAuthorityAndQueueState(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoreDB := testpg.DB(t, nil)
+	restoreDB := testpg.MigrationDB(t, nil)
 	backup := VerifyBackupWithRestore(context.Background(), MemoryBackupStorage{Artifacts: map[string]BackupArtifact{"policy": artifact}}, "policy", SQLIsolatedRestoreEngine{DB: restoreDB, Ref: "policy-restore"})
 	if backup.Status != "verified" || backup.IsolatedRestoreRef != "policy-restore" {
 		t.Fatalf("backup=%#v", backup)
@@ -161,7 +162,7 @@ func TestSQLIsolatedRestoreEngineRejectsNonEmptyRestoreDatabase(t *testing.T) {
 }
 
 func TestSQLIsolatedRestoreEnginePinsPublicUnderHostileSearchPath(t *testing.T) {
-	restoreDB := testpg.DB(t, nil)
+	restoreDB := testpg.MigrationDB(t, nil)
 	restoreDB.SetMaxOpenConns(1)
 	restoreDB.SetMaxIdleConns(1)
 	if _, err := restoreDB.Exec(`CREATE SCHEMA shadow; CREATE TABLE shadow.sentinel (id integer primary key, value text NOT NULL); INSERT INTO shadow.sentinel(id, value) VALUES (1, 'untouched'); SET search_path = shadow, public`); err != nil {
@@ -205,7 +206,7 @@ func TestSQLIsolatedRestoreEnginePinsPublicUnderHostileSearchPath(t *testing.T) 
 
 func TestSQLBackupVerificationStoreRecordsIsolatedRestoreRef(t *testing.T) {
 	recordDB := testpg.DB(t, store.MigrateSQL)
-	restoreDB := testpg.DB(t, nil)
+	restoreDB := testpg.MigrationDB(t, nil)
 	storage := MemoryBackupStorage{Artifacts: map[string]BackupArtifact{"artifact": {SchemaVersion: "schema_migrations", ConfigSetID: "cfg", Domains: map[string]daemon.Domain{"example.test": {Name: "example.test", Enabled: true}}, Mailboxes: map[string]daemon.Mailbox{"user@example.test": {Address: "user@example.test", Enabled: true}}}}}
 	st := SQLBackupVerificationStore{DB: recordDB}
 	b, err := st.VerifyAndRecordWithRestore(context.Background(), storage, "artifact", "plugin-backup", "", SQLIsolatedRestoreEngine{DB: restoreDB, Ref: "sql-restore-db"}, time.Unix(10, 0))
@@ -225,7 +226,7 @@ func TestSQLBackupVerificationStoreRecordsIsolatedRestoreRef(t *testing.T) {
 }
 
 func TestSQLBulkStoreMutatesCanonicalMailboxAndAliasState(t *testing.T) {
-	db := testpg.DB(t, store.MigrateSQL)
+	db := composedRuntimeDB(t, "fresh")
 	if _, err := db.Exec(`INSERT INTO domains(id, name, created_at, updated_at) VALUES ($1,$2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, "00000000-0000-4000-8000-000000000501", "example.test"); err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +274,7 @@ func TestSQLBulkStoreMutatesCanonicalMailboxAndAliasState(t *testing.T) {
 }
 
 func TestSQLImportStoreAppliesLiveMailuExportToCanonicalState(t *testing.T) {
-	db := testpg.DB(t, store.MigrateSQL)
+	db := composedRuntimeDB(t, "upgrade")
 	actor := audit.ActorRef{Type: "admin", ID: "ops"}
 	source, err := os.ReadFile("../../test/fixtures/mailu/config-export-secrets.json")
 	if err != nil {
@@ -354,4 +355,11 @@ func TestSQLBackupVerificationStoreRecordsVerifiedBackup(t *testing.T) {
 	if got.Status != "verified" || got.ArtifactRef != "artifact" {
 		t.Fatalf("latest=%#v", got)
 	}
+}
+
+func composedRuntimeDB(t *testing.T, lane string) *sql.DB {
+	t.Helper()
+	return testpg.RuntimeDB(t, lane, func(ctx context.Context, db *sql.DB) error {
+		return store.MigrateSQLThrough(ctx, db, "0020_final_queue_artifact_binding")
+	}, store.MigrateSQL, store.ValidateCurrentSQL)
 }

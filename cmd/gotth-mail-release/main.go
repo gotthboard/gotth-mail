@@ -55,6 +55,7 @@ var requiredConfiguration = map[string]struct{}{
 var configurationEnvironmentKeys = map[string]map[string]struct{}{
 	"control/environment": {
 		"GOTTH_MAIL_LISTEN": {}, "GOTTH_MAIL_DATABASE_URL_FILE": {},
+		"GOTTH_MAIL_MIGRATION_DATABASE_URL": {}, "GOTTH_MAIL_MIGRATION_DATABASE_URL_FILE": {},
 		"GOTTH_MAIL_AUTHENTIK_ISSUER": {}, "GOTTH_MAIL_AUTHENTIK_CLIENT_ID": {},
 		"GOTTH_MAIL_AUTHENTIK_CLIENT_SECRET_FILE": {}, "GOTTH_MAIL_AUTHENTIK_REDIRECT_URI": {},
 		"GOTTH_MAIL_SCIM_EXTERNAL_URL": {}, "GOTTH_MAIL_FRONT_AUTH_TOKEN_FILE": {},

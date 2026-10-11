@@ -33,6 +33,31 @@ if ! grep -F 'build-production-images.sh' "$runtime_smoke" >/dev/null ||
   exit 1
 fi
 
+
+compose="$root/compose/reference/docker-compose.yml"
+for required in \
+  'GOTTH_MAIL_DATABASE_URL_FILE: /run/secrets/database-url' \
+  'GOTTH_MAIL_MIGRATION_DATABASE_URL_FILE: /run/secrets/migration-database-url' \
+  'command: ["migrate", "--through", "0020_final_queue_artifact_binding"]' \
+  'bootstrap-migration-authority-fresh.sql' \
+  'bootstrap-migration-authority-fresh-0020.sql' \
+  'condition: service_completed_successfully'; do
+  grep -F "$required" "$compose" >/dev/null || {
+    echo "reference Compose authority contract missing: $required" >&2
+    exit 1
+  }
+done
+for required in \
+  'GOTTH_MAIL_MIGRATION_DATABASE_URL_FILE=/run/secrets/migration-database-url' \
+  'migrate --through 0020_final_queue_artifact_binding' \
+  'bootstrap-migration-authority-fresh.sql' \
+  'bootstrap-migration-authority-fresh-0020.sql' \
+  'gotth_mail_app,gotth_mail_gate,gotth_mail_import,gotth_mail_jobs,gotth_mail_migrator,gotth_mail_schema_owner,gotth_mail_scim'; do
+  grep -F "$required" "$runtime_smoke" >/dev/null || {
+    echo "production smoke authority contract missing: $required" >&2
+    exit 1
+  }
+done
 reproducibility="$root/scripts/production-reproducibility.sh"
 if [ ! -x "$reproducibility" ] ||
   ! grep -F 'GOTTH_MAIL_PRODUCTION_NO_CACHE=1' "$reproducibility" >/dev/null ||

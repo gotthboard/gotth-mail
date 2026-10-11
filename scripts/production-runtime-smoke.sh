@@ -42,7 +42,8 @@ chmod 0755 "$WORK/control/extensions/artifacts"
 chmod 0700 "$WORK/control/extensions/runtime"
 umask 077
 printf '%s' 'production-smoke-database-password' >"$WORK/secrets/postgres-password"
-printf '%s' 'postgres://gotth_mail:production-smoke-database-password@postgres/gotth_mail?sslmode=disable' >"$WORK/secrets/database-url"
+printf '%s' 'postgres://gotth_mail_app:production-smoke-app-password@postgres/gotth_mail?sslmode=disable' >"$WORK/secrets/database-url"
+printf '%s' 'postgres://gotth_mail_migrator:production-smoke-migrator-password@postgres/gotth_mail?sslmode=disable' >"$WORK/secrets/migration-database-url"
 printf '%s' 'front_auth_token_0123456789_ABCDEFGHIJ' >"$WORK/secrets/front-auth-token"
 printf '%s' 'postfix_helper_token_0123456789_ABCDEF' >"$WORK/secrets/postfix-helper-token"
 printf '%s' 'postfix_release_token_0123456789_ABCDE' >"$WORK/secrets/postfix-release-token"
@@ -56,14 +57,12 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=mail.example.test' 
   -out "$WORK/tls/certificate.pem" >/dev/null 2>&1
 chmod 0400 "$WORK/tls/private-key.pem" "$WORK/tls/certificate.pem"
 chmod 0444 "$WORK/secrets/postgres-password"
+printf '%s' 'unreadable_postfix_helper_token_ABCDEF' >"$WORK/secrets/postfix-helper-token-unreadable"
+chmod 0400 "$WORK/secrets/postfix-helper-token-unreadable"
 
 if command -v sudo >/dev/null 2>&1; then
   sudo -n chown -R 1000:1000 "$WORK/control" "$WORK/mail" "$WORK/rspamd" "$WORK/dkim" "$WORK/tls" "$WORK/secrets"
   sudo -n chown -R 999:999 "$WORK/database" "$WORK/secrets/postgres-password"
-fi
-printf '%s' 'unreadable_postfix_helper_token_ABCDEF' >"$WORK/secrets/postfix-helper-token-unreadable"
-chmod 0400 "$WORK/secrets/postfix-helper-token-unreadable"
-if command -v sudo >/dev/null 2>&1; then
   sudo -n chown 0:0 "$WORK/secrets/postfix-helper-token-unreadable"
 fi
 
@@ -82,14 +81,14 @@ done
   --read-only --cap-drop ALL --security-opt no-new-privileges --user 999:999 \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=67108864 \
   --tmpfs /run/postgresql:rw,noexec,nosuid,nodev,size=16777216 \
-  -e POSTGRES_USER=gotth_mail -e POSTGRES_DB=gotth_mail \
+  -e POSTGRES_USER=postgres -e POSTGRES_DB=gotth_mail \
   -e POSTGRES_PASSWORD_FILE=/run/secrets/postgres-password \
   -v "$WORK/database:/var/lib/postgresql/data" \
   -v "$WORK/secrets/postgres-password:/run/secrets/postgres-password:ro" \
   "$POSTGRES_IMAGE" >/dev/null
 
 for _ in $(seq 1 90); do
-  if "${DOCKER[@]}" exec "$PREFIX-db" psql -U gotth_mail -d gotth_mail -Atqc 'SELECT 1' 2>/dev/null | grep -qx 1; then break; fi
+  if "${DOCKER[@]}" exec "$PREFIX-db" psql -U postgres -d gotth_mail -Atqc 'SELECT 1' 2>/dev/null | grep -qx 1; then break; fi
   if [ "$("${DOCKER[@]}" inspect -f '{{.State.Running}}' "$PREFIX-db" 2>/dev/null || true)" != true ]; then
     echo 'PostgreSQL stopped before becoming ready' >&2
     "${DOCKER[@]}" logs "$PREFIX-db" >&2 || true
@@ -97,7 +96,30 @@ for _ in $(seq 1 90); do
   fi
   sleep 1
 done
-"${DOCKER[@]}" exec "$PREFIX-db" psql -U gotth_mail -d gotth_mail -Atqc 'SELECT 1' | grep -qx 1
+"${DOCKER[@]}" exec "$PREFIX-db" psql -U postgres -d gotth_mail -Atqc 'SELECT 1' | grep -qx 1
+
+# Exact fresh provenance handoff: create passwordless NOLOGIN principals, provision
+# external SCRAM verifiers, activate only migrator, run bounded <=0020, then cut over app.
+"${DOCKER[@]}" exec -i "$PREFIX-db" psql -v ON_ERROR_STOP=1 -U postgres -d gotth_mail <"$ROOT/scripts/bootstrap-migration-authority-fresh.sql"
+"${DOCKER[@]}" exec -i -e GOTTH_MAIL_APP_PASSWORD=production-smoke-app-password \
+  -e GOTTH_MAIL_MIGRATOR_PASSWORD=production-smoke-migrator-password "$PREFIX-db" \
+  psql -v ON_ERROR_STOP=1 -U postgres -d gotth_mail <<'SQL'
+SET password_encryption='scram-sha-256';
+\getenv app_password GOTTH_MAIL_APP_PASSWORD
+\getenv migrator_password GOTTH_MAIL_MIGRATOR_PASSWORD
+ALTER ROLE gotth_mail_app PASSWORD :'app_password';
+ALTER ROLE gotth_mail_migrator PASSWORD :'migrator_password';
+SQL
+"${DOCKER[@]}" exec -i "$PREFIX-db" psql -v ON_ERROR_STOP=1 -U postgres -d gotth_mail <"$ROOT/scripts/bootstrap-migration-authority-fresh.sql"
+"${DOCKER[@]}" run --rm --network "$NETWORK" --user 1000:1000 \
+  --entrypoint /usr/local/bin/gotth-mail \
+  -e GOTTH_MAIL_MIGRATION_DATABASE_URL_FILE=/run/secrets/migration-database-url \
+  -v "$WORK/secrets/migration-database-url:/run/secrets/migration-database-url:ro" \
+  "$image_repository_base-control-plane:dev" migrate --through 0020_final_queue_artifact_binding
+"${DOCKER[@]}" exec -i "$PREFIX-db" psql -v ON_ERROR_STOP=1 -U postgres -d gotth_mail <"$ROOT/scripts/bootstrap-migration-authority-fresh-0020.sql"
+"${DOCKER[@]}" exec "$PREFIX-db" psql -U postgres -d gotth_mail -Atqc \
+  "SELECT string_agg(rolname,',' ORDER BY rolname) FROM pg_roles WHERE rolname IN ('gotth_mail_app','gotth_mail_gate','gotth_mail_import','gotth_mail_jobs','gotth_mail_migrator','gotth_mail_schema_owner','gotth_mail_scim')" \
+  | grep -qx 'gotth_mail_app,gotth_mail_gate,gotth_mail_import,gotth_mail_jobs,gotth_mail_migrator,gotth_mail_schema_owner,gotth_mail_scim'
 
 run_control() {
   "${DOCKER[@]}" run -d --name "$PREFIX-control-plane" --network "$NETWORK" --network-alias control-plane \
@@ -106,6 +128,7 @@ run_control() {
     --tmpfs /tmp:rw,noexec,nosuid,nodev,size=67108864 --tmpfs /run:rw,noexec,nosuid,nodev,size=16777216,uid=1000,gid=1000,mode=0700 \
     -v "$ROOT/configs/production:/etc/gotth-mail:ro" -v "$WORK/control:/var/lib/gotth-mail" \
     -v "$WORK/secrets/database-url:/run/secrets/database-url:ro" \
+    -v "$WORK/secrets/migration-database-url:/run/secrets/migration-database-url:ro" \
     -v "$WORK/secrets/master-key:/run/secrets/master-key:ro" \
     -v "$WORK/secrets/front-auth-token:/run/secrets/front-auth-token:ro" \
     -v "$WORK/secrets/oidc-client-secret:/run/secrets/oidc-client-secret:ro" \
@@ -141,7 +164,7 @@ digest = hashlib.pbkdf2_hmac('sha256', secret, salt, 1200, dklen=32)
 print('pbkdf2_sha256$1200$production-smoke-salt$' + base64.b64encode(digest).decode())
 PY
 )
-"${DOCKER[@]}" exec -i "$PREFIX-db" psql -v ON_ERROR_STOP=1 -U gotth_mail -d gotth_mail >/dev/null <<SQL
+"${DOCKER[@]}" exec -i "$PREFIX-db" psql -v ON_ERROR_STOP=1 -U gotth_mail_app -d gotth_mail >/dev/null <<SQL
 INSERT INTO domains(id,name,enabled,outbound_scope,outbound_policy_revision,created_at,updated_at)
 VALUES ('10000000-0000-4000-8000-000000000001','example.test',true,'same_domain_only',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
 INSERT INTO mailboxes(id,domain_id,local_part,enabled,verifier,created_at,updated_at)

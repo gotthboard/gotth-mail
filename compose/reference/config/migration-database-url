@@ -1,0 +1,1 @@
+postgres://gotth_mail_migrator:gotth-mail-migrator-dev-only@database:5432/gotth_mail?sslmode=disable

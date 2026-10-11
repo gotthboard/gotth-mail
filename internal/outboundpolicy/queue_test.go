@@ -2,6 +2,7 @@ package outboundpolicy
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestQueueStoreRegisterIsDurableIdempotentAndCanonical(t *testing.T) {
-	db := testpg.DB(t, store.MigrateSQL)
+	db := runtimeAuthorityDB(t, "fresh")
 	now := time.Date(2026, 9, 19, 13, 0, 0, 0, time.UTC)
 	queue := QueueStore{DB: db, Now: func() time.Time { return now }}
 	in := QueueRegistration{
@@ -129,4 +130,11 @@ func equalStrings(left, right []string) bool {
 		}
 	}
 	return true
+}
+
+func runtimeAuthorityDB(t *testing.T, lane string) *sql.DB {
+	t.Helper()
+	return testpg.RuntimeDB(t, lane, func(ctx context.Context, db *sql.DB) error {
+		return store.MigrateSQLThrough(ctx, db, "0020_final_queue_artifact_binding")
+	}, store.MigrateSQL, store.ValidateCurrentSQL)
 }

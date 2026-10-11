@@ -53,6 +53,12 @@ func main() {
 	if err := version.Validate(version.Version); err != nil {
 		log.Fatal(err)
 	}
+	if len(os.Args) > 1 {
+		if err := runOperatorCommand(context.Background(), os.Args[1:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	server := api.Server{Authz: authz.StaticAuthorizer{}}
 	if os.Getenv("GOTTH_MAIL_REFERENCE_FIXTURE") == "1" {
 		server = referenceServer()
@@ -112,6 +118,51 @@ func main() {
 		addr = ":8080"
 	}
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+// runOperatorCommand handles bounded commands before runtime construction.
+// Complexity: for n secret bytes and delegated migration cost M, successful-
+// path time O(n+M), Omega(n); auxiliary space O(n+A), Omega(n). No uniform
+// tight bounds exist because migration SQL and driver memory A are delegated.
+func runOperatorCommand(ctx context.Context, args []string) error {
+	const target = "0020_final_queue_artifact_binding"
+	if len(args) != 3 || args[0] != "migrate" || args[1] != "--through" {
+		return fmt.Errorf("usage: gotth-mail migrate --through %s", target)
+	}
+	if args[2] != target {
+		return fmt.Errorf("unsupported migration target %q", args[2])
+	}
+	dsn, err := secretFromEnvOrFile("GOTTH_MAIL_MIGRATION_DATABASE_URL", "GOTTH_MAIL_MIGRATION_DATABASE_URL_FILE")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(dsn) == "" {
+		return errors.New("migration database secret is required")
+	}
+	db, err := sql.Open("postgres", strings.TrimSpace(dsn))
+	if err != nil {
+		return fmt.Errorf("open migration database: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	defer db.Close()
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("ping migration database: %w", err)
+	}
+	var sessionUser, currentUser string
+	if err := db.QueryRowContext(ctx, "SELECT session_user::text,current_user::text").Scan(&sessionUser, &currentUser); err != nil {
+		return fmt.Errorf("inspect migration database identity: %w", err)
+	}
+	if sessionUser != "gotth_mail_migrator" || currentUser != "gotth_mail_schema_owner" {
+		return errors.New("migration database identity must be session_user=gotth_mail_migrator,current_user=gotth_mail_schema_owner")
+	}
+	if err := store.MigrateSQLThrough(ctx, db, target); err != nil {
+		return fmt.Errorf("migrate database through %s: %w", target, err)
+	}
+	if err := db.Close(); err != nil {
+		return fmt.Errorf("close migration database: %w", err)
+	}
+	return nil
 }
 
 // configurePostfixListenersFromEnv binds every required policy/map listener
@@ -727,30 +778,94 @@ func configureOIDCFromEnv(ctx context.Context, server *api.Server, client *http.
 	return nil
 }
 
-// configureDatabaseFromEnv performs one connection, one ping, one migration
-// transaction, and one bounded state load. It retains only the connection pool.
+// configureDatabaseFromEnv uses a one-connection migration pool, closes it,
+// then opens and validates the runtime pool before constructing any service.
+// Complexity: for n secret bytes and delegated database costs M (migration),
+// V (validation), and S (service state load), time O(n+M+V+S), Omega(n), with
+// no tight bound across database paths; auxiliary space O(n+A), Omega(n), with
+// no tight bound because A is delegated driver/service memory.
 func configureDatabaseFromEnv(ctx context.Context, server *api.Server) (*sql.DB, error) {
-	dsn, err := secretFromEnvOrFile("GOTTH_MAIL_DATABASE_URL", "GOTTH_MAIL_DATABASE_URL_FILE")
+	return configureDatabaseFromEnvWithMigrationClose(ctx, server, func(db *sql.DB) error { return db.Close() })
+}
+
+// configureDatabaseFromEnvWithMigrationClose owns the same startup contract as
+// configureDatabaseFromEnv while making the close result directly testable.
+// Complexity: time O(n+M+V+S), Omega(n), no uniform tight bound; auxiliary
+// space O(n+A), Omega(n), no uniform tight bound; variables/costs are as above.
+func configureDatabaseFromEnvWithMigrationClose(ctx context.Context, server *api.Server, closeMigrationDatabase func(*sql.DB) error) (*sql.DB, error) {
+	runtimeDSN, err := secretFromEnvOrFile("GOTTH_MAIL_DATABASE_URL", "GOTTH_MAIL_DATABASE_URL_FILE")
 	if err != nil {
 		return nil, err
 	}
-	dsn = strings.TrimSpace(dsn)
-	if dsn == "" {
+	migrationDSN, err := secretFromEnvOrFile("GOTTH_MAIL_MIGRATION_DATABASE_URL", "GOTTH_MAIL_MIGRATION_DATABASE_URL_FILE")
+	if err != nil {
+		return nil, err
+	}
+	runtimeDSN = strings.TrimSpace(runtimeDSN)
+	migrationDSN = strings.TrimSpace(migrationDSN)
+	if runtimeDSN == "" && migrationDSN == "" {
 		return nil, nil
 	}
-	db, err := sql.Open("postgres", dsn)
+	if runtimeDSN == "" || migrationDSN == "" {
+		return nil, fmt.Errorf("GOTTH_MAIL_DATABASE_URL and GOTTH_MAIL_MIGRATION_DATABASE_URL secret sources are required together")
+	}
+	migrationDB, err := sql.Open("postgres", migrationDSN)
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
+		return nil, fmt.Errorf("open migration database: %w", err)
+	}
+	migrationDB.SetMaxOpenConns(1)
+	migrationDB.SetMaxIdleConns(1)
+	closeMigrationOnError := func(cause error) (*sql.DB, error) {
+		if closeErr := closeMigrationDatabase(migrationDB); closeErr != nil {
+			return nil, fmt.Errorf("%v; close migration database: %w", cause, closeErr)
+		}
+		return nil, cause
+	}
+	if err := migrationDB.PingContext(ctx); err != nil {
+		return closeMigrationOnError(fmt.Errorf("ping migration database: %w", err))
+	}
+	var migrationSessionUser, migrationCurrentUser string
+	if err := migrationDB.QueryRowContext(ctx, "SELECT session_user::text,current_user::text").Scan(&migrationSessionUser, &migrationCurrentUser); err != nil {
+		return closeMigrationOnError(fmt.Errorf("inspect migration database identity: %w", err))
+	}
+	if migrationSessionUser != "gotth_mail_migrator" || migrationCurrentUser != "gotth_mail_schema_owner" {
+		return closeMigrationOnError(fmt.Errorf("migration database identity must be session_user=gotth_mail_migrator,current_user=gotth_mail_schema_owner"))
+	}
+	if err := store.MigrateSQL(ctx, migrationDB); err != nil {
+		return closeMigrationOnError(fmt.Errorf("migrate database: %w", err))
+	}
+	if err := closeMigrationDatabase(migrationDB); err != nil {
+		return nil, fmt.Errorf("close migration database: %w", err)
+	}
+
+	db, err := sql.Open("postgres", runtimeDSN)
+	if err != nil {
+		return nil, fmt.Errorf("open runtime database: %w", err)
 	}
 	closeOnError := func(cause error) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, cause
 	}
 	if err := db.PingContext(ctx); err != nil {
-		return closeOnError(fmt.Errorf("ping database: %w", err))
+		return closeOnError(fmt.Errorf("ping runtime database: %w", err))
 	}
-	if err := store.MigrateSQL(ctx, db); err != nil {
-		return closeOnError(fmt.Errorf("migrate database: %w", err))
+	var runtimeSessionUser, runtimeCurrentUser string
+	if err := db.QueryRowContext(ctx, "SELECT session_user::text,current_user::text").Scan(&runtimeSessionUser, &runtimeCurrentUser); err != nil {
+		return closeOnError(fmt.Errorf("inspect runtime database identity: %w", err))
+	}
+	if runtimeSessionUser != "gotth_mail_app" || runtimeCurrentUser != "gotth_mail_app" {
+		return closeOnError(fmt.Errorf("runtime database identity must be session_user=current_user=gotth_mail_app"))
+	}
+	validationTx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return closeOnError(fmt.Errorf("begin current schema validation: %w", err))
+	}
+	if err := store.ValidateCurrentSQL(ctx, validationTx); err != nil {
+		_ = validationTx.Rollback()
+		return closeOnError(fmt.Errorf("validate current schema: %w", err))
+	}
+	if err := validationTx.Commit(); err != nil {
+		return closeOnError(fmt.Errorf("commit current schema validation: %w", err))
 	}
 	if os.Getenv("GOTTH_MAIL_REFERENCE_FIXTURE") == "1" {
 		if err := seedReferenceDatabase(ctx, db); err != nil {
