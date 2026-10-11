@@ -314,7 +314,7 @@ func TestExtensionConfigurationRoundtrip(t *testing.T) {
 			deny(oldApply, 200) // older unconsumed preview is now revision-stale
 			invalid := url.Values{"action": {"configure-preview"}, "csrf_token": {csrf}, "field.config.number": {"not-an-integer"}}
 			res := request(invalid)
-			if !strings.Contains(res.Body.String(), "invalid integer extension field") || strings.Contains(res.Body.String(), "extension operation accepted") {
+			if !strings.Contains(res.Body.String(), "Extension operation could not be confirmed. Check current state before retrying.") || !strings.Contains(res.Body.String(), `role="alert"`) || strings.Contains(res.Body.String(), "extension operation accepted") {
 				t.Error("validation error quieted")
 			}
 		})

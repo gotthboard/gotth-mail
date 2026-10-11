@@ -25,6 +25,8 @@ type inventoryView struct {
 	Items         []extensionsadmin.Instance
 	BlockedReason string
 	Theme         string
+	AfterCursor   string
+	NextCursor    string
 }
 
 // Complexity: fixed scalar normalization time/space O(1), Omega(1), Theta(1).
@@ -73,7 +75,7 @@ func inventoryHeaders(w http.ResponseWriter) {
 // O(S+B), Omega(B), tight Theta not established for arbitrary components/writers.
 // B rendered bytes, R/S delegated templ render time/memory, W transport cost.
 // Exactly one outer buffer prevents a component failure committing partial200.
-// This is NOT a fixed response-byte bound; List and templ internal storage remain.
+// This is NOT a fixed response-byte bound; selected payload/grant and templ storage remain.
 func writeInventoryComponent(w http.ResponseWriter, r *http.Request, c templ.Component, fragment bool) error {
 	var buf bytes.Buffer
 	if fragment {
@@ -112,4 +114,15 @@ func registerInventoryAssets(mux *http.ServeMux) {
 			_, _ = io.WriteString(w, asset.body)
 		})
 	}
+}
+
+// Complexity: Theta(1) time/output space: existing UUID validation examines at
+// most36 bytes; only fixed path/theme/fragment bytes are emitted. Invalid direct
+// component IDs retain the safe inventory fallback, never another detail route.
+func inventoryPermissionsURL(id, theme string) string {
+	path := inventoryDetailURL(id)
+	if path == "/admin/extensions" {
+		return inventoryPageURL(theme, "")
+	}
+	return path + "?theme=" + inventoryTheme(theme) + "#permissions"
 }

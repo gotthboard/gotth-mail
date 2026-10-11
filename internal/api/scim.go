@@ -2,9 +2,7 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net"
@@ -13,13 +11,18 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/identityruntime"
 	"forgejo/gotthboard/gotth-mail/internal/scimstore"
 	gotthscim "github.com/gotthboard/gotth-scim/pkg/scim"
 )
 
 type scimScopeKey struct{}
 
-func NewSCIMHandler(externalURL string, db *sql.DB, ids *identity.Service, authorizer authz.Authorizer, auditWriter audit.Writer) (http.Handler, error) {
+// NewSCIMHandler fixes deployment authority before exposing authenticated SCIM.
+// Complexity: time O(R), Omega(R), Theta(R); auxiliary O(S), Omega(1),
+// tight Theta not established. R/S are delegated schema/server construction
+// costs; authority assignment adds constant space and no network or SQL.
+func NewSCIMHandler(externalURL string, db *sql.DB, ids *identity.Service, authorizer authz.Authorizer, auditWriter audit.Writer, currentIssuer string) (http.Handler, error) {
 	if db == nil || ids == nil || authorizer == nil || auditWriter == nil {
 		return nil, errors.New("SCIM database, identity service, authorizer, and audit writer are required")
 	}
@@ -29,7 +32,7 @@ func NewSCIMHandler(externalURL string, db *sql.DB, ids *identity.Service, autho
 	if err != nil {
 		return nil, err
 	}
-	store := &scimstore.SQLStore{DB: db, Identity: ids}
+	store := &scimstore.SQLStore{DB: db, Identity: ids, CurrentIssuer: currentIssuer}
 	server, err := gotthscim.NewServer(gotthscim.ServerConfig{
 		Store: store, Registry: registry, ExternalURL: externalURL,
 		ResolveScope: func(request *http.Request) (string, error) {
@@ -88,9 +91,11 @@ func actorRef(actor authz.Actor) audit.ActorRef {
 	return audit.ActorRef{Type: actor.Type, ID: actor.ID}
 }
 
+// provisioningScope shares the existing stable actor hash with operator admission.
+// Complexity: n actor bytes; time and auxiliary space O(n), Omega(n), Theta(n),
+// including the delegated SHA256 prefix encoding.
 func provisioningScope(actorID string) string {
-	digest := sha256.Sum256([]byte("gotth-mail/scim-scope/v1\x00" + actorID))
-	return base64.RawURLEncoding.EncodeToString(digest[:])
+	return identityruntime.Scope(actorID)
 }
 
 func isMutation(method string) bool {

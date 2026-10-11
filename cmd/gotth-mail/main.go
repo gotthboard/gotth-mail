@@ -31,6 +31,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/frontauth"
 	"forgejo/gotthboard/gotth-mail/internal/httpui"
 	"forgejo/gotthboard/gotth-mail/internal/identity"
+	"forgejo/gotthboard/gotth-mail/internal/identityruntime"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
 	"forgejo/gotthboard/gotth-mail/internal/notifyruntime"
 	"forgejo/gotthboard/gotth-mail/internal/ops"
@@ -43,6 +44,11 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// main starts the configured control plane and serves until process termination.
+// Complexity: over runtime T with N requests, time O(C+R(N,T)), Omega(1),
+// tight Theta not established; auxiliary O(S), Omega(1), tight Theta not established.
+// C is delegated startup/migration/discovery cost; R and S include all handlers,
+// stores and background services. Identity authority adds one bounded local read.
 func main() {
 	if err := version.Validate(version.Version); err != nil {
 		log.Fatal(err)
@@ -86,6 +92,9 @@ func main() {
 	}
 	for _, listener := range postfixListeners {
 		defer listener.Close()
+	}
+	if err := configureIdentityRuntimeFromEnv(&server); err != nil {
+		log.Fatalf("configure identity authority: %v", err)
 	}
 	if err := configureOIDCFromEnv(context.Background(), &server, http.DefaultClient); err != nil {
 		log.Fatalf("configure oidc: %v", err)
@@ -164,6 +173,7 @@ func productionNotificationMonitor(server *api.Server, backend *notifyruntime.GR
 		}
 		selected := plugin.Registry{Plugins: map[string]plugin.Registration{name: registration}}
 		return ops.Doctor(ctx, ops.DoctorInput{
+			Identity: &ops.IdentityDiagnostic{DB: server.AuditDB, CurrentIssuer: server.CurrentIssuer},
 			ConfigOK: true, DatabaseOK: server.AuditDB != nil, AuthentikOK: server.Identity != nil,
 			WebmailOK: server.WebmailClient != nil || server.WebmailOK, Daemon: server.Daemon,
 			DNSChecks: server.DNSChecks, CertCheck: server.CertCheck, PluginRegistry: selected,
@@ -513,7 +523,7 @@ func configureNotificationsFromEnv(server *api.Server) (*notifyruntime.GRPCNotif
 			Queue: server.NotificationQueue, Daemon: &server.Daemon, Plugins: server.Plugins,
 			DoctorLookup: func(ctx context.Context) (ops.DoctorReport, error) {
 				selected := plugin.Registry{Plugins: map[string]plugin.Registration{name: server.Plugins.Plugins[name]}}
-				return ops.Doctor(ctx, ops.DoctorInput{ConfigOK: true, DatabaseOK: server.AuditDB != nil, AuthentikOK: server.Identity != nil, WebmailOK: server.WebmailClient != nil, Daemon: server.Daemon, DNSChecks: server.DNSChecks, CertCheck: server.CertCheck, PluginRegistry: selected, PluginHealth: func(ctx context.Context, _ string) (plugin.HealthResponse, error) {
+				return ops.Doctor(ctx, ops.DoctorInput{Identity: &ops.IdentityDiagnostic{DB: server.AuditDB, CurrentIssuer: server.CurrentIssuer}, ConfigOK: true, DatabaseOK: server.AuditDB != nil, AuthentikOK: server.Identity != nil, WebmailOK: server.WebmailClient != nil, Daemon: server.Daemon, DNSChecks: server.DNSChecks, CertCheck: server.CertCheck, PluginRegistry: selected, PluginHealth: func(ctx context.Context, _ string) (plugin.HealthResponse, error) {
 					return backend.Health(ctx, "telegram-command")
 				}, CorrelationID: "telegram-command"}), nil
 			},
@@ -658,6 +668,10 @@ func safeMappingScope(value string) bool {
 	return true
 }
 
+// configureSCIMFromEnv supplies the already-protected issuer, not the SCIM URL.
+// Complexity: e environment bytes, R/S delegated handler construction: time
+// O(e+R), Omega(e), no uniform tight bound; auxiliary O(e+S), Omega(1),
+// no uniform tight bound. Disabled configuration performs no SQL/network.
 func configureSCIMFromEnv(server *api.Server) error {
 	externalURL := strings.TrimSpace(os.Getenv("GOTTH_MAIL_SCIM_EXTERNAL_URL"))
 	if externalURL == "" {
@@ -666,7 +680,7 @@ func configureSCIMFromEnv(server *api.Server) error {
 	if server.AuditDB == nil || server.Identity == nil {
 		return fmt.Errorf("GOTTH_MAIL_DATABASE_URL or GOTTH_MAIL_DATABASE_URL_FILE is required when SCIM is enabled")
 	}
-	handler, err := api.NewSCIMHandler(externalURL, server.AuditDB, server.Identity, server.Authz, audit.SQLWriter{DB: server.AuditDB})
+	handler, err := api.NewSCIMHandler(externalURL, server.AuditDB, server.Identity, server.Authz, audit.SQLWriter{DB: server.AuditDB}, server.CurrentIssuer)
 	if err != nil {
 		return err
 	}
@@ -674,6 +688,10 @@ func configureSCIMFromEnv(server *api.Server) error {
 	return nil
 }
 
+// configureOIDCFromEnv preserves existing normalization through the shared helper.
+// Complexity: n environment/secret bytes, D discovery cost; time O(n+D),
+// Omega(1), no uniform tight bound; auxiliary O(n+S), Omega(1), no tight bound,
+// where S is delegated OIDC/client memory. Disabled configuration is Theta(1).
 func configureOIDCFromEnv(ctx context.Context, server *api.Server, client *http.Client) error {
 	issuer := strings.TrimSpace(os.Getenv("GOTTH_MAIL_AUTHENTIK_ISSUER"))
 	clientID := strings.TrimSpace(os.Getenv("GOTTH_MAIL_AUTHENTIK_CLIENT_ID"))
@@ -691,7 +709,7 @@ func configureOIDCFromEnv(ctx context.Context, server *api.Server, client *http.
 	if err != nil {
 		return err
 	}
-	issuer = strings.TrimRight(issuer, "/") + "/"
+	issuer = identityruntime.NormalizeIssuer(issuer)
 	transport := http.DefaultTransport
 	if client != nil && client.Transport != nil {
 		transport = client.Transport

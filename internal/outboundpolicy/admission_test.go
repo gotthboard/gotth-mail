@@ -211,6 +211,64 @@ func TestQueueAdmissionRejectsIncompleteOrForeignDeliverySet(t *testing.T) {
 	}
 }
 
+func TestQueueAdmissionRejectsEqualRootAliasesBeforeQueueRegistration(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		setup      string
+		original   string
+		recipient  string
+		queueID    string
+		wantErr    bool
+		wantSource QueueSource
+	}{
+		{name: "exact root alias is not terminal", original: "first@example.test", recipient: "first@example.test", queueID: "HJKLMNPQRSTVz2345", wantErr: true},
+		{name: "catch all root is not terminal", setup: "INSERT INTO aliases(id,domain_id,local_part,targets_json,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000b06','00000000-0000-4000-8000-000000000b01','*','[\"outside@example.net\"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", original: "missing@example.test", recipient: "missing@example.test", queueID: "JKLMNPQRSTVWz2345", wantErr: true},
+		{name: "self cycle root is not terminal", setup: "INSERT INTO aliases(id,domain_id,local_part,targets_json,enabled,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000b07','00000000-0000-4000-8000-000000000b01','self','[\"self@example.test\"]',true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", original: "self@example.test", recipient: "self@example.test", queueID: "KLMNPQRSTVWXz2345", wantErr: true},
+		{name: "direct external leaf stays cheap", original: "outside@example.net", recipient: "outside@example.net", queueID: "LMNPQRSTVWXZz2345"},
+		{name: "direct local mailbox leaf stays cheap", original: "user@example.test", recipient: "user@example.test", queueID: "MNPQRSTVWXZ2z234"},
+		{name: "unequal expansion still preserves sources", original: "first@example.test", recipient: "outside@example.net", queueID: "NPQRSTVWXZ23z234", wantSource: QueueSource{Kind: SourceForward, ObjectID: "00000000-0000-4000-8000-000000000b04"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testpg.DB(t, store.MigrateSQL)
+			seedAdmissionState(t, db)
+			if tc.setup != "" {
+				if _, err := db.Exec(tc.setup); err != nil {
+					t.Fatal(err)
+				}
+			}
+			record, created, err := (QueueAdmissionService{DB: db}).Admit(context.Background(), QueueAdmissionRequest{
+				Metadata: QueueMetadata{
+					QueueID:            tc.queueID,
+					ArrivalFingerprint: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+					EnvelopeSender:     "user@example.test",
+					Recipients:         []string{tc.recipient},
+				},
+				AuthenticatedMailbox: "user@example.test",
+				Deliveries:           []QueueDelivery{{OriginalRecipient: tc.original, Recipient: tc.recipient}},
+			})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("admitted equal rooted expansion: record=%#v created=%v", record, created)
+				}
+				var rows int
+				if countErr := db.QueryRow("SELECT count(*) FROM outbound_queue_messages").Scan(&rows); countErr != nil {
+					t.Fatal(countErr)
+				}
+				if rows != 0 {
+					t.Fatalf("queue registration occurred before rejection: rows=%d", rows)
+				}
+				return
+			}
+			if err != nil || !created {
+				t.Fatalf("record=%#v created=%v err=%v", record, created, err)
+			}
+			if tc.wantSource.Kind != "" && !hasQueueSource(record.Sources, tc.wantSource) {
+				t.Fatalf("missing source %#v in %#v", tc.wantSource, record.Sources)
+			}
+		})
+	}
+}
+
 func TestQueueAdmissionRejectsExpansionCycle(t *testing.T) {
 	db := testpg.DB(t, store.MigrateSQL)
 	seedAdmissionState(t, db)

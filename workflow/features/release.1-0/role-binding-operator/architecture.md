@@ -39,6 +39,17 @@ Apply inserts a random UUID or deletes the exact observed row, then records
 actor, identity resource, role/domain, and no mailbox/subject/issuer in the
 redacted payload. An unchanged plan commits nothing and writes no audit.
 
+## Planned origin-aware extension
+
+The [v2 Group projection contract](../../../../docs/implementation/v2-identity-provisioning.md#durable-group-to-role-projection-planned)
+supersedes direct effective-row deletion when Group origins exist. Keep one
+unique effective binding with operator_owned and per-mapping origins; Apply
+changes operator ownership and removes only an orphan row. Origin changes and
+redacted audit/revision updates commit together. This preserves other grants
+and binding UUID, without making Group projection an operator-service caller.
+Current-issuer/local-enabled guards apply only to Group origins. Existing
+operator semantics are not silently narrowed by issuer-file absence/change.
+
 ## Runtime projection
 
 `authn.SQLStore.BoundSession` already queries `role_bindings` for every bound

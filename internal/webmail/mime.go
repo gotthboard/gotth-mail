@@ -64,7 +64,7 @@ func parseMIMEEntity(header mail.Header, r io.Reader, out *Message, depth int, p
 		}
 		mr := multipart.NewReader(r, boundary)
 		for {
-			part, err := mr.NextPart()
+			part, err := mr.NextRawPart()
 			if errors.Is(err, io.EOF) {
 				break
 			}
@@ -109,8 +109,21 @@ func parseMIMEEntity(header mail.Header, r io.Reader, out *Message, depth int, p
 	return nil
 }
 
+// readMIMEPart bounds both transfer-encoded input and decoded output. Header
+// lookup/normalization is bounded by header size. The encoded LimitedReader
+// keeps one sentinel byte; if a decoder consumes it, the part is oversized even
+// when the decoded prefix is otherwise valid.
+// Complexity: let h be transfer-header bytes, e encoded bytes consumed, d
+// decoded bytes retained, k reader calls, and B decoder buffering. Local CPU
+// is O(1+h+e+d+k), excluding arbitrary delegated reader work/latency. Normal
+// success with k=O(e+1) has Theta(1+h+e+d) local CPU; failure paths have the
+// same upper bound and Omega(1), with no uniform tight Theta. Auxiliary space
+// is O(1+h+d+B), Omega(1+d) on success and Omega(1) across failures. No tighter
+// general Theta is claimed: header normalization may allocate or reuse input.
+// Both e and d are bounded by maxMIMEPartBytes+1; reader latency is not.
 func readMIMEPart(header mail.Header, r io.Reader) ([]byte, error) {
-	var reader io.Reader = io.LimitReader(r, maxMIMEPartBytes+1)
+	encoded := &io.LimitedReader{R: r, N: maxMIMEPartBytes + 1}
+	var reader io.Reader = encoded
 	switch strings.ToLower(strings.TrimSpace(header.Get("Content-Transfer-Encoding"))) {
 	case "base64":
 		reader = base64.NewDecoder(base64.StdEncoding, reader)
@@ -121,7 +134,7 @@ func readMIMEPart(header mail.Header, r io.Reader) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(body)) > maxMIMEPartBytes {
+	if encoded.N == 0 || int64(len(body)) > maxMIMEPartBytes {
 		return nil, errors.New("mime part too large")
 	}
 	return body, nil

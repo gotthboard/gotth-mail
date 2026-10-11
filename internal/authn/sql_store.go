@@ -11,10 +11,14 @@ import (
 
 	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
+	"forgejo/gotthboard/gotth-mail/internal/roleprojection"
 	gotthoidc "github.com/gotthboard/gotth-oidc/pkg/oidc"
 )
 
-type SQLStore struct{ DB *sql.DB }
+type SQLStore struct {
+	DB            *sql.DB
+	CurrentIssuer string
+}
 
 // PutAttempt performs one bounded insert. Time complexity is O(1) plus the
 // database primary-key lookup; retained data is bounded by the schema checks.
@@ -71,7 +75,13 @@ func (s SQLStore) PutSession(ctx context.Context, session Session) error {
 
 // PutIdentitySession binds one verified OIDC identity to exactly one active
 // SCIM-provisioned mailbox and admits the identity reference, session, and
-// redacted success audit in one transaction.
+// redacted success audit in one SERIALIZABLE transaction. Projection runs only
+// after the exact verified binding; attempt consumption has already committed
+// before exchange and is never retried or rolled back here.
+// Complexity: B canonical User bytes, E bindings/origins, Q delegated SQL,
+// audit, entropy and projection work: time O(B+E log E+Q), Omega(B+E+Q),
+// tight Theta not established; auxiliary O(B+E+S), Omega(B+E), no tight
+// Theta established, where S is delegated SQL storage. Candidate rows <=2.
 func (s SQLStore) PutIdentitySession(ctx context.Context, identity Identity, session Session) (Session, error) {
 	if s.DB == nil {
 		return Session{}, fmt.Errorf("OIDC SQL store is unavailable")
@@ -79,7 +89,7 @@ func (s SQLStore) PutIdentitySession(ctx context.Context, identity Identity, ses
 	if strings.TrimSpace(identity.Issuer) == "" || strings.TrimSpace(identity.Subject) == "" || strings.TrimSpace(identity.Email) == "" {
 		return Session{}, fmt.Errorf("verified OIDC identity is incomplete")
 	}
-	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return Session{}, err
 	}
@@ -132,6 +142,10 @@ func (s SQLStore) PutIdentitySession(ctx context.Context, identity Identity, ses
 	if boundMailboxID != candidates[0].mailboxID {
 		return Session{}, fmt.Errorf("verified OIDC identity is already bound to another mailbox")
 	}
+	projector := roleprojection.Projector{CurrentIssuer: s.CurrentIssuer, Actor: audit.ActorRef{Type: "oidc_subject", ID: boundIdentityID}, CorrelationID: "oidc"}
+	if err := projector.SyncIdentity(ctx, tx, boundIdentityID); err != nil {
+		return Session{}, err
+	}
 	session.IdentityRefID = boundIdentityID
 	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(id, identity_ref_id, csrf_secret_hash, auth_method, created_at, expires_at, last_seen_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, session.ID, session.IdentityRefID, session.CSRFSecretHash, session.AuthMethod, session.CreatedAt, session.ExpiresAt, session.LastSeenAt); err != nil {
 		return Session{}, err
@@ -149,12 +163,23 @@ func (s SQLStore) PutIdentitySession(ctx context.Context, identity Identity, ses
 	return session, nil
 }
 
+// BoundSession reads session and current roles in one coherent readonly snapshot.
+// Operator grants retain their semantics; Group origins additionally require the
+// current issuer and local enabled predicates. SQL errors deny without caching.
+// Complexity: B returned role bytes, Q database snapshot/two-query/commit work;
+// successful time O(B+Q), Omega(B+Q), Theta(B+Q); auxiliary O(B+S), Omega(B),
+// tight Theta not established for database space S. Early failures Omega(1).
 func (s SQLStore) BoundSession(ctx context.Context, id string, now time.Time) (BoundSession, bool) {
 	if s.DB == nil || id == "" {
 		return BoundSession{}, false
 	}
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return BoundSession{}, false
+	}
+	defer tx.Rollback()
 	var bound BoundSession
-	err := s.DB.QueryRowContext(ctx, `SELECT s.id, s.identity_ref_id::text, s.csrf_secret_hash, s.auth_method, s.created_at, s.expires_at, s.last_seen_at,
+	err = tx.QueryRowContext(ctx, `SELECT s.id, s.identity_ref_id::text, s.csrf_secret_hash, s.auth_method, s.created_at, s.expires_at, s.last_seen_at,
 		ir.issuer, ir.subject, lower(m.local_part || '@' || d.name)
 		FROM sessions s
 		JOIN identity_refs ir ON ir.id=s.identity_ref_id
@@ -168,7 +193,23 @@ func (s SQLStore) BoundSession(ctx context.Context, id string, now time.Time) (B
 	if err != nil {
 		return BoundSession{}, false
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT rb.role, COALESCE(lower(d.name),'') FROM role_bindings rb LEFT JOIN domains d ON d.id=rb.domain_id WHERE rb.identity_ref_id=$1 ORDER BY rb.role, d.name`, bound.IdentityRefID)
+	rows, err := tx.QueryContext(ctx, `SELECT rb.role, COALESCE(lower(d.name),'')
+        FROM role_bindings rb
+        JOIN identity_refs ir ON ir.id=rb.identity_ref_id
+        JOIN mailboxes m ON m.id=ir.mailbox_id
+        JOIN domains md ON md.id=m.domain_id
+        LEFT JOIN domains d ON d.id=rb.domain_id
+        WHERE rb.identity_ref_id=$1 AND (
+            rb.operator_owned OR (
+                $2<>'' AND ir.provider='authentik' AND ir.issuer=$2
+                AND m.enabled AND md.enabled AND (rb.domain_id IS NULL OR d.enabled)
+                AND EXISTS (SELECT 1 FROM role_binding_group_sources src
+                    JOIN identity_group_role_mappings gm ON gm.id=src.mapping_id
+                    WHERE src.binding_id=rb.id AND gm.issuer=$2 AND gm.enabled
+                      AND NOT gm.group_deleted AND gm.role=rb.role
+                      AND gm.domain_id IS NOT DISTINCT FROM rb.domain_id)
+            )
+        ) ORDER BY rb.role,d.name`, bound.IdentityRefID, s.CurrentIssuer)
 	if err != nil {
 		return BoundSession{}, false
 	}
@@ -181,6 +222,12 @@ func (s SQLStore) BoundSession(ctx context.Context, id string, now time.Time) (B
 		bound.Roles = append(bound.Roles, assignment)
 	}
 	if err := rows.Err(); err != nil {
+		return BoundSession{}, false
+	}
+	if err := rows.Close(); err != nil {
+		return BoundSession{}, false
+	}
+	if err := tx.Commit(); err != nil {
 		return BoundSession{}, false
 	}
 	return bound, true

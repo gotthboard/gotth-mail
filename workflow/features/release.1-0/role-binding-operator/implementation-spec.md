@@ -54,6 +54,25 @@ and registration in `internal/store`, and parity tests. Before adding
 constraints, use explicit `DO` checks that raise if inconsistent or duplicate
 logical rows exist. Never delete or rewrite existing authority implicitly.
 
+## Planned Group-origin compatibility
+
+When the Group projection child is activated, replace the direct INSERT/DELETE
+choice with operator-owned origin grant/revoke and conditional orphan cleanup.
+Keep existing CLI flags. Group INSERTs explicitly set operator_owned=false;
+operator INSERTs and the legacy default remain true. Retain 0018 uniqueness.
+Grant on a Group-only row is a real ownership mutation, not unchanged. Revoke
+with no operator origin is no-op, not an assertion that effective access vanished.
+Preview/result/audit add operator origin, Group-source count and effective_after.
+Digest v2 binds request/identity/domain, operator state, binding UUID/revision and
+sorted source mapping IDs/revisions; old/stale confirmations reject. Origin,
+revision and redacted success audit share the SERIALIZABLE transaction. Other
+origins/UUIDs survive; no-op does not churn rows/audit. Required tests cover two
+Groups plus operator, each removal, audit rollback and concurrent absent rows.
+The [v2 recovery contract](../../../../docs/implementation/v2-identity-provisioning.md#fence-and-rollback-future-deployment-authority-required)
+fences old CLIs/readers/writers; this identity CLI currently does not run ledger
+validation. DEFAULT TRUE alone is not rolling compatibility. No migration number
+is assigned by this amendment and no prior evidence is rewritten.
+
 ## Verification
 
 PostgreSQL tests create one SCIM-backed mailbox, verified identity, and active

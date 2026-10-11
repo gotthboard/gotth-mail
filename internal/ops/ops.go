@@ -34,6 +34,7 @@ type DoctorReport struct {
 }
 
 type DoctorInput struct {
+	Identity       *IdentityDiagnostic
 	ConfigOK       bool
 	DatabaseOK     bool
 	AuthentikOK    bool
@@ -49,12 +50,38 @@ type DoctorInput struct {
 	CorrelationID  string
 }
 
-func Doctor(ctx context.Context, in DoctorInput) DoctorReport {
+// Doctor intentionally discards local tuple details at the public boundary.
+// Complexity: N inventory bytes, C checks, Q/S SQL, P plugin/daemon costs;
+// time O(N+C+Q+P), Omega(C), tight Theta not established; auxiliary O(N+C+S),
+// Omega(C), tight Theta not established. Delegates to DoctorLocal.
+func Doctor(ctx context.Context, in DoctorInput) DoctorReport { r, _ := DoctorLocal(ctx, in); return r }
+
+// DoctorLocal is explicitly local: callers must not expose its second result on
+// public endpoints or notifications. Nil Identity retains legacy offline behavior.
+// Complexity: N inventory bytes, C checks, Q/S SQL, P plugin/daemon costs;
+// time O(N+C+Q+P), Omega(C), tight Theta not established; auxiliary O(N+C+S),
+// Omega(C), tight Theta not established. No provider proof is performed.
+func DoctorLocal(ctx context.Context, in DoctorInput) (DoctorReport, *IdentityHealth) {
 	checks := []Check{}
 	checks = append(checks, boolCheck("config", "typed-config", in.ConfigOK))
-	checks = append(checks, boolCheck("database", "postgres", in.DatabaseOK))
-	checks = append(checks, boolCheck("identity", "authentik", in.AuthentikOK))
-	checks = append(checks, roleMappingCheck(in.RoleMappings, in.KnownDomains))
+	var health *IdentityHealth
+	if in.Identity == nil {
+		checks = append(checks, boolCheck("database", "postgres", in.DatabaseOK), boolCheck("identity", "authentik", in.AuthentikOK), roleMappingCheck(in.RoleMappings, in.KnownDomains))
+	} else {
+		h := in.Identity.Inspect(ctx)
+		health = &h
+		reason := "local_snapshot_read"
+		if h.DatabaseStatus != OK {
+			reason = "local_snapshot_unavailable"
+		}
+		checks = append(checks, Check{Category: "database", Name: "postgres", Status: h.DatabaseStatus, Reason: reason})
+		fact := Check{Category: "identity", Name: "authentik", Status: Warn, Reason: "configured_identity_fact_absent_not_live_checked"}
+		if in.AuthentikOK {
+			fact.Status = OK
+			fact.Reason = "configured_identity_fact_present_not_live_checked"
+		}
+		checks = append(checks, fact, Check{Category: "identity", Name: "authentik-role-mapping", Status: h.Status, Reason: h.Reason}, Check{Category: "identity", Name: "profile-artifact", Status: Unknown, Reason: "artifact_consistency_not_checked"}, Check{Category: "identity", Name: "external-provider-proof", Status: Warn, Reason: "external_profile_correlation_and_live_grants_not_checked"})
+	}
 	checks = append(checks, boolCheck("webmail", "provider", in.WebmailOK))
 	for _, d := range in.DNSChecks {
 		checks = append(checks, Check{Category: "DNS", Name: d.Family + " " + d.Name, Status: dnsStatus(d.Status), Reason: d.Remediation})
@@ -82,7 +109,7 @@ func Doctor(ctx context.Context, in DoctorInput) DoctorReport {
 			checks = append(checks, Check{Category: "plugin", Name: name, Status: OK, Reason: "health_ok"})
 		}
 	}
-	return DoctorReport{Status: worst(checks), Checks: checks}
+	return DoctorReport{Status: worst(checks), Checks: checks}, health
 }
 
 func roleMappingCheck(mappings []authz.RoleMapping, knownDomains []string) Check {

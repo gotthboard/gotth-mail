@@ -432,7 +432,7 @@ func scimTestHandler(t *testing.T, writer audit.Writer) (*sql.DB, *identity.Serv
 	if writer == nil {
 		writer = audit.SQLWriter{DB: db}
 	}
-	scimHandler, err := NewSCIMHandler("https://mail.example.test/scim/v2", db, ids, authz.StaticAuthorizer{}, writer)
+	scimHandler, err := NewSCIMHandler("https://mail.example.test/scim/v2", db, ids, authz.StaticAuthorizer{}, writer, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +553,7 @@ func TestSCIMUsersSuccessAndFailurePaths(t *testing.T) {
 	}
 	restartedDaemon := &daemon.Service{}
 	restarted.BindDaemon(restartedDaemon)
-	restartedSCIM, err := NewSCIMHandler("https://mail.example.test/scim/v2", db, restarted, authz.StaticAuthorizer{}, audit.SQLWriter{DB: db})
+	restartedSCIM, err := NewSCIMHandler("https://mail.example.test/scim/v2", db, restarted, authz.StaticAuthorizer{}, audit.SQLWriter{DB: db}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -224,7 +224,7 @@ Only exact HX-Request:true without HX-History-Restore-Request:true selects the
 fixed-marker fragment. Full, fragment and error responses set Vary for both
 headers and Cache-Control: private, no-store before authentication. One outer
 buffer prevents render failures committing partial200; errors return sanitized500.
-A write error after committed200 cannot be converted to500. Existing unlimited
+A write error after committed200 cannot be converted to500. The existing pre-pagination unlimited
 List retains its existing L bytes (including fields not displayed); the outer
 render buffer adds O(B) bytes for rendered B. Renderer work scales with rows/bytes,
 while auth/SQL costs remain delegated, including existing per-instance status
@@ -302,6 +302,157 @@ oracles and explicitly injected ordering/storage-denial cases are recorded in
 workflow/features/v3.ops-import-admin/extension-management-ui/evidence/2026-09-27-renderer-inventory.md.
 Parent/cold review, cross-engine/floor and feature/beta admission remain separate.
 
+### Planned HTML inventory pagination (owner40028; contracts only)
+
+This subsection supersedes only the all-row HTML selection requirement above
+when implemented and reviewed. Existing implementation/evidence is not silently
+rewritten as pagination evidence. PRD and architecture define the approved scope.
+
+#### HTTP input and observable errors
+
+Preserve order: inventoryHeaders; exact route/GET guard404; existing bearer/cookie
+actor authorization401/403; service-nil503; THEN bounded page parsing, service,
+view and buffered rendering. Do not expose cursor-validation results before auth.
+
+- Fixed page size50, not user configurable and not an installed-instance quota.
+  Only one new reserved query field: after. Absent means first page. Explicit
+  empty or repeated decoded after keys (including encoded aliases) are400.
+- After the existing admission checks, reject RawQuery over4096bytes with
+  sanitized400 before allocating parsed query values. Use error-returning
+  url.ParseQuery; malformed escaping/invalid separators return400 rather than
+  silently retaining a partially parsed query. This is an intentional new input
+  error boundary. Unknown query keys within that bound remain ignored, as before.
+- after format is v1. followed by canonical unpadded base64url of the last selected
+  extension_id's UTF-8 bytes. Max encoded value686bytes (3+ceil(512*4/3)); reject
+  other versions, padding/noncanonical spelling, invalid UTF-8, NUL, decoded
+  length outside3..128characters or over512bytes. Re-encode to check canonicality.
+  Percent-encoded query spellings are parsed normally, but do not broaden browser
+  enhancement eligibility. The cursor is a position, not authority or a signature.
+- A well-formed nonexistent/deleted/beyond-end key is a valid seek, not404 or a
+  redirect: it returns the following page or an empty200. No page number/offset,
+  max-page quota, total count, global config or arbitrary return URL is added.
+- Preserve existing theme semantics: first decoded theme value; light/dark
+  explicit, absent/other normalized to system. Duplicate theme retains that
+  existing first-value behavior; only duplicate after is rejected. Generated
+  links use the fixed /admin/extensions path and encoded host-owned query values.
+- Bad pagination input uses a fixed non-reflective400 message. Selected read,
+  key-disappearance, scan/decode/status and key/full-result Close failures use500
+  'extension inventory unavailable'. Rendering failures retain their separate
+  existing sanitized500; post-commit transport errors cannot become500. Existing
+  CSP/no-store/Vary headers apply to errors too. No partial rows or error-to-empty.
+
+#### Narrow service and SQL contract
+
+Introduce ListInventoryPage(ctx, afterKey) returning Items and HasMore, with50 a
+private projection constant. Empty afterKey means first; validate nonempty key
+shape defensively before SQL. Do not change List, Get, scanInstance, status-query
+semantics, API callsites or their existing tests to satisfy paging. A next cursor
+is derived by the HTML layer from the last selected Item.ExtensionID only when
+HasMore; service accepts decoded key values, never raw URLs/SQL fragments.
+
+1. First-page static SQL selects extension_id FROM extension_instances WHERE
+   product=$1 ORDER BY extension_id LIMIT51. Subsequent static SQL adds
+   extension_id>$2 with the SAME column collation/order. Values are parameters;
+   neither cursor nor sort text is SQL source. Scan at most51scalar keys, checking
+   rows.Err and Close before any further query. The51st is existence evidence
+   only: never scanInstance/Get/status it. Save the first50 and HasMore.
+2. If no selected keys, return an empty page after that one successful query.
+   Otherwise select the COMPLETE existing instanceColumns WHERE product=$1 AND
+   extension_id=ANY($2::text[]) ORDER BY extension_id, binding only selected keys.
+   At most50full rows can match the existing unique key. Use current scanInstance,
+   including both metadata passes and configuration decode; no selected-column
+   pruning. Check full selected-key membership/count, rows.Err and Close. A key
+   removed between the two reads fails500 rather than silently dropping/refilling.
+3. Only after complete selected-row decode/close, call current loadSecretStatus
+   once for every selected instance, including empty SecretSlots. Preserve current
+   granted-slot filtering and errors; never query/decode lookahead grants/status.
+   On any returned error, return no usable page. Status helper deferred-Close
+   behavior is unchanged; do not claim newly checked status Close errors.
+   No new transaction, retry or mutation.
+
+Read consistency: the key probe, payload read and per-instance status reads can
+observe different committed states. Replacement at the same extension key may
+show its replacement instance; concurrent payload/status changes remain live
+observations. A removed sentinel can yield a subsequent empty page. A newly
+inserted row before the cursor is not retroactively included; First restarts.
+Future extension-ID renames or out-of-band changes can repeat/omit instances;
+no snapshot claim. Stable constrained datasets remain exhaustively reachable.
+
+Query budget is1(empty) or2+P (P<=50), excluding unchanged auth/runtime-observation
+work; key/result/close errors stop earlier. No COUNT query, sentinel payload,
+full-List materialization, new status aggregation, index or migration. Existing
+UNIQUE(product,extension_id) is the ordering guarantee: duplicate same-product
+IDs must be tested as existing SQL rejection, not fabricated supported ties.
+Supported collation and schema constraints must stay intact. Keyset avoids OFFSET
+prefix discards; it does not force the planner or bound all server tuple visits.
+
+#### HTML, fragments and history
+
+Place a labeled Inventory pages nav INSIDE inventoryRows/#extension-inventory,
+with ordinary First page (when after exists) and Next page (only HasMore) anchors.
+No Previous lookup or page count; browser Back/Forward and First provide return
+navigation. Omit unavailable anchors or use plain explanatory text, never fake
+hrefs/disabled clickable controls. Preserve native focus/underlining/contrast,
+landmarks and document reading order; no autofocus on native page navigation.
+State 'Up to50 entries per page' rather than inventing totals/page numbers.
+
+- First/theme/Next URLs preserve normalized theme; theme and refresh/reload URLs
+  preserve the current after cursor. First removes it. The inventory breadcrumb
+  returns to First with current theme. Detail links and detail/terminal return
+  behavior remain as currently implemented; no returnURL propagation.
+- Empty first page keeps 'No extensions installed.' Empty cursor page instead
+  says no entries after this position and offers First; never implies global
+  emptiness. End pages expose no Next. A selected bad row yields whole-page error,
+  not an isolated card or an unreachable record silently omitted from traversal.
+- Exact HX-Request:true without exact HX-History-Restore-Request:true still returns
+  the existing marker-prefixed inventoryRows, NOW INCLUDING navigation. History
+  restoration still returns a complete document, for first and cursor pages.
+  Full documents contain one region/nav; fragments never duplicate the shell.
+- Leave inventory.js and HTMX config/storage eligibility unchanged. Only the four
+  existing literal first-page URLs may enhance Refresh; cursor URLs intentionally
+  do not load the vendor and use ordinary full navigation/refresh. Direct valid
+  cursor HX callers still get correct fragments. A first-page enhanced refresh
+  swaps rows+nav together, so Next availability cannot remain stale outside the
+  region. Existing failed-refresh/stale/401-403-clearing/marker gates stay intact.
+- All page links remain native even when HTMX is available. No pushState,
+  hx-boost, OOB swap, localStorage, cursor-bearing vendor history slot or new
+  response-HX command. Existing BFCache mitigation and its pre-paint/no-script
+  limitations remain honest. Normal browser Back may show cached history; refresh
+  reauthenticates/reselects and is not a frozen dataset guarantee.
+
+#### Test-first and cost evidence (NOT RUN in this contract unit)
+
+Service SQL fixtures on existing qualified PG16/17:0/1/49/50/51/100/101instances;
+first/middle/end/stale/nonexistent key and complete traversal with exact ID sets.
+Exercise maximum-length/multibyte legal keys and current collation; existing
+same-product duplicate insertion must fail. Prove more-lookahead at exact50/51.
+Put wrong-shape metadata/configuration/array payloads and current-slot infinity
+status at selected versus51st/later positions: off-page data must not be fetched,
+decoded or status-loaded; selected failures retain500/no page. Preserve semantics
+for decodable unknown metadata kinds (no new ValidateMetadata policy). Exercise
+empty-grant query errors, scan/rows/key-and-payload-Close/cancellation errors and deterministic
+key deletion between selection/fetch without sleeps or automatic retry. Compare
+legacy List/API behavior, including their all-row failures; no caller migration.
+
+HTTP/component fixtures: auth-before-parse and service-nil precedence; duplicate,
+empty, malformed, oversized, unknown-version/noncanonical cursor; raw-query cap;
+theme/unknown-key compatibility. Full/HX/exact-header/history-restore/marker,
+no partial200, empty versus stale text and native First/Next/current-page URLs.
+Existing renderer generation/check after actual template work, never hand-edit
+outputs. Browser later: JS-off keyboard complete traversal/Back/Forward/refresh,
+theme on middle pages, selected failure, first-page HX refreshed Next availability,
+cursor-page no vendor/storage activity, and default CSS/fallback behavior.
+
+Performance evidence later uses the admitted equipment/limits, not a new benchmark
+framework: explain/analyze/buffers on actual PG16/17 key and selected-key queries,
+with growing N and first/deep cursors; record plans, returned/visited rows, loops,
+heap/index reads and sort work. Compare legacy versus page query count, transferred
+key/payload/status rows and bytes, allocations and request timings with matched
+fixtures. Separate selected bytes/grants from total N and shared auth/status/render
+cost.50 bounds instance count only; unbounded per-instance bytes/grants, detail
+work and whole-request/Amdahl gates remain OPEN. A sequential plan is evidence to
+review, not permission for an unapproved index/quota or a false DB-work bound.
+
 ### Remaining detail and mutation contract
 
 The required HTML target remains server-rendered Go + templ + Tailwind with HTMX
@@ -323,6 +474,18 @@ lifecycle and health codes, enabled state, timestamps, and audit correlation.
 Secret values live only in a Mail-owned encrypted installation secret store
 that this feature must define and verify before the first extension can be
 enabled; projections contain slot IDs and configured/rotated status only.
+Secret-status reads select the loaded instance ID and its current granted slot
+IDs in SQL, retaining slot ordering and issuing the query even for empty grants.
+Returned status follows grant order; absent slots remain unconfigured. Retired
+rows remain stored for rollback and still block uninstall until confirmed
+all-secret deletion. This narrows transferred/materialized rows, not the number
+of instances, grants, per-instance queries, or database scan work. Encoding the
+text-array parameter adds work and storage proportional to grant bytes; the
+status map contains matching current slots rather than all retained slots.
+SQL-valid retired infinity timestamps, which production does not write, are
+now excluded from time.Time scanning; a current-slot infinity still errors.
+An arbitrary internal argument containing NUL may fail text-array parsing;
+this is not a claim that PostgreSQL jsonb can persist a NUL-bearing grant.
 A metadata secret field uses its exact field name as its granted slot ID; there
 is no separate alias mapping. A required secret field keeps its native required
 constraint until that slot is configured; optional fields remain optional.
@@ -483,3 +646,167 @@ Required tests:
 - Mail cannot enumerate or mutate another product's registry or secrets
 - `git diff --check`
 - `go test ./...`
+
+### Recovery-only detail exception (2026-10-01)
+
+Use UI-only integer-default float64 finite/integral [-2^63,2^63) classification
+before ValidateMetadata. Preserve legacy integral1.0/1e0/null and exact int64
+defaults; do not change global decoding, configuration values or service writes.
+ValidateMetadata cannot restore raw unknown/duplicate keys or predecode bounds.
+Keep invalid metadata out of Fields, including operation errors and post-action
+projection. Dispatch only Disable, secretdelete preview/apply, uninstall
+preview/apply, rollback and outstanding update Apply. Withheld POSTs return200
+with a fixed unavailable alert and no service dispatch. Auth/decode/missing
+statuses remain unchanged; valid configure-preview retains submitted Fields.
+The dedicated scalar DTO excludes metadata/configuration/diffs/secret lists;
+identity/pin/preview checks derive existing contracts, never truncate authority.
+Preserve authenticated CSRF lengths; do not reject raw lifecycle to block recovery.
+Generate the existing detail pair using pinned tools/renderer templ0.3.1020;
+no new generator pair or CSS change. Validation maps/marshal, copies and buffering
+add real unadmitted cost. Native/CSS/performance and cold-review gates stay open.
+
+## PERM-01..06: read-only combined Permissions pager (2026-10-03)
+
+Contract-only addition supersedes the earlier expanded permission-name inventory
+projection and normal read-only detail joins when implemented. All other existing
+contracts/evidence remain scoped to their actual source; this does not certify the
+broader historical requirement for bounded complete detail documents.
+
+### Selection and exact GET contract
+
+1. Preserve current detail headers, path/method guard404, bearer/cookie precedence,
+   actor401/403, nil-service503, then existing service.Get and its missing/decode/
+   status errors. Classify loaded metadata using the current rule. Invalid metadata
+   still renders the same recovery-only document BEFORE new paging validation;
+   no normal Permissions view, counts/list exposure or new recovery route is added.
+2. Only a metadata-valid normal GET enters the new parser. Reject RawQuery longer
+   than4096 bytes before url.ParseQuery allocation. Use error-returning ParseQuery;
+   malformed percent escapes/separators give fixed non-reflective400. Within that
+   bound, unrelated keys remain ignored. Existing theme uses first decoded value:
+   light/dark explicit; absent/unknown becomes system; duplicate theme unchanged.
+3. Reserve only permissions_page: absent means1; decoded duplicate keys (including
+   encoded aliases), explicit empty, sign, whitespace, exponent, non-ASCII digits,
+   zero or leading zero are400. Grammar [1-9][0-9]{0,18}; numeric value must fit
+   positive signed64-bit, otherwise400. Decode percent encoding normally before
+   validation. No extra installed-grant quota or configurable page size.
+4. Obtain category counts from the COMPLETE loaded slices. Check each addition
+   against platform max-int; impossible total overflow fails sanitized500, never
+   wraps or silently caps entries. For total N>0, pages=1+(N-1)/25; N=0 has pages=1.
+   Compare parsed page against pages BEFORE narrowing to int or multiplying.
+   A valid numeric page>pages returns fixed404 'permissions page not found', without
+   redirect, clamping or rendering another page. Get/not-found/read/recovery errors
+   therefore still outrank invalid page input. Ordinary pager400 text is fixed
+   'invalid permissions page query'; existing privacy/CSP headers apply to errors.
+5. Only after page admission compute offset=(page-1)*25, then take=min(25,N-offset).
+   Use remaining counts/subtraction to intersect three lists; never offset+25 or
+   N+24 unchecked. Category order: capabilities, interfaces, granted secret-slot
+   names. Preserve each list's order, duplicate occurrences and values; do not
+   sort, concatenate, deduplicate, filter empty values or mutate the source slices.
+   Render category labels (labeled groups suffice), at most25 entries combined,
+   current page/total pages and explicit empty 'No granted permissions.' on page1.
+   Unavailable Previous/Next are omitted, not fake/disabled clickable anchors.
+
+Every stable valid grant set is reachable through ordinary native Previous/Next;
+this is an index into the current loaded lists, not authority or a snapshot token.
+Concurrent changes can move entries or make a previously valid page404; browser
+Back may show cached content. Restart at page1/current detail to traverse new state.
+No frozen traversal guarantee, silent refill or automatic retry is added.
+
+### URLs, presentation and immutable mutation authority
+
+Inventory displays all three counts including0 plus View permissions. Use existing
+safe detail-ID admission/fallback, normalized current inventory theme and fixed
+#permissions; no raw Host/query or unsafe templ cast. Do not add inventory metadata
+validation to hide counts or invent another recovery route. For invalid metadata,
+that existing detail destination remains recovery-only, even with #permissions.
+Other inventory fields/navigation and full/HX/history/marker behavior stay intact.
+
+Detail pager links use the already-authorized route spelling (not a canonicalized
+replacement Item ID), escaped as existing action URLs; encode query values. Page1
+links omit permissions_page; later pages include one canonical decimal value. Keep
+normalized theme and append #permissions to pager anchors. Normal detail theme
+links preserve current page; their existing native navigation/preview-loss notice
+remains. No new JavaScript, endpoint, HTMX response/header, storage or vendor policy.
+
+**Never replace or slice view.Item.Capabilities/Interfaces/SecretSlots.** The full
+update-preview inputs at extensions_detail.templ:139-141 and complete approval
+PrivilegeDiff/ConfigurationDiff/SecretSlotDiff at155-157 stay unchanged, as do
+UpdateTarget, Fields, CSRF, preview IDs, confirmation and all secret/recovery forms.
+Only the readonly joins at291 and inventory list loops become the display projection.
+Line references name the pre-MVP543 baseline, not generated-line guarantees.
+
+New paging parsing is GET-only. Existing POST ParseForm/body limits/errors remain
+(including its existing malformed-query behavior); pagination cannot affect action
+selection, target identity, preview binding, confirmation, redirects or terminal
+receipts. Existing ActionURL stays detail path+theme ONLY, no page/fragment; normal
+POST responses select display page1 without new request-parameter errors after a
+mutation. Theme navigation still discards displayed previews and reloads stored
+state as documented. Recovery/terminal documents and all withheld surfaces unchanged.
+
+### Finite implementation verification (not run in this unit)
+
+Tests first: empty/25/26/several pages; category boundaries at24/25/26; empty middle
+category, duplicates and escaping; flatten traversed labeled entries and compare
+exactly once with concatenated ORIGINAL fixture lists. This test oracle may join
+lists; production render selection must not copy/sort them all. Exercise first/last
+omitted links, malformed/duplicate/encoded/4096/4097/19-digit/overflow input, valid
+beyond-end404, empty page1/page2, auth/nil/Get-error/recovery precedence and themes.
+
+Check complete update-form values and ALL complete approval diffs with >25 entries
+across page changes and POST success/error; preserve existing action URL, CSRF,
+actor/target/revision/expiry/confirmation, secret/redaction and recovery tests.
+Assert detail HX requests still full documents and inventory full/fragment counts/
+links agree without broadening vendor/storage eligibility. Add source-bound normal
+and focused race/vet checks for affected packages; reuse unchanged accepted proof
+with explicit dependency/identity bridges, not blanket fresh-suite claims.
+
+Regenerate ONLY with existing generate-extension-inventory.sh --write/--write/--check
+and pinned equipment, proving identical two writes. No generated-file hand editing
+or second renderer pair. Adapt ONE existing native browser fixture mode for actual
+keyboard/no-JS View permissions/Next/Previous/theme/Back/Forward and full-form/state
+oracles. Use existing qualified development/VM, no acquisition or production DB.
+Aim100% changed-helper statement coverage where practical; name real gaps rather
+than claim exhaustive behavior. Performance review is proportional display/source
+cost review and available focused observations, not a benchmark campaign or an
+unverified faster claim. Full forms, status lists and backend materialization remain
+unbounded by this MVP; missing performance measurements are not newly passed.
+
+### PERM scoped verification checkpoint (2026-10-03; uncommitted)
+
+Helper missing-symbol compile RED preceded helper34PASS. Corrected routed/component
+behavioral RED37RUN/35PASS/2FAIL preceded UI implementation; UI GREEN37PASS followed
+actual pinned write/write/check with equal generated identities. Affected HTTPUI
+normal tests pass on PG160014 and170010:316RUN/314PASS/2existingSKIP each. Skips are
+TestInventoryGeneratorContract (separate genuine generation performed) and
+TestInventoryRenderResourceSamples (no performance campaign). Vet passes.
+Final strengthened focused PG16/PG17/race checks each38PASS; no skips/race diagnostics.
+Parser and both URL helpers have100% statement coverage; window95.8% excludes its
+unconstructible safe-slice total-overflow guard, not covered with unsafe forged
+headers. Generated permission component70% includes unexercised generated error
+paths; no exhaustive behavioral/coverage claim.
+
+Tests retain full arrays through GET pages and real POST preview/error paths;
+exact complete capability55-entry and secret-slot56-entry diffs are checked.
+All three30-entry diff arrays are checked at component level, including error-view
+flags. Existing HTTP update-preview keeps metadata unchanged, so schema diff is
+empty. Existing service PrivilegeDiff describes capabilities only, not interfaces;
+interface form/target behavior is unchanged, not newly advertised as interface-
+diff coverage. The later assertion corrections changed tests only, not backend policy.
+
+One actual Chromium153/PG16 workflow passed with scripts disabled: three26-count
+inventory labels, View permissions,25/25/25/3 entries, native Tab/Enter and page/theme
+navigation, native history Back/Forward (CDP history entry, not keyboard shortcut),
+full update inputs and blank password fields. It observed9 authenticated document
+GETs+1unauthenticated401;0POST/bearer/SQL/runtime/receiver changes during its readonly
+interval. Login and grant setup are synthetic; no live identity/cross-engine/CSS-off
+or whole-accessibility claim. Browser/HTTP drained; standard testpg ignored-close/
+Wait limitations remain, even though namespace and external census were empty.
+
+All failed attempts remain in the ignored implementation packet: test-double compile
+mistake, an admitted stage with no selected command (its zero exit is NOT PASS),
+pre-existing projection expectations and test-oracle assumptions. Corrections used
+new stage IDs. Later changes only strengthened HTTP *_test.go assertions, which are
+not linked into the cmd browser binary; immutable production/generated/driver hashes
+bridge the successful native proof, without a second browser or blind full rerun.
+Evidence: .artifacts/gotth-mail-permissions-pagination-mvp-20261003/implementation.
+Independent reviews and parent admission still required; no commit or deployment.

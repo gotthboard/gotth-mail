@@ -119,15 +119,24 @@ packages. Runtime arguments cannot select another role.
   and proxies to exact private backends using one configured PROXY protocol.
 - The Postfix image contains Postfix and the Mail queue/policy helper. It owns
   private SMTP/queue processing only and receives authenticated/provenance
-  state from the front and control plane. The final policy pipe runs as the
+  state from the front and control plane. The final policy path runs as the
   unprivileged `gotth` UID/GID that owns its mounted helper credential, after a
   startup preflight under that exact identity. Queue inspection stays behind
   the separately authenticated root helper because Postfix pipe(8) deliberately
-  clears supplementary groups. Approved external mail is
-  requeued through a loopback-only SMTP listener with a one-message
-  `smtp:` content-filter override, so Postfix retains its native MX delivery
-  and retry behavior without exposing a policy-bypass listener to the private
-  container network.
+  clears supplementary groups. The former loopback private-SMTP reinjection
+  shape is rejected for final enforcement: RED evidence shows its second queue
+  can retry after revocation without another policy call. The final Postfix queue
+  remains sole post-bind body custodian. Before delivery, bind the immutable
+  complete original final-envelope recipient set and expansion provenance to its
+  queue ID; the current qmgr batch is not authority. A thin delivery-agent gate
+  checks that full set against current policy before external DNS/connect for
+  each request, then delegates
+  allowed requests through Postfix deliver_pass to stock smtp. It neither performs
+  SMTP nor reinjects. Forbiddance records hold_required and tempfails until a
+  privileged reconciler holds/verifies the original queue; later batches remain
+  denied and release rechecks policy. Non-null forwards use the configured local
+  forwarding identity as envelope sender and local DSN destination; remote authors
+  are never envelope authority, and null-sender triggers stay bounce-suppressed.
 - The Dovecot image contains Dovecot and Pigeonhole. It owns private mailbox,
   passdb/userdb, quota, and Sieve processing only.
 - The Rspamd image contains Rspamd. It owns private milter/controller workers

@@ -29,6 +29,7 @@ import (
 )
 
 type Server struct {
+	CurrentIssuer        string
 	Authz                authz.Authorizer
 	Config               config.Config
 	Audit                *audit.MemoryWriter
@@ -396,7 +397,7 @@ func (s Server) Handler() http.Handler {
 			cert = diag.CertCheck{Status: diag.CertUnknown, Reason: "not_configured"}
 		}
 		webmailOK := s.WebmailOK
-		report := ops.Doctor(r.Context(), ops.DoctorInput{ConfigOK: true, DatabaseOK: true, AuthentikOK: true, WebmailOK: webmailOK, Daemon: s.Daemon, DNSChecks: s.DNSChecks, CertCheck: cert, PluginRegistry: s.Plugins, CorrelationID: r.Header.Get("X-Correlation-ID")})
+		report := ops.Doctor(r.Context(), ops.DoctorInput{Identity: &ops.IdentityDiagnostic{DB: s.AuditDB, CurrentIssuer: s.CurrentIssuer}, ConfigOK: true, DatabaseOK: s.AuditDB != nil, AuthentikOK: s.Identity != nil, WebmailOK: webmailOK, Daemon: s.Daemon, DNSChecks: s.DNSChecks, CertCheck: cert, PluginRegistry: s.Plugins, CorrelationID: r.Header.Get("X-Correlation-ID")})
 		writeJSON(w, report)
 	})
 	mux.HandleFunc("/api/v1/debug/lookup", func(w http.ResponseWriter, r *http.Request) {

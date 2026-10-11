@@ -115,9 +115,15 @@ type expansionAlias struct {
 // resolveExpansionDeliveries proves every original-to-final pair against the
 // complete reachable alias subgraph. Cycles, excessive fan-out, and omitted
 // alternate branches fail closed.
-// Complexity: process time O(a*t+d*(a+t)), Omega(d); database time O(h*a log N);
-// auxiliary space O(a*t+f), where a is aliases, t targets, d delivery pairs,
-// h graph depth, f fan-out, and N authoritative rows.
+// Complexity: expected process time O(d+C+L+W+P+s*log(s+1)), Omega(d)
+// after successful normalization; tight Theta is not established. Auxiliary
+// space O(d+B+ML+MW+s), Omega(d) after successful normalization; tight Theta
+// is not established. Here d is pairs, C normalization CPU work, B retained
+// address bytes, L/ML loader CPU/peak storage, W/MW total delegated walk CPU/
+// maximum walk storage, P merged per-pair source entries, and s unique sources.
+// Database work is the delegated loader queries/rows, not assumed logarithmic.
+// Bounds assume expected constant-time Go map operations. Walks may revisit
+// shared DAG branches. Equal pairs add one loaded-map lookup, no SQL or walk.
 func resolveExpansionDeliveries(ctx context.Context, db *sql.DB, deliveries []QueueDelivery) ([]QueueSource, error) {
 	originals := make([]string, 0, len(deliveries))
 	canonical := make([]QueueDelivery, len(deliveries))
@@ -140,6 +146,9 @@ func resolveExpansionDeliveries(ctx context.Context, db *sql.DB, deliveries []Qu
 	sourceSet := map[string]QueueSource{}
 	for _, delivery := range canonical {
 		if delivery.OriginalRecipient == delivery.Recipient {
+			if _, rooted := aliases[delivery.OriginalRecipient]; rooted {
+				return nil, errors.New("equal expanded recipient is not terminal delivery")
+			}
 			continue
 		}
 		leaves := map[string]bool{}

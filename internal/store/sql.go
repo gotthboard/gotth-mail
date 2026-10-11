@@ -170,3 +170,28 @@ func (r *Runner) mustMigrations() []Migration {
 	}
 	return r.Applied
 }
+
+// ValidateCurrentSQL only reads the current ledger in the caller's transaction.
+// Caller owns namespace/RLS policy, locks and rollback. Unlike MigrateSQL this
+// requires every registered upgrade and never bootstraps or applies anything.
+// Complexity: L ledger/registry bytes; time O(L log L+Q), Omega(L), auxiliary
+// O(L+S), Omega(L); Q/S delegated SQL; no tight bound for delegated costs.
+func ValidateCurrentSQL(ctx context.Context, tx *sql.Tx) error {
+	if tx == nil {
+		return errors.New("current schema transaction is required")
+	}
+	ledger, err := readMigrationLedger(ctx, tx)
+	if err != nil {
+		return err
+	}
+	base := (&Runner{}).mustMigrations()
+	if err = validateMigrationLedger(ledger, base, upgradeMigrations); err != nil {
+		return err
+	}
+	for _, m := range upgradeMigrations {
+		if _, ok := ledger[m.Version]; !ok {
+			return errors.New("current schema upgrade is missing")
+		}
+	}
+	return nil
+}

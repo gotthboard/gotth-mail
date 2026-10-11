@@ -123,6 +123,42 @@ Requirements:
   enter the OIDC application. It cannot create `global_admin`,
   `domain_manager`, or `scoped_domain_access` authority.
 
+### Durable Group-to-role projection (planned)
+
+The planned v2.identity-provisioning.group-role-projection child supplies these
+requirements; contract admission is not implementation or live admission.
+
+- **IDP-GROUP-001 — exact authority:** operator preview/confirm maps one
+  configured issuer, actor-derived SCIM scope and opaque Group ID to role/domain.
+  No name, email, token claim or application/chat group grants authority.
+  Unmapped Groups remain non-authoritative.
+- **IDP-GROUP-002 — ownership:** grant only to an already verified identity
+  whose mailbox UUID owns that exact same-scope SCIM User, with externalId equal
+  to subject. Duplicate subjects elsewhere cannot grant. Provision-before-login
+  converges after verified OIDC binding; no fabricated identity.
+- **IDP-GROUP-003 — provenance:** operator and each Group own separate origins
+  of one effective binding. Removal preserves other origins and binding UUID.
+  Existing operator flags remain; preview/digest/result/audit disclose origins
+  and effective authority after mutation.
+- **IDP-GROUP-004 — atomic lifecycle:** membership, origin, role, revision and
+  success audit commit together. SCIM disable/delete revokes mailbox sessions
+  atomically; re-enable never revives old sessions. No nested transaction,
+  callback replay or automatic mutation retry.
+- **IDP-GROUP-005 — configured issuer:** admission, projection and Group reads
+  share the authoritative normalized runtime issuer, including restart.
+  Protected deployment input, not supplied --issuer or YAML BaseURL, establishes
+  authority. Missing issuer grants no Group authority; issuer change makes old
+  Group origins ineffective without changing unrelated operator roles.
+- **IDP-GROUP-006 — recovery:** fence old readers, writers and CLIs before
+  migration. Preserve operator grants and migration/audit history;
+  feature-disable is not binary/schema rollback. Live changes need approval.
+- **IDP-GROUP-007 — completion:** the admitted 2026-10-03 first slice was
+  domain_manager only. All three roles were separately admitted on 2026-10-03.
+  The bounded local profile/doctor unit still requires independent admission;
+  external profile correlation and live exact-provider grant/revoke evidence
+  remain completion gates. Static simulator tests
+  and operator grants do not satisfy this capability.
+
 ### Permission simulator full coverage
 
 - Explain actor/action/resource decisions.
@@ -268,3 +304,35 @@ Requirements:
 - A bound OIDC session may list, create, and revoke app passwords only for its
   own active mailbox. Browser mutations require the session cookie plus a
   separate CSRF secret; neither value is accepted as an IMAP/SMTP credential.
+
+## IDP-GROUP-007 all-role unit — 2026-10-03
+
+Global_admin requires NULL target domain; the confirmed CLI MUST omit --domain.
+Domain_manager and scoped_domain_access require one exact known enabled target
+on admit. No selectors, new permissions or implicit grants are introduced. The
+three existing authz roles remain authoritative; API session actors stay mailbox-
+only. All-role projection/admission is separately reviewed; profile/doctor/live
+proof and full feature completion remain open. See the identity implementation
+spec for nullable tuple, provenance, confirmation and test requirements.
+
+### Local doctor evidence boundary — 2026-10-03
+
+IDP-GROUP-007 distinguishes artifact consistency, local durable all-role mapping
+health, and external provider/profile/live proof. Names/claims/static Verified or
+operator-only grants cannot satisfy local durable coverage. Local OK is not live
+verification; no-config offline doctor compatibility and public identifier/error
+redaction are required. External proof remains a separately authorized gate.
+
+### IDP-GROUP-006 Phase A: confirmed global withdrawal
+One local confirmed transaction withdraws ALL issuers/scopes/all three roles.
+Preserve operator bits/UUIDs, mapping/tombstone rows, audit and ledger history.
+True no-op writes nothing; corruption requires separate repair. Phase A does NOT
+admit a live fence, compatible binary pair, schema rollback or snapshot restore.
+
+## IDP-GROUP-006 assigned Phase B — owned qualification (2026-10-04)
+Qualify actual current and immutable schema-aware rollback service+CLI pairs only
+after atomic Group withdrawal. Actual authenticated owned PostgreSQL credentials,
+legacy changing-command interruption, persistent post-resume denial, process restart,
+role/session/SCIM/operator behavior and isolated backup/restore are required. Phase A
+is admitted; B is not admitted until fresh parent reviews. No production code change,
+live/provider/host credential or Phase C authority is assigned.

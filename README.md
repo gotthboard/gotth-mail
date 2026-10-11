@@ -80,3 +80,10 @@ the complete stack is admitted.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## V2 extension deployment roadmap
+
+V2 requires one container per extension, independently started and stopped
+through Docker Compose, with checkbox-based load/unload controls in host
+administration pages. See the [V2 extension-container requirement](docs/roadmap-v2-extension-containers.md).
+This is a future requirement, not a claim of current implementation.

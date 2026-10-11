@@ -354,14 +354,26 @@ func copyQueueSources(ctx context.Context, tx *sql.Tx, record QueueRecord) error
 
 // loadQueueRecord reads one parent and its bounded child sets, then validates
 // canonical forms and stored digests before returning them.
-// Complexity: time O(r+s+b), Omega(r+s), tight Theta(r+s+b); auxiliary space
-// O(r+s+b), Omega(r+s), with the bounded variables defined by Register.
+// Complexity: time O(r+s+b+Q), Omega(r+s), tight Theta is not established because Q is delegated SQL work; auxiliary space O(r+s+b), Omega(r+s), tight Theta(r+s+b), where r/s/b are the bounded child rows and bytes loaded.
 func loadQueueRecord(ctx context.Context, queryer queueQueryer, queueID string) (QueueRecord, error) {
+	return loadQueueRecordWithLock(ctx, queryer, queueID, "")
+}
+
+// loadQueueRecordForShare reads one queue record while holding a parent-row SHARE lock in the caller transaction.
+// Complexity: time O(r+s+b+Q), Omega(r+s), tight Theta is not established because Q is delegated SQL/lock work; auxiliary space O(r+s+b), Omega(r+s), tight Theta(r+s+b), with Register variables.
+func loadQueueRecordForShare(ctx context.Context, queryer queueQueryer, queueID string) (QueueRecord, error) {
+	return loadQueueRecordWithLock(ctx, queryer, queueID, " FOR SHARE")
+}
+
+// loadQueueRecordWithLock reads one queue parent, optionally adding a trusted internal row-lock clause, then loads child sets and recomputes digests.
+// Complexity: time O(r+s+b+Q), Omega(r+s), tight Theta is not established because Q includes delegated SQL and optional lock wait; auxiliary space O(r+s+b), Omega(r+s), tight Theta(r+s+b), where r/s/b are the bounded child rows and bytes loaded.
+func loadQueueRecordWithLock(ctx context.Context, queryer queueQueryer, queueID string, lockClause string) (QueueRecord, error) {
 	var record QueueRecord
 	var reason, lastError sql.NullString
 	var encodedRevisions []byte
 	var attempts int64
-	if err := queryer.QueryRowContext(ctx, `SELECT queue_id,arrival_fingerprint,envelope_sender,recipient_set_digest,source_set_digest,hold_state,policy_reason,policy_revisions_json,reconciliation_attempts,last_error_code,first_seen_at,updated_at FROM outbound_queue_messages WHERE queue_id=$1`, queueID).Scan(&record.QueueID, &record.ArrivalFingerprint, &record.EnvelopeSender, &record.RecipientSetDigest, &record.SourceSetDigest, &record.HoldState, &reason, &encodedRevisions, &attempts, &lastError, &record.FirstSeenAt, &record.UpdatedAt); err != nil {
+	query := `SELECT queue_id,arrival_fingerprint,envelope_sender,recipient_set_digest,source_set_digest,hold_state,policy_reason,policy_revisions_json,reconciliation_attempts,last_error_code,first_seen_at,updated_at FROM outbound_queue_messages WHERE queue_id=$1` + lockClause
+	if err := queryer.QueryRowContext(ctx, query, queueID).Scan(&record.QueueID, &record.ArrivalFingerprint, &record.EnvelopeSender, &record.RecipientSetDigest, &record.SourceSetDigest, &record.HoldState, &reason, &encodedRevisions, &attempts, &lastError, &record.FirstSeenAt, &record.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return QueueRecord{}, errors.New("outbound queue record not found")
 		}

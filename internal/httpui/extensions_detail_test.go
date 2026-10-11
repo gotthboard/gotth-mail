@@ -246,17 +246,17 @@ func TestExtensionUninstallTerminalReceipt(t *testing.T) {
 	}
 	path := "/admin/extensions/" + a + "?theme=dark&unrelated=QUERY-CANARY"
 	old := req("GET", path, nil)
-	if old.Code != 200 || !strings.Contains(old.Body.String(), "<style>") || old.Header().Get("Content-Security-Policy") != "" {
-		t.Fatal("legacy GET changed")
+	if old.Code != 200 || strings.Contains(old.Body.String(), "<style") || !strings.Contains(old.Body.String(), "/admin/extensions/assets/detail.css") || old.Header().Get("Content-Security-Policy") == "" {
+		t.Fatal("external detail GET missing")
 	}
 	pr := req("POST", path, url.Values{"action": {"uninstall-preview"}})
-	if pr.Code != 200 || pr.Header().Get("Content-Security-Policy") != "" {
-		t.Fatal("preview not legacy")
+	if pr.Code != 200 || pr.Header().Get("Content-Security-Policy") == "" {
+		t.Fatal("preview missing detail security boundary")
 	}
 	form, confirmation := configurationActionForm(t, pr.Body.String(), "uninstall-apply")
 	form.Set("confirmation", "wrong")
 	denied := req("POST", path, form)
-	if denied.Code != 200 || denied.Header().Get("Content-Security-Policy") != "" || strings.Contains(denied.Body.String(), ">Extension uninstalled</h1>") {
+	if denied.Code != 200 || denied.Header().Get("Content-Security-Policy") == "" || strings.Contains(denied.Body.String(), ">Extension uninstalled</h1>") {
 		t.Fatal("denial selected terminal")
 	}
 	form.Set("confirmation", confirmation)
@@ -295,5 +295,21 @@ func TestExtensionUninstallTerminalReceipt(t *testing.T) {
 	}
 	if survivor() != before || runtime.calls != 0 {
 		t.Fatal("post-replay survivor/runtime changed")
+	}
+}
+
+// This source/served-asset contract complements, not replaces, native geometry.
+func TestExtensionDetailSingleColumnContract(t *testing.T) {
+	mux := http.NewServeMux()
+	registerExtensionUI(mux, nil, nil, nil, nil, nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/extensions/assets/detail.css", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "main {\n  grid-template-columns: minmax(0, 1fr);\n}") {
+		t.Fatal("detail shell lacks zero-minimum single grid track")
+	}
+	for _, forbidden := range []string{"overflow: hidden", "overflow: clip", "text-overflow: ellipsis"} {
+		if strings.Contains(w.Body.String(), forbidden) {
+			t.Fatal("detail content clipping is not a reflow fix")
+		}
 	}
 }

@@ -1,9 +1,12 @@
 package httpui
 
+import "strconv"
+
 // Complexity (successful rendering): time O(N+B), Omega(N+B), Theta(N+B),
 // auxiliary O(B), Omega(1); tight auxiliary bound depends on templ buffering.
-// N rows, B projected/escaped bytes including grant-list entries; writer costs
-// delegated. No fixed row/byte bound or extra projection materialization.
+// N rows, B projected/escaped bytes including counts and navigation URLs; writer
+// costs delegated. Handler selects<=50 rows, not bounded per-row bytes/grants.
+// Direct component callers retain their supplied row population.
 templ inventoryDocument(v inventoryView) {
  <!DOCTYPE html>
  <html lang="en" data-theme={ inventoryTheme(v.Theme) }>
@@ -18,16 +21,16 @@ templ inventoryDocument(v inventoryView) {
   </head>
   <body class="bg-bg text-ink font-sans p-4 sm:p-6" hx-history="false">
    <main class="mx-auto max-w-6xl min-w-0 grid gap-4">
-    <nav aria-label="Breadcrumb"><a href="/">GOTTH Mail</a> / <a href="/admin/extensions">Extensions</a></nav>
+    <nav aria-label="Breadcrumb"><a href="/">GOTTH Mail</a> / <a href={ inventoryPageURL(v.Theme, "") }>Extensions</a></nav>
     <header><h1 class="text-2xl font-bold">Extensions</h1><p>Mail-owned extension inventory. Pinned artifacts identify installed code; no semantic version is inferred.</p></header>
     <nav aria-label="Inventory theme" class="flex flex-wrap gap-4">
-     <a href="/admin/extensions?theme=system">System theme</a>
-     <a href="/admin/extensions?theme=light">Light theme</a>
-     <a href="/admin/extensions?theme=dark">Dark theme</a>
+     <a href={ inventoryPageURL("system", v.AfterCursor) }>System theme</a>
+     <a href={ inventoryPageURL("light", v.AfterCursor) }>Light theme</a>
+     <a href={ inventoryPageURL("dark", v.AfterCursor) }>Dark theme</a>
     </nav>
     <div class="flex flex-wrap gap-4">
-     <a id="inventory-refresh" href={ "/admin/extensions?theme=" + inventoryTheme(v.Theme) }>Refresh inventory</a>
-     <a id="inventory-reload" href={ "/admin/extensions?theme=" + inventoryTheme(v.Theme) } hidden>Reload full inventory</a>
+     <a id="inventory-refresh" href={ inventoryPageURL(v.Theme, v.AfterCursor) }>Refresh inventory</a>
+     <a id="inventory-reload" href={ inventoryPageURL(v.Theme, v.AfterCursor) } hidden>Reload full inventory</a>
     </div>
     <p id="inventory-status" role="status" aria-live="polite">Inventory ready.</p>
     <p id="inventory-error" role="alert"></p>
@@ -41,13 +44,29 @@ templ inventoryDocument(v inventoryView) {
 
 // Complexity: time O(N+B), Omega(N+B), Theta(N+B) on successful render;
 // auxiliary O(B), Omega(1), tight bound depends on delegated templ buffering.
-// N instances; B escaped projection/list bytes. No queries, secret reads or cap.
+// N supplied instances; B escaped scalar/count/navigation bytes. No queries
+// or secret reads; handler row limit does not bound per-row bytes or direct callers.
 templ inventoryRows(v inventoryView) {
  if v.BlockedReason != "" {
   <p role="alert" class="text-danger break-words">Runtime blocked: { v.BlockedReason }</p>
  }
+ <nav aria-label="Inventory pages" class="flex flex-wrap gap-4">
+  <p>Up to 50 entries per page.</p>
+  if v.AfterCursor != "" {
+   <a id="inventory-first" href={ inventoryPageURL(v.Theme, "") }>First page</a>
+  }
+  if v.NextCursor != "" {
+   <a id="inventory-next" href={ inventoryPageURL(v.Theme, v.NextCursor) }>Next page</a>
+  } else if len(v.Items) != 0 {
+   <span>End of inventory.</span>
+  }
+ </nav>
  if len(v.Items) == 0 {
-  <p>No extensions installed.</p>
+  if v.AfterCursor == "" {
+   <p>No extensions installed.</p>
+  } else {
+   <p>No entries after this position.</p>
+  }
  }
  <div class="grid gap-4 lg:grid-cols-2">
   for _, item := range v.Items {
@@ -67,33 +86,10 @@ templ inventoryRows(v inventoryView) {
  Disabled
  }
 </dd></div>
-     <div><dt class="font-semibold">Capabilities</dt><dd class="m-0"><ul class="pl-5 break-words">
- for _, value := range item.Capabilities {
- <li>{ value }</li>
- }
-</ul>
- if len(item.Capabilities)==0 {
- None
- }
-</dd></div>
-     <div><dt class="font-semibold">Interfaces</dt><dd class="m-0"><ul class="pl-5 break-words">
- for _, value := range item.Interfaces {
- <li>{ value }</li>
- }
-</ul>
- if len(item.Interfaces)==0 {
- None
- }
-</dd></div>
-     <div><dt class="font-semibold">Granted secret slots (names only)</dt><dd class="m-0"><ul class="pl-5 break-words">
- for _, value := range item.SecretSlots {
- <li>{ value }</li>
- }
-</ul>
- if len(item.SecretSlots)==0 {
- None
- }
-</dd></div>
+     <div><dt class="font-semibold">Capabilities</dt><dd class="m-0" data-permission-count="capabilities">{ strconv.Itoa(len(item.Capabilities)) }</dd></div>
+     <div><dt class="font-semibold">Interfaces</dt><dd class="m-0" data-permission-count="interfaces">{ strconv.Itoa(len(item.Interfaces)) }</dd></div>
+     <div><dt class="font-semibold">Granted secret slots (names only)</dt><dd class="m-0" data-permission-count="secret_slots">{ strconv.Itoa(len(item.SecretSlots)) }</dd></div>
+     <div><dt class="font-semibold">Permissions</dt><dd class="m-0"><a data-permissions-link="true" href={ inventoryPermissionsURL(item.InstanceID, v.Theme) }>View permissions</a></dd></div>
      <div><dt class="font-semibold">Available update</dt><dd class="m-0 break-all">
  if item.AvailableUpdate != "" {
  <code>{ item.AvailableUpdate }</code>

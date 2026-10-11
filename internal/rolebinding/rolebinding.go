@@ -42,12 +42,15 @@ type Request struct {
 }
 
 type Plan struct {
-	PlanID     string `json:"plan_id"`
-	IdentityID string `json:"identity_id"`
-	Mailbox    string `json:"mailbox"`
-	Role       string `json:"role"`
-	Domain     string `json:"domain,omitempty"`
-	Operation  string `json:"operation"`
+	PlanID           string `json:"plan_id"`
+	IdentityID       string `json:"identity_id"`
+	Mailbox          string `json:"mailbox"`
+	Role             string `json:"role"`
+	Domain           string `json:"domain,omitempty"`
+	Operation        string `json:"operation"`
+	OperatorOwned    bool   `json:"operator_owned"`
+	GroupSourceCount int    `json:"group_source_count"`
+	EffectiveAfter   bool   `json:"effective_after"`
 }
 
 type Result struct {
@@ -56,9 +59,10 @@ type Result struct {
 }
 
 type Service struct {
-	DB      *sql.DB
-	Now     func() time.Time
-	Entropy io.Reader
+	DB            *sql.DB
+	CurrentIssuer string
+	Now           func() time.Time
+	Entropy       io.Reader
 }
 
 type state struct {
@@ -66,12 +70,31 @@ type state struct {
 	mailboxEnabled, mailboxDomainEnabled, targetDomainEnabled bool
 	bindingID                                                 string
 	bindingUpdated                                            time.Time
+	operatorOwned                                             bool
+	authorityRevision                                         int64
+	currentIssuer                                             string
+	sources                                                   []groupSource
+}
+
+type groupSource struct {
+	ID             string
+	Revision       int64
+	Issuer         string
+	Enabled        bool
+	Deleted        bool
+	MatchesBinding bool
 }
 
 type queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
+// Preview reads one coherent authority snapshot without mutation.
+// Complexity: successful time O(B+Q), Omega(B+Q), Theta(B+Q); auxiliary
+// space O(B+S), Omega(B), no tight bound for delegated SQL space S. B is
+// request/source encoded bytes (including fixed state); Q is up to four indexed
+// reads plus transaction cost. Early errors have Omega(1), no uniform tight bound.
 func (service Service) Preview(ctx context.Context, request Request) (Plan, error) {
 	if service.DB == nil {
 		return Plan{}, errors.New("role-binding database is unavailable")
@@ -80,13 +103,32 @@ func (service Service) Preview(ctx context.Context, request Request) (Plan, erro
 	if err != nil {
 		return Plan{}, err
 	}
-	current, err := load(ctx, service.DB, request, false)
+	tx, err := service.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return Plan{}, err
 	}
-	return buildPlan(request, current)
+	defer tx.Rollback()
+	current, err := load(ctx, tx, request, false)
+	if err != nil {
+		return Plan{}, err
+	}
+	current.currentIssuer = service.CurrentIssuer
+	plan, err := buildPlan(request, current)
+	if err != nil {
+		return Plan{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Plan{}, err
+	}
+	return plan, nil
 }
 
+// Apply changes only the operator origin, once, with its audit in one transaction.
+// Complexity: successful time O(B+Q+W), Omega(B+Q+W), Theta(B+Q+W); auxiliary
+// space O(B+S), Omega(B), no tight bound for delegated SQL space S. B is encoded
+// request/source bytes; Q is snapshot/lock cost and W mutation/audit/commit cost.
+// Contention and database work are included symbolically; no retry or network.
+// Early errors have Omega(1) time/space, no uniform tight time bound.
 func (service Service) Apply(ctx context.Context, request Request, confirmation string) (Result, error) {
 	if service.DB == nil {
 		return Result{}, errors.New("role-binding database is unavailable")
@@ -104,6 +146,7 @@ func (service Service) Apply(ctx context.Context, request Request, confirmation 
 	if err != nil {
 		return Result{}, err
 	}
+	current.currentIssuer = service.CurrentIssuer
 	plan, err := buildPlan(request, current)
 	if err != nil {
 		return Result{}, err
@@ -112,13 +155,16 @@ func (service Service) Apply(ctx context.Context, request Request, confirmation 
 		return Result{}, errors.New("confirmation digest does not match current role-binding state")
 	}
 	if plan.Operation == "unchanged" {
+		if err := tx.Commit(); err != nil {
+			return Result{}, err
+		}
 		return Result{Plan: plan, Changed: false}, nil
 	}
 	now := time.Now().UTC()
 	if service.Now != nil {
 		now = service.Now().UTC()
 	}
-	if plan.Operation == OperationGrant {
+	if plan.Operation == OperationGrant && current.bindingID == "" {
 		id, err := randomUUID(service.Entropy)
 		if err != nil {
 			return Result{}, err
@@ -127,21 +173,26 @@ func (service Service) Apply(ctx context.Context, request Request, confirmation 
 		if current.domainID != "" {
 			domain = current.domainID
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO role_bindings(id,identity_ref_id,role,domain_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$5)`, id, current.identityID, request.Role, domain, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO role_bindings(id,identity_ref_id,role,domain_id,operator_owned,created_at,updated_at) VALUES ($1,$2,$3,$4,TRUE,$5,$5)`, id, current.identityID, request.Role, domain, now)
 		if err != nil {
 			return Result{}, err
 		}
 	} else {
-		result, err := tx.ExecContext(ctx, `DELETE FROM role_bindings WHERE id=$1 AND identity_ref_id=$2`, current.bindingID, current.identityID)
+		result, err := tx.ExecContext(ctx, `UPDATE role_bindings SET operator_owned=$3, authority_revision=authority_revision+1, updated_at=$4 WHERE id=$1 AND identity_ref_id=$2`, current.bindingID, current.identityID, plan.Operation == OperationGrant, now)
 		if err != nil {
 			return Result{}, err
 		}
 		affected, err := result.RowsAffected()
 		if err != nil || affected != 1 {
-			return Result{}, errors.New("role-binding revoke did not affect one exact row")
+			return Result{}, errors.New("role-binding origin mutation did not affect one exact row")
 		}
 	}
-	redacted := map[string]any{"role": request.Role}
+	if plan.Operation == OperationRevoke {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM role_bindings WHERE id=$1 AND NOT operator_owned AND NOT EXISTS (SELECT 1 FROM role_binding_group_sources s WHERE s.binding_id=role_bindings.id)`, current.bindingID); err != nil {
+			return Result{}, err
+		}
+	}
+	redacted := map[string]any{"role": request.Role, "operator_owned_after": plan.Operation == OperationGrant, "operator_owned_before": current.operatorOwned, "group_source_count": plan.GroupSourceCount, "effective_after": plan.EffectiveAfter}
 	if request.Domain != "" {
 		redacted["domain"] = request.Domain
 	}
@@ -165,6 +216,11 @@ func (service Service) Apply(ctx context.Context, request Request, confirmation 
 	return Result{Plan: plan, Changed: true}, nil
 }
 
+// load reads exact identity/domain/binding and sorted independent origins.
+// Complexity: time O(B+Q), Omega(B+Q), Theta(B+Q) on success; auxiliary
+// space O(B+S), Omega(B), tight Theta not established for database space S.
+// B is returned origin bytes (including fixed state); Q includes indexed lookup,
+// sort and lock costs. Early errors have Omega(1), no uniform tight time bound.
 func load(ctx context.Context, database queryer, request Request, lock bool) (state, error) {
 	query := `SELECT ir.id::text, lower(m.local_part || '@' || md.name), m.enabled, md.enabled
 		FROM identity_refs ir
@@ -197,7 +253,7 @@ func load(ctx context.Context, database queryer, request Request, lock bool) (st
 	if request.Operation == OperationGrant && (!current.mailboxEnabled || !current.mailboxDomainEnabled || !current.targetDomainEnabled) {
 		return state{}, errors.New("role binding cannot be granted for disabled state")
 	}
-	bindingQuery := `SELECT id::text, updated_at FROM role_bindings WHERE identity_ref_id=$1 AND role=$2 AND domain_id IS NOT DISTINCT FROM $3::uuid`
+	bindingQuery := `SELECT id::text, updated_at, operator_owned, authority_revision FROM role_bindings WHERE identity_ref_id=$1 AND role=$2 AND domain_id IS NOT DISTINCT FROM $3::uuid`
 	if lock {
 		bindingQuery += ` FOR UPDATE`
 	}
@@ -205,22 +261,62 @@ func load(ctx context.Context, database queryer, request Request, lock bool) (st
 	if current.domainID != "" {
 		domain = current.domainID
 	}
-	err := database.QueryRowContext(ctx, bindingQuery, current.identityID, request.Role, domain).Scan(&current.bindingID, &current.bindingUpdated)
+	err := database.QueryRowContext(ctx, bindingQuery, current.identityID, request.Role, domain).Scan(&current.bindingID, &current.bindingUpdated, &current.operatorOwned, &current.authorityRevision)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return state{}, err
+	}
+	if current.bindingID != "" {
+		rows, err := database.QueryContext(ctx, `SELECT m.id::text,m.revision,m.issuer,m.enabled,m.group_deleted,(m.role=rb.role AND m.domain_id IS NOT DISTINCT FROM rb.domain_id) FROM role_binding_group_sources s JOIN identity_group_role_mappings m ON m.id=s.mapping_id JOIN role_bindings rb ON rb.id=s.binding_id WHERE s.binding_id=$1 ORDER BY m.id`, current.bindingID)
+		if err != nil {
+			return state{}, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var source groupSource
+			if err := rows.Scan(&source.ID, &source.Revision, &source.Issuer, &source.Enabled, &source.Deleted, &source.MatchesBinding); err != nil {
+				return state{}, err
+			}
+			current.sources = append(current.sources, source)
+		}
+		if err := rows.Err(); err != nil {
+			return state{}, err
+		}
 	}
 	return current, nil
 }
 
+// buildPlan binds request, local predicates and every origin revision to v2.
+// Complexity: for B encoded request/origin bytes, time O(B), Omega(B), Theta(B)
+// and auxiliary space O(B), Omega(B), Theta(B), including JSON and SHA256.
 func buildPlan(request Request, current state) (Plan, error) {
 	effective := request.Operation
-	if request.Operation == OperationGrant && current.bindingID != "" || request.Operation == OperationRevoke && current.bindingID == "" {
+	if request.Operation == OperationGrant && current.operatorOwned || request.Operation == OperationRevoke && !current.operatorOwned {
 		effective = "unchanged"
 	}
-	plan := Plan{IdentityID: current.identityID, Mailbox: current.mailbox, Role: request.Role, Domain: request.Domain, Operation: effective}
+	plan := Plan{IdentityID: current.identityID, Mailbox: current.mailbox, Role: request.Role, Domain: request.Domain, Operation: effective, OperatorOwned: current.operatorOwned, GroupSourceCount: len(current.sources)}
+	operatorAfter := current.operatorOwned
+	if effective == OperationGrant {
+		operatorAfter = true
+	} else if effective == OperationRevoke {
+		operatorAfter = false
+	}
+	plan.EffectiveAfter = operatorAfter
+	if !operatorAfter && current.mailboxEnabled && current.mailboxDomainEnabled && current.targetDomainEnabled && current.currentIssuer != "" && current.currentIssuer == request.Issuer {
+		for _, source := range current.sources {
+			if source.Enabled && !source.Deleted && source.MatchesBinding && source.Issuer == current.currentIssuer {
+				plan.EffectiveAfter = true
+				break
+			}
+		}
+	}
 	payload := struct {
 		Schema, RequestedOperation, IdentityID, Mailbox, Role, Domain, DomainID, ExistingBindingID, ExistingBindingUpdated string
-	}{"gotth-mail/role-binding-plan/v1", request.Operation, current.identityID, current.mailbox, request.Role, request.Domain, current.domainID, current.bindingID, ""}
+		OperatorOwned                                                                                                      bool
+		AuthorityRevision                                                                                                  int64
+		CurrentIssuer                                                                                                      string
+		MailboxEnabled, MailboxDomainEnabled, TargetDomainEnabled                                                          bool
+		Sources                                                                                                            []groupSource
+	}{Schema: "gotth-mail/role-binding-plan/v2", RequestedOperation: request.Operation, IdentityID: current.identityID, Mailbox: current.mailbox, Role: request.Role, Domain: request.Domain, DomainID: current.domainID, ExistingBindingID: current.bindingID, OperatorOwned: current.operatorOwned, AuthorityRevision: current.authorityRevision, CurrentIssuer: current.currentIssuer, MailboxEnabled: current.mailboxEnabled, MailboxDomainEnabled: current.mailboxDomainEnabled, TargetDomainEnabled: current.targetDomainEnabled, Sources: current.sources}
 	if current.bindingID != "" {
 		payload.ExistingBindingUpdated = current.bindingUpdated.UTC().Format(time.RFC3339Nano)
 	}

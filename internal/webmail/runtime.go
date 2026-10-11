@@ -460,7 +460,9 @@ func loadRuntimeSigningEntity(path, fingerprint, address string, now time.Time) 
 	if bytes.HasPrefix(trimmed, []byte("-----BEGIN PGP")) {
 		entities, err = protonpgp.ReadArmoredKeyRing(bytes.NewReader(trimmed))
 	} else {
-		entities, err = protonpgp.ReadKeyRing(bytes.NewReader(trimmed))
+		// Binary packet octets are not text whitespace. Trimming can truncate
+		// a signature and cause ReadKeyRing to skip an otherwise valid entity.
+		entities, err = protonpgp.ReadKeyRing(bytes.NewReader(raw))
 	}
 	if err != nil {
 		return nil, errors.New("parse webmail private key")

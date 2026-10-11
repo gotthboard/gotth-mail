@@ -2,7 +2,6 @@ package httpui
 
 import (
 	"errors"
-	"html/template"
 	"log"
 	"net/http"
 	"strconv"
@@ -23,28 +22,45 @@ type extensionFieldView struct {
 }
 
 type extensionPageView struct {
-	Items         []extensionsadmin.Instance
-	Item          extensionsadmin.Instance
-	Fields        []extensionFieldView
-	Preview       extensionsadmin.Preview
-	UpdateTarget  extensionsadmin.UpdateInput
-	Message       string
-	BlockedReason string
-	CSRF          string
+	PermissionsPage uint64
+	Item            extensionsadmin.Instance
+	Fields          []extensionFieldView
+	Preview         extensionsadmin.Preview
+	UpdateTarget    extensionsadmin.UpdateInput
+	Message         string
+	OperationError  bool
+	ActionURL       string
+	BlockedReason   string
+	CSRF            string
 }
 
 // Complexity: registration time O(1+R), Omega(1); auxiliary space
 // O(1+S), Omega(1). No tight Theta bound for arbitrary supplied mux state.
 // Local fixed-pattern/closure setup is constant; R/S include delegated ServeMux
 // parsing, conflict scans, synchronization waits and tree/index allocation/growth.
-// Inventory request: time O(A+Q+N+B), Omega(N+B) on successful reads;
-// auxiliary O(L+B), Omega(B). A auth time, Q SQL time (including existing
-// per-instance secret-status queries), N rows, B escaped bytes, L List storage.
-// Tight bounds depend on delegated auth/SQL/rendering; no fixed size bound.
+// Inventory request: time O(A+U+Q+N+B), Omega(N+B) on successful reads;
+// auxiliary O(U+L+B), Omega(B). A auth time, U bounded query parsing/URL bytes,
+// Q SQL/service time (including selected status queries), N<=50 selected rows,
+// B escaped output bytes, L selected payload/grant storage. Tight Theta bounds
+// are not established across delegated auth/SQL/rendering. No per-row byte/grant,
+// database-work or fixed response-byte bound; query count excludes auth work.
+// Detail rendering adds O(U+P+Rd+Bd+Wd) time and O(U+P+Sd+Bd) space,
+// Omega(Bd) on complete output. U query bytes, P escaped raw route bytes,
+// Rd/Sd delegated components, Bd output, Wd transport. No tight bounds.
+// Normal metadata-valid GET parsing caps U at4096 before ParseQuery; recovery/POST
+// keep existing query semantics. Page admission and template selection each inspect
+// three lengths/sub-slices, Theta(1) local work/space, without copying grant arrays.
+// No additional service read; submitted configure-preview Fields are retained.
+// Loaded and result metadata classification adds O(F+V) time/O(M) space,
+// Omega(1), with V/M delegated validation (maps/marshal/copies). No tight Theta
+// across invalid paths; this is snapshot UI policy, not atomic backend validation.
 // Terminal response adds O(U+Rt+Bt+Wt) time, Omega(Bt) on complete rendering,
 // and O(U+St+Bt) auxiliary space, Omega(Bt) for complete buffered output.
 // U raw-query parsing bytes, Rt/St delegated templ costs, Bt receipt bytes,
 // Wt transport. No general tight bound or new SQL query.
+// POST error projection adds O(1+E) time / O(1+Es) auxiliary space,
+// Omega(1); E/Es are delegated errors.Is traversal/custom-method costs.
+// No uniform tight Theta bound; literal presentation-role selection is Theta(1).
 // Audit request costs are specified by registerExtensionAuditUI. Quarantine uses
 // O(P+F+W) time, Omega(1), and O(P) space, Omega(1), tight Theta not established
 // across errors: P tracked runtime dirs, F filesystem work, W lock wait.
@@ -66,12 +82,20 @@ func registerExtensionUI(mux *http.ServeMux, ids *identity.Service, az authz.Aut
 			http.Error(w, "extension administrator unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		items, err := service.List(r.Context())
+		query, err := parseInventoryPageQuery(r.URL.RawQuery)
+		if err != nil {
+			http.Error(w, "invalid extension inventory query", http.StatusBadRequest)
+			return
+		}
+		page, err := service.ListInventoryPage(r.Context(), query.AfterKey)
 		if err != nil {
 			http.Error(w, "extension inventory unavailable", http.StatusInternalServerError)
 			return
 		}
-		view := inventoryView{Items: items, Theme: inventoryTheme(r.URL.Query().Get("theme"))}
+		view := inventoryView{Items: page.Items, Theme: query.Theme, AfterCursor: query.AfterCursor}
+		if page.HasMore {
+			view.NextCursor = inventoryPageCursor(page.Items[len(page.Items)-1].ExtensionID)
+		}
 		if service.RuntimeBlockReason != nil {
 			view.BlockedReason = service.RuntimeBlockReason()
 		}
@@ -86,6 +110,7 @@ func registerExtensionUI(mux *http.ServeMux, ids *identity.Service, az authz.Aut
 	})
 
 	mux.HandleFunc("/admin/extensions/", func(w http.ResponseWriter, r *http.Request) {
+		extensionDetailHeaders(w)
 		id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/admin/extensions/"), "/")
 		if id == "" || strings.Contains(id, "/") || (r.Method != http.MethodGet && r.Method != http.MethodPost) {
 			http.NotFound(w, r)
@@ -111,14 +136,15 @@ func registerExtensionUI(mux *http.ServeMux, ids *identity.Service, az authz.Aut
 			writeExtensionUIError(w, err)
 			return
 		}
-		view := extensionPageView{Item: item, Fields: extensionFields(item, nil), CSRF: csrf}
+		metadataValid := extensionMetadataDisplayValid(item.Metadata)
+		view := extensionPageView{Item: item, CSRF: csrf}
 		if r.Method == http.MethodPost {
-			view, err = applyExtensionUIAction(r, service, actor, item)
+			view, err = applyExtensionUIAction(r, service, actor, item, metadataValid)
 			view.CSRF = csrf
 			if err != nil {
 				view.Item = item
-				view.Fields = extensionFields(item, nil)
-				view.Message = err.Error()
+				view.Message = extensionOperationErrorMessage(err)
+				view.OperationError = true
 			}
 		}
 		if service.RuntimeBlockReason != nil {
@@ -130,7 +156,49 @@ func registerExtensionUI(mux *http.ServeMux, ids *identity.Service, az authz.Aut
 			}
 			return
 		}
-		renderExtensionPage(w, view)
+		// GET and errors retain the originally classified snapshot. Only a
+		// successful POST can supply a replacement requiring classification.
+		if r.Method == http.MethodPost && err == nil {
+			metadataValid = extensionMetadataDisplayValid(view.Item.Metadata)
+		}
+		theme := "system"
+		if r.Method == http.MethodGet && metadataValid {
+			query, queryErr := parsePermissionsPageQuery(r.URL.RawQuery)
+			if queryErr != nil {
+				http.Error(w, "invalid permissions page query", http.StatusBadRequest)
+				return
+			}
+			theme = query.Theme
+			if _, pageErr := permissionsWindow(view.Item.Capabilities, view.Item.Interfaces, view.Item.SecretSlots, query.Page); pageErr != nil {
+				if pageErr == errPermissionsPageRange {
+					http.Error(w, "permissions page not found", http.StatusNotFound)
+				} else {
+					http.Error(w, "extension display unavailable; verify current state before retrying", http.StatusInternalServerError)
+				}
+				return
+			}
+			view.PermissionsPage = query.Page
+		} else {
+			theme = inventoryTheme(r.URL.Query().Get("theme"))
+		}
+		if !metadataValid {
+			recovery, projectionErr := extensionRecoveryProjection(view, id, theme)
+			if projectionErr != nil {
+				http.Error(w, "extension display unavailable; verify current state before retrying", http.StatusInternalServerError)
+				return
+			}
+			if err := writeExtensionDetailComponent(w, r, extensionMetadataRecoveryDocument(recovery)); err != nil {
+				log.Print("extension recovery render/transport failure")
+			}
+			return
+		}
+		if r.Method != http.MethodPost || err != nil || r.Form.Get("action") != "configure-preview" {
+			view.Fields = extensionFields(view.Item, nil)
+		}
+		view.ActionURL = extensionDetailActionURL(id, theme)
+		if err := writeExtensionDetailComponent(w, r, extensionDetailDocument(view, id, theme)); err != nil {
+			log.Print("extension detail render/transport failure")
+		}
 	})
 }
 
@@ -162,18 +230,30 @@ func requireExtensionUIActor(w http.ResponseWriter, r *http.Request, ids *identi
 	return audit.ActorRef{Type: actor.Type, ID: actor.ID}, csrf, true
 }
 
-// Complexity: time O(B+P+D), Omega(F+O); auxiliary space O(B+A+M),
-// Omega(F+O). Tight Theta is not established across action/error paths.
-// B form/configuration bytes, P/A time/space of extensionFields (at most three
-// projections, including copied options); F fields, O option entries. D/M
+// Complexity: time O(B+P+D), Omega(1); auxiliary space O(B+A+M),
+// Omega(1) across action/error paths. Configure-preview projection is
+// Omega(F+O) time/space. No general tight Theta across delegated calls.
+// B form/configuration bytes, P/A time/space of the configure-preview
+// extensionFields projection/copies; F fields, O option entries. D/M
 // delegated service time/memory include validation, hashing, serialization,
 // SQL/audit, filesystem/runtime work and lock waits. Target-bound Apply adds
 // one parameterized SQL query inside the existing service call, not a preflight Get; actual driver/protocol cost is delegated.
+// Recovery dispatch adds Theta(1) time/space for fixed action selection.
+// No eager field projection; caller classifies results before projecting.
 // No extra service calls;
 // successful configure preview retains its input projection, never stored values.
-func applyExtensionUIAction(r *http.Request, service *extensionsadmin.Service, actor audit.ActorRef, item extensionsadmin.Instance) (extensionPageView, error) {
-	view := extensionPageView{Item: item, Fields: extensionFields(item, nil)}
+func applyExtensionUIAction(r *http.Request, service *extensionsadmin.Service, actor audit.ActorRef, item extensionsadmin.Instance, metadataValid bool) (extensionPageView, error) {
+	view := extensionPageView{Item: item}
 	action := r.Form.Get("action")
+	if !metadataValid {
+		switch action {
+		case "disable", "secrets-delete-preview", "secrets-delete-apply", "uninstall-preview", "uninstall-apply", "rollback", "update-apply":
+		default:
+			view.Message = "Operation unavailable while configuration metadata is invalid"
+			view.OperationError = true
+			return view, nil
+		}
+	}
 	var err error
 	switch action {
 	case "configure-preview":
@@ -221,9 +301,6 @@ func applyExtensionUIAction(r *http.Request, service *extensionsadmin.Service, a
 	}
 	if err != nil {
 		return view, err
-	}
-	if view.Item.InstanceID != "" && action != "configure-preview" {
-		view.Fields = extensionFields(view.Item, nil)
 	}
 	view.Message = "extension operation accepted"
 	return view, nil
@@ -327,36 +404,3 @@ func writeExtensionUIError(w http.ResponseWriter, err error) {
 	}
 	http.Error(w, "extension operation failed", http.StatusBadRequest)
 }
-
-// Complexity: time O(N+B+T+W), Omega(1); auxiliary space O(B+M), Omega(1).
-// Tight Theta is not established across template/writer error paths. N visited
-// items, fields, options and permission entries; B escaped output/comparison
-// bytes; T/M delegated html/template reflection/formatting time and memory;
-// W response-writer time including waits. Successful output costs Omega(N+B)
-// time. Configure confirmation adds O(F+V) rendered work/bytes (F fields, V
-// projected names/labels/values), reusing Fields without another map/slice copy.
-func renderExtensionPage(w http.ResponseWriter, view extensionPageView) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = extensionPage.Execute(w, view)
-}
-
-var extensionPage = template.Must(template.New("extensions").Funcs(template.FuncMap{"join": strings.Join}).Parse(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>GOTTH Mail Extensions</title><style>body{font:1rem system-ui;max-width:72rem;margin:auto;padding:1rem}main>ul a,h1,dd,code{overflow-wrap:anywhere}nav,section{margin-block:1rem}label{display:block;margin:.5rem 0}input,select,button{font:inherit;max-width:100%}input:focus,select:focus,button:focus,a:focus{outline:3px solid Highlight;outline-offset:2px}@media(max-width:40rem){form{display:grid;gap:.5rem}button{min-height:2.75rem}}</style></head><body><main>
-<p><a href="/">GOTTH Mail</a> / <a href="/admin/extensions">Extensions</a></p>
-{{if .Message}}<p role="status">{{.Message}}</p>{{end}}
-{{if .BlockedReason}}<p role="alert">{{.BlockedReason}}</p>{{end}}
-{{if .Item.InstanceID}}
-<h1>{{.Item.ExtensionID}}</h1>
-<nav><a href="#overview">Overview</a> <a href="#configuration">Configuration</a> <a href="#secrets">Secrets</a> <a href="#permissions">Permissions</a> <a href="#health">Health</a> <a href="#audit">Audit</a> <a href="#versions">Versions</a> <a href="#rollback">Rollback</a></nav>
-<section id="overview"><h2>Overview</h2><dl><dt>Repository</dt><dd>{{.Item.Repository}}</dd><dt>Artifact</dt><dd><code>{{.Item.ArtifactPin}}</code></dd><dt>Manifest</dt><dd><code>{{.Item.ManifestDigest}}</code></dd><dt>Lifecycle</dt><dd>{{.Item.Lifecycle}}</dd><dt>Enabled / routed</dt><dd>{{.Item.Enabled}} / {{.Item.Routed}}</dd></dl><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button name="action" value="test">Test</button>{{if .Item.Enabled}}<button name="action" value="enable" aria-describedby="extension-recovery-help">Recover / revalidate</button><button name="action" value="disable">Disable</button>{{else}}<button name="action" value="enable">Enable</button>{{end}}</form><p id="extension-recovery-help">Stored lifecycle is not proof of a live runtime. Recover / revalidate explicitly checks the existing approved configuration, secrets, identity and health before routing. It grants no new permissions. Disable remains available.</p></section>
-<section id="configuration"><h2>Configuration</h2><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}">{{range .Fields}}<label>{{.Label}} {{if eq .Kind "boolean"}}<input type="checkbox" name="field.{{.Name}}" {{if .Checked}}checked{{end}}>{{else if eq .Kind "enum"}}<select name="field.{{.Name}}" {{if .Required}}required{{end}}>{{$value := .Value}}{{if not .Required}}<option value="" {{if eq .Value ""}}selected{{end}}>Not set</option>{{end}}{{range .Options}}<option value="{{.}}" {{if eq . $value}}selected{{end}}>{{.}}</option>{{end}}</select>{{else}}<input name="field.{{.Name}}" value="{{.Value}}" {{if eq .Kind "secret"}}type="password" autocomplete="new-password"{{else if eq .Kind "integer"}}type="number"{{end}} {{if .Required}}required{{end}}>{{end}}</label>{{end}}<button name="action" value="configure-preview">Preview configuration</button></form>
-{{if eq .Preview.Operation "configure"}}<form method="post"><h3>Reviewed configuration</h3><p>Apply uses the values below. Editing the configuration above does not change this target; preview again to review those edits.</p><input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="preview_id" value="{{.Preview.ID}}"><dl id="configuration-reviewed">{{range .Fields}}{{if ne .Kind "secret"}}<dt>{{.Label}} (<code>{{.Name}}</code>)</dt><dd>{{if eq .Kind "boolean"}}{{.Checked}}{{else if .Value}}{{.Value}}{{else}}Not set{{end}}</dd>{{end}}{{end}}</dl>
-{{range .Fields}}{{if eq .Kind "secret"}}<label>{{.Label}} <input type="password" name="field.{{.Name}}" autocomplete="new-password" {{if .Required}}required{{end}}></label>{{else if eq .Kind "boolean"}}{{if .Checked}}<input type="hidden" name="field.{{.Name}}" value="on">{{end}}{{else}}<input type="hidden" name="field.{{.Name}}" value="{{.Value}}">{{end}}{{end}}<p>Re-enter all changed secrets, then type <code>{{.Preview.Confirmation}}</code>.</p><label>Configuration confirmation <input name="confirmation" autocomplete="off" required></label><button name="action" value="configure-apply">Apply configuration</button></form>{{end}}</section>
-<section id="secrets"><h2>Secrets</h2><ul>{{range .Item.Secrets}}<li>{{.Slot}}: {{if .Configured}}configured (value hidden){{else}}not configured{{end}}</li>{{end}}</ul><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button name="action" value="secrets-delete-preview">Preview deletion of all secrets</button>{{if eq .Preview.Operation "delete_secrets"}}<input type="hidden" name="preview_id" value="{{.Preview.ID}}"><p>Type <code>{{.Preview.Confirmation}}</code>.</p><input name="confirmation" required><button name="action" value="secrets-delete-apply">Delete secrets</button>{{end}}</form></section>
-<section id="permissions"><h2>Permissions</h2><p>Capabilities: <code>{{join .Item.Capabilities ", "}}</code></p><p>Interfaces: <code>{{join .Item.Interfaces ", "}}</code></p><p>Granted secret slots: <code>{{join .Item.SecretSlots ", "}}</code></p></section>
-<section id="health"><h2>Health</h2><p>{{.Item.HealthCode}}; tested revision {{.Item.TestedRevision}}; configuration revision {{.Item.ConfigurationRev}}</p></section>
-<section id="audit"><h2>Audit</h2><a href="/admin/extensions/{{.Item.InstanceID}}/audit">Export recent redacted audit (up to 1,000 events)</a><p>Newest events only; this is not a complete-history export.</p></section>
-<section id="versions"><h2>Versions / update</h2><p>Previous pin: <code>{{.Item.PreviousArtifact}}</code>; available pin: <code>{{.Item.AvailableUpdate}}</code></p><form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><input name="artifact_pin" placeholder="sha256:…" required><input name="manifest_sha256" placeholder="manifest SHA-256" required><input name="grant_sha256" placeholder="grant SHA-256" required><input name="session_sha256" placeholder="session SHA-256" required><input name="capabilities" value="{{join .Item.Capabilities ","}}"><input name="interfaces" value="{{join .Item.Interfaces ","}}"><input name="secret_slots" value="{{join .Item.SecretSlots ","}}"><button name="action" value="update-preview">Preview update</button></form>{{if eq .Preview.Operation "update"}}<form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><dl><dt>Target artifact</dt><dd><code>{{.UpdateTarget.ArtifactPin}}</code></dd><dt>Target manifest</dt><dd><code>{{.UpdateTarget.ManifestDigest}}</code></dd><dt>Target grant</dt><dd><code>{{.UpdateTarget.GrantDigest}}</code></dd><dt>Target session</dt><dd><code>{{.UpdateTarget.SessionDigest}}</code></dd></dl><p>Privilege diff: <code>{{join .Preview.PrivilegeDiff ", "}}</code></p><p>Configuration-schema diff: <code>{{join .Preview.ConfigurationDiff ", "}}</code></p><p>Secret-slot diff: <code>{{join .Preview.SecretSlotDiff ", "}}</code></p><p>Type <code>{{.Preview.Confirmation}}</code>.</p><input type="hidden" name="preview_id" value="{{.Preview.ID}}"><label>Update confirmation <input name="confirmation" autocomplete="off" required></label><button name="action" value="update-apply">Apply update</button></form>{{end}}</section>
-<section id="rollback"><h2>Rollback / uninstall</h2>{{if .Item.PreviousArtifact}}<form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><p>Type <code>rollback {{.Item.ExtensionID}} to {{.Item.PreviousArtifact}}</code>.</p><input name="confirmation" required><button name="action" value="rollback">Rollback</button></form>{{end}}<form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button name="action" value="uninstall-preview">Preview uninstall</button>{{if eq .Preview.Operation "uninstall"}}<input type="hidden" name="preview_id" value="{{.Preview.ID}}"><p>Type <code>{{.Preview.Confirmation}}</code>. Secrets must be deleted separately first.</p><input name="confirmation" required><button name="action" value="uninstall-apply">Uninstall</button>{{end}}</form></section>
-{{else}}
-<h1>Extensions</h1><p>Mail owns this presentation. Extension metadata supplies bounded scalar field descriptions only.</p><ul>{{range .Items}}<li><a href="/admin/extensions/{{.InstanceID}}">{{.ExtensionID}}</a> — {{.Lifecycle}} — {{if .Enabled}}enabled{{else}}disabled{{end}} — {{.HealthCode}}</li>{{else}}<li>No extensions installed.</li>{{end}}</ul>
-{{end}}</main></body></html>`))

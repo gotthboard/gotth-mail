@@ -56,21 +56,23 @@ func WithLegacyMailboxAdoption(ctx context.Context, mailboxID, mailbox string, u
 // mutex keeps commit order identical to the in-process passdb projection order;
 // PostgreSQL constraints remain authoritative across processes.
 type SQLStore struct {
-	DB       *sql.DB
-	Identity *identity.Service
-	mu       sync.Mutex
+	CurrentIssuer string
+	DB            *sql.DB
+	Identity      *identity.Service
+	mu            sync.Mutex
 }
 
 func (*SQLStore) SupportsPasswordTransactions() {}
 
 type transaction struct {
-	ctx       context.Context
-	tx        *sql.Tx
-	identity  *identity.Service
-	metadata  requestMetadata
-	passwords map[string]passwordChange
-	project   []mailboxProjection
-	adoption  *legacyMailboxAdoption
+	currentIssuer string
+	ctx           context.Context
+	tx            *sql.Tx
+	identity      *identity.Service
+	metadata      requestMetadata
+	passwords     map[string]passwordChange
+	project       []mailboxProjection
+	adoption      *legacyMailboxAdoption
 }
 
 type passwordChange struct {
@@ -83,6 +85,10 @@ type mailboxProjection struct {
 	mailbox       identity.Mailbox
 }
 
+// Transact invokes fn exactly once; SQL/projection/audits commit before memory.
+// Complexity: time O(C+M+Q), Omega(C+M+Q), Theta(C+M+Q) on success;
+// auxiliary O(P+S), Omega(P), tight Theta not established. C is callback work,
+// M postcommit mailbox work, P queued projections, Q/S delegated SQL/lock costs.
 func (store *SQLStore) Transact(ctx context.Context, fn func(gotthscim.Transaction) error) error {
 	if store == nil || store.DB == nil || fn == nil {
 		return fmt.Errorf("SCIM SQL store and transaction callback are required")
@@ -98,7 +104,7 @@ func (store *SQLStore) Transact(ctx context.Context, fn func(gotthscim.Transacti
 	}
 	defer dbtx.Rollback()
 	metadata, _ := ctx.Value(requestMetadataKey{}).(requestMetadata)
-	tx := &transaction{ctx: ctx, tx: dbtx, identity: store.Identity, metadata: metadata, passwords: map[string]passwordChange{}}
+	tx := &transaction{ctx: ctx, tx: dbtx, identity: store.Identity, currentIssuer: store.CurrentIssuer, metadata: metadata, passwords: map[string]passwordChange{}}
 	if claim, ok := ctx.Value(legacyMailboxAdoptionKey{}).(legacyMailboxAdoption); ok {
 		tx.adoption = &claim
 	}
@@ -250,6 +256,11 @@ func (tx *transaction) Replace(record gotthscim.Record, expectedVersion string) 
 	return tx.projectRecord(scimAction(record.ResourceType, "replace"), current, record)
 }
 
+// Delete retracts Group delegations before cascades and User origins after the
+// canonical User disappears. Referenced User deletion still rejects unchanged.
+// Complexity: B canonical bytes, P projection work, Q/S delegated SQL/cascades:
+// time O(B+P+Q), Omega(B+Q), tight Theta not established; auxiliary O(B+S),
+// Omega(B), tight Theta not established (S includes delegated projection space).
 func (tx *transaction) Delete(scope, resourceType, id, expectedVersion string, tombstone gotthscim.Tombstone) error {
 	current, err := tx.Get(scope, resourceType, id)
 	if err != nil {
@@ -280,6 +291,11 @@ func (tx *transaction) Delete(scope, resourceType, id, expectedVersion string, t
 	}
 	if _, err := tx.tx.ExecContext(tx.ctx, `INSERT INTO scim_tombstones(scope, resource_type, id, external_id, manager, version, deleted_unix_nano) VALUES ($1,$2,$3,$4,$5,$6,$7)`, tombstone.Scope, tombstone.ResourceType, tombstone.ID, tombstone.ExternalID, tombstone.Manager, tombstone.Version, tombstone.DeletedAt.UnixNano()); err != nil {
 		return mapStoreError(err)
+	}
+	if tx.identity != nil && resourceType == "User" {
+		if err := tx.syncUserRoles(id); err != nil {
+			return err
+		}
 	}
 	return tx.audit(scimAction(resourceType, "delete"), current, gotthscim.Record{})
 }
@@ -370,10 +386,20 @@ func (tx *transaction) loadIndexesByID(scope, resourceType string, ids []string)
 	return result, rows.Err()
 }
 
+// projectRecord reconciles structural origins after canonical mailbox/member
+// persistence. Store-only conformance mode (no Identity) projects no authority.
+// Complexity: B document bytes, P leaf/membership work, Q/S delegated SQL:
+// time O(B+P+Q), Omega(B+Q), tight Theta not established; auxiliary O(B+S),
+// Omega(B), tight Theta not established (S includes projection/member storage).
 func (tx *transaction) projectRecord(action string, before, after gotthscim.Record) error {
 	if after.ResourceType == "Group" {
 		if err := tx.replaceGroupMembers(after); err != nil {
 			return err
+		}
+		if tx.identity != nil {
+			if err := tx.roleProjector().SyncGroup(tx.ctx, tx.tx, after.Scope, after.ID); err != nil {
+				return err
+			}
 		}
 		return tx.audit(action, before, after)
 	}
@@ -391,6 +417,9 @@ func (tx *transaction) projectRecord(action string, before, after gotthscim.Reco
 		return &gotthscim.ProtocolError{Status: 400, SCIMType: "invalidValue", Detail: "userName violates mailbox policy"}
 	}
 	if err := tx.persistMailbox(after, previousEmail, &mailbox); err != nil {
+		return err
+	}
+	if err := tx.syncUserRoles(after.ID); err != nil {
 		return err
 	}
 	tx.project = append(tx.project, mailboxProjection{previousEmail: previousEmail, mailbox: mailbox})
@@ -568,7 +597,15 @@ func (tx *transaction) persistMailbox(record gotthscim.Record, previousEmail str
 	return nil
 }
 
+// disableProjection keeps local memory pending until commit and revokes sessions.
+// Group tombstones and source retraction are structural, independent of issuer.
+// Complexity: B canonical bytes, P projection work, Q/S SQL: time O(B+P+Q),
+// Omega(Q), tight Theta not established; auxiliary O(B+S), Omega(1), no tight
+// Theta established. Store-only mode performs constant work.
 func (tx *transaction) disableProjection(record gotthscim.Record, now time.Time) error {
+	if tx.identity != nil && record.ResourceType == "Group" {
+		return tx.tombstoneGroupMappings(record, now)
+	}
 	if tx.identity == nil || record.ResourceType != "User" {
 		return nil
 	}

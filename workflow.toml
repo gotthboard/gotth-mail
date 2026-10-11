@@ -1,7 +1,7 @@
 schema_version = 1
 project = "GOTTH Mail"
 profile = "medium"
-active_feature = "v3.ops-import-admin.extension-management-ui"
+active_feature = "release.1-0.outbound-exact-sender"
 coverage_map = "workflow/COVERAGE.md"
 event_log = "workflow.events.jsonl"
 changelog = "docs/CHANGELOG.md"
@@ -261,7 +261,8 @@ verification = ["immutable gotth-extensions pin", "manifest/grant/negotiation/li
 id = "v3.ops-import-admin.extension-management-ui"
 root = "v3.ops-import-admin"
 title = "Host-owned Extensions setup and lifecycle administrator"
-state = "in_progress"
+state = "blocked"
+reason = "Accepted U547 UI is preserved in detached component-integration staging; remaining UI acceptance is incomplete and non-active while the outbound signing component is integrated; not beta entry"
 path = "workflow/features/v3.ops-import-admin/extension-management-ui"
 source_path = "."
 branch = "workflow/feature/v3.ops-import-admin.extension-management-ui"
@@ -629,3 +630,31 @@ branch = "workflow/feature/v5.notifications.commands-approvals"
 dependencies = ["v5.notifications.telegram-plugin-alerts"]
 implementation_spec_sections = ["Read-only commands", "Actor mapping", "Approval workflow"]
 verification = ["bounded read-only command tests", "chat membership not authz tests", "bad-binding/stale/replay/mismatch/expired approval tests", "core authz/confirmation/mutation/audit path tests", "no remote shell tests", "go test ./...", "git diff --check"]
+
+[[features]]
+id = "release.1-0.outbound-exact-sender"
+root = "release.1-0"
+title = "Exact-sender signing across outbound submission, forwarding and system paths"
+state = "in_progress"
+reason = "Active bounded equal-address queue-provenance repair; final forwarding/signing caller, native retry and B5 remain incomplete"
+path = "workflow/features/release.1-0/outbound-exact-sender"
+source_path = "."
+branch = "workflow/feature/release.1-0.outbound-exact-sender"
+worktree = "/home/linus/.openclaw/workspace/.artifacts/worktrees/gotth-mail-beta-component-integration"
+dependencies = ["v4.webmail.production-webmail", "v5.notifications.openpgp-signed-email", "release.1-0.same-domain-outbound-policy"]
+implementation_spec_sections = ["Exact-sender outbound forwarding (release 1.0)"]
+verification = ["FWD-1..4 captured-byte signed wrapper tests", "exact identity and lifecycle denial", "all-outbound provenance and gate integration", "local inbound preservation", "system DSN and retry enforcement", "independent reviews", "git diff --check"]
+
+[[features]]
+id = "v2.identity-provisioning.group-role-projection"
+root = "v2.identity-provisioning"
+title = "Exact Authentik Group-to-role origins and lifecycle"
+state = "blocked"
+path = "workflow/features/v2.identity-provisioning/group-role-projection"
+source_path = "."
+branch = "workflow/feature/v2.identity-provisioning.group-role-projection"
+worktree = "/home/linus/.openclaw/workspace/.artifacts/worktrees/gotth-mail-beta-component-integration"
+dependencies = ["v2.identity-provisioning.opaque-scim-groups", "v2.identity-provisioning.oidc-sessions"]
+implementation_spec_sections = ["Durable Group-to-role projection (planned)"]
+verification = ["IDP-GROUP-001 through IDP-GROUP-007", "domain_manager first vertical slice", "exact mailbox User scope issuer joins", "protected current issuer propagation and restart read guards", "operator and multiple Group origin preservation", "SCIM atomic audit and session revocation", "spent OIDC attempt and absent-row concurrency", "fenced old CLI readers writers and compatible rollback", "global_admin and scoped_domain_access follow-up", "durable profile doctor and live all-role grant revoke", "go test ./...", "go test -race ./...", "go vet ./...", "git diff --check"]
+reason = "Scoped601 identity composition parent-admitted; Group feature remains incomplete/nonactive with merged recovery, live and beta gates open"

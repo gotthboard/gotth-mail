@@ -22,8 +22,9 @@ import (
 )
 
 type recoveryRuntime struct {
-	calls []string
-	fail  bool
+	calls    []string
+	fail     bool
+	probeErr error
 }
 
 func (r *recoveryRuntime) Start(context.Context, extensionsadmin.Instance, map[string][]byte) error {
@@ -32,6 +33,9 @@ func (r *recoveryRuntime) Start(context.Context, extensionsadmin.Instance, map[s
 }
 func (r *recoveryRuntime) Probe(context.Context, extensionsadmin.Instance) (extensionsadmin.Health, error) {
 	r.calls = append(r.calls, "probe")
+	if r.probeErr != nil {
+		return extensionsadmin.Health{}, r.probeErr
+	}
 	if r.fail {
 		return extensionsadmin.Health{}, errors.New("probe failed")
 	}

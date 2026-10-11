@@ -59,11 +59,14 @@ opaque provisioning scope. Canonical resource, mailbox, authorization, success
 audit, and password delegation changes commit or fail together with the SCIM
 transaction. The admitted single control-plane writer updates its in-memory
 daemon/passdb view only after commit and reconstructs it from SQL on restart.
-Groups are non-authoritative provisioning inventory whose members must be
-same-scope opaque User IDs. Group mutations create no role authority. User
-disable/delete revokes bound sessions transactionally. Stable Group-to-role
-projection remains unavailable until the live Authentik profile and exact
-mapping are admitted; no ID-token claim substitutes for it.
+Unmapped Groups remain non-authoritative same-scope opaque-User inventory.
+The planned v2 Group-to-role child is the only authority exception: admitted
+exact issuer/scope/Group mappings, origin-preserving atomic projection and
+current-issuer read guards. Its domain_manager-first slice is not full capability
+or beta admission; all three roles, profile/doctor wiring and live grant/revoke
+proof remain required. User disable/delete revokes sessions transactionally;
+no ID-token claim substitutes for mapping. See the
+[identity contract](v2-identity-provisioning.md#durable-group-to-role-projection-planned).
 
 Legacy email-keyed mailboxes use the implemented redacted preview plus exact
 digest-confirmed adoption path. The `gotth-scim.Reconciler` owns validation and
@@ -131,13 +134,22 @@ compiled supervisor checks the token under that exact identity; absent,
 wrong-path, or unreadable mounts fail startup. The production container smoke
 also drives the actual Postfix pipe and fails if its identity or helper boundary
 is unusable.
-After final policy admission, the gate hands the message to
-`127.0.0.1:10027`. That listener is bound only inside the Postfix container,
-does not require the public HAProxy preamble, disables the inbound milter and
-authentication paths, and attaches a one-message `smtp:` content-filter
-override. Postfix then performs normal MX delivery and durable retry without
-recirculating the message through `gotth_policy` or opening a network-visible
-policy bypass.
+After final policy admission, the gate must not hand the message to a second
+Postfix queue that can retry without policy. The admitted design keeps the final
+queue as sole post-bind body custodian. Before delivery, persist and bind the
+immutable complete original final-envelope recipient set, expansion provenance
+and artifact identity to its queue ID. A thin delivery-agent gate reads each
+DELIVER_REQUEST but never treats its current recipient batch as authority; the
+fail-closed broker evaluates the full bound set before external DNS/connect.
+Outage defers. Forbiddance records hold_required and tempfails the current and
+later batches; after request return a privileged reconciler holds/verifies the
+original queue, and release rechecks policy. Allow delegates the same request through Postfix deliver_pass to
+stock smtp; the gate neither performs SMTP nor reinjects. Stock smtp therefore
+retains ORCPT/DSN, connection reuse and remote 4xx/lost-DOT retry, and every retry
+re-enters the gate. For a non-null forward, the configured local forwarding
+identity is SMTP envelope sender and local DSN destination, never the remote
+author. A null-sender trigger remains null and bounce-suppressed. Initial
+maxproc=1 and recipient_limit=1 remain until admitted.
 
 ## Release verification
 
@@ -177,8 +189,9 @@ The existing reference Compose and Telegram fixtures are forbidden inputs.
 - OIDC and SCIM external-consumer compatibility test;
 - consumer adapter conformance, migration, race, restart, backup, and restore
   tests before beta;
-- live Authentik browser login, provisioning, role, deprovisioning, and replay
-  rejection before beta;
+- live Authentik browser login, provisioning, Group-driven grant/revoke for
+  all three roles, deprovisioning, and replay rejection before beta; operator
+  grants alone do not close the Group-to-role capability;
 - full/race/vet/build/container, deployment, rollback, security,
   accessibility, monitoring, and owner-acceptance gates before stable.
 - extension-foundation conformance plus administrator setup/test/enable/

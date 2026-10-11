@@ -36,6 +36,16 @@ func TestConfigureFrontAuthRequiresPrivateFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("0123456789abcdef0123456789abcdef"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatal("public front-auth fixture mode is not 0644")
+	}
 	t.Setenv("GOTTH_MAIL_FRONT_AUTH_TOKEN_FILE", path)
 	if err := configureFrontAuthFromEnv(&api.Server{}); err == nil {
 		t.Fatal("public front-auth token file accepted")

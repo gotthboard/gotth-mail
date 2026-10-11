@@ -7,6 +7,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -28,8 +29,11 @@ import (
 	"testing"
 	"time"
 
+	"forgejo/gotthboard/gotth-mail/internal/audit"
 	"forgejo/gotthboard/gotth-mail/internal/extensionsadmin"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
+	"forgejo/gotthboard/gotth-mail/internal/store"
+	"forgejo/gotthboard/gotth-mail/internal/testpg"
 )
 
 func TestNativeUpdatePreviewOracle(t *testing.T) {
@@ -571,11 +575,35 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 		}
 	}
 	acceptanceLifecycleDriver(t, false, func(f acceptanceBrowserStart) {
+		if os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "enhanced" {
+			runEnhancedPaginationBrowser(t, f, driver)
+			return
+		}
+		if os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "permissions" {
+			runPaginationBrowser(t, f, driver)
+			return
+		}
+		if os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "pagination" {
+			runPaginationBrowser(t, f, driver)
+			return
+		}
+		if os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "detail-theme" {
+			runDetailThemeBrowser(t, f, driver)
+			return
+		}
 		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "connection-test" || mode == "activation" || mode == "update" || mode == "rollback" {
 			runConnectionBrowser(t, f, driver)
 			return
 		}
-		if os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "configuration" {
+		if os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "uninstall" {
+			runUninstallBrowser(t, f, driver)
+			return
+		}
+		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "secrets-delete" || (mode == "secrets-delete-recovery" || mode == "secrets-delete-recovery-no-css") {
+			runSecretsBrowser(t, f, driver)
+			return
+		}
+		if mode := os.Getenv("GOTTH_MAIL_BROWSER_MODE"); mode == "configuration" || mode == "configuration-no-css" {
 			runConfigurationBrowser(t, f, driver)
 			return
 		}
@@ -730,12 +758,15 @@ func TestExtensionAcceptanceBrowserFixture(t *testing.T) {
 
 // Configuration observations stay in Go memory. No SQL/secret/error payload is logged.
 type configurationBrowserOracle struct {
+	noCSS                      bool
+	authority                  string
 	f                          acceptanceBrowserStart
 	mu                         sync.Mutex
 	phase, reloads, posts      int
 	failure                    string
 	baseline, preview, applied [4]string
 	key                        []byte
+	stylesheets                [2]bool
 }
 
 func configurationSnapshot(ctx context.Context, db *sql.DB) ([4]string, error) {
@@ -924,13 +955,31 @@ func (o *configurationBrowserOracle) ServeHTTP(w http.ResponseWriter, r *http.Re
 	detail := "/admin/extensions/" + o.f.ID
 	next := o.phase
 	favicon := r.Method == "GET" && r.URL.Path == "/favicon.ico"
-	if r.URL.RawQuery != "" || (r.URL.Path != detail && r.URL.Path != "/admin/extensions" && !favicon) {
+	asset := -1
+	if r.URL.Path == "/admin/extensions/assets/tokens.css" {
+		asset = 0
+	}
+	if r.URL.Path == "/admin/extensions/assets/detail.css" {
+		asset = 1
+	}
+	if o.noCSS && (asset >= 0 || r.Host != o.authority || r.URL.Host != "" || r.URL.Scheme != "" || r.URL.User != nil || r.URL.Fragment != "" || r.URL.RawPath != "" || r.URL.ForceQuery) {
+		fail("no-CSS request crossed transport boundary")
+		return
+	}
+	queryOK := r.URL.RawQuery == ""
+	if r.URL.Path == detail {
+		switch r.URL.RawQuery {
+		case "theme=system", "theme=light", "theme=dark":
+			queryOK = true
+		}
+	}
+	if !queryOK || (asset >= 0 && r.Method != "GET") || (r.URL.Path != detail && r.URL.Path != "/admin/extensions" && !favicon && asset < 0) {
 		fail("unexpected browser route")
 		return
 	}
 	switch r.Method {
 	case "GET":
-		if o.phase == 1 && !favicon {
+		if o.phase == 1 && !favicon && asset < 0 {
 			fail("unexpected GET before apply")
 			return
 		}
@@ -974,6 +1023,10 @@ func (o *configurationBrowserOracle) ServeHTTP(w http.ResponseWriter, r *http.Re
 		fail("unexpected application status")
 		return
 	}
+	if asset >= 0 && (rec.Header().Get("Content-Type") != "text/css; charset=utf-8" || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("X-Content-Type-Options") != "nosniff") {
+		fail("CSS MIME/privacy mismatch")
+		return
+	}
 	checkPhase := next
 	if o.phase == 2 && r.Method == "GET" {
 		checkPhase = 3
@@ -986,8 +1039,11 @@ func (o *configurationBrowserOracle) ServeHTTP(w http.ResponseWriter, r *http.Re
 		fail("application operation not accepted")
 		return
 	}
+	if asset >= 0 {
+		o.stylesheets[asset] = true
+	}
 	o.phase = next
-	if checkPhase == 3 && !favicon {
+	if checkPhase == 3 && r.URL.Path == detail {
 		o.reloads++
 	}
 	for name, values := range rec.Header() {
@@ -1006,7 +1062,8 @@ func runConfigurationBrowser(t *testing.T, f acceptanceBrowserStart, driver stri
 	clear(raw)
 	acceptanceCheck(t, err)
 	defer clear(key)
-	o := &configurationBrowserOracle{f: f, key: key}
+	noCSS := os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "configuration-no-css"
+	o := &configurationBrowserOracle{f: f, key: key, noCSS: noCSS}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	o.baseline, err = configurationSnapshot(ctx, f.DB)
 	cancel()
@@ -1014,6 +1071,7 @@ func runConfigurationBrowser(t *testing.T, f acceptanceBrowserStart, driver stri
 	acceptanceCheck(t, o.quiet())
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	acceptanceCheck(t, err)
+	o.authority = listener.Addr().String()
 	srv := &http.Server{Handler: o, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 10 * time.Second}
 	served := make(chan error, 1)
 	// Independent cleanup runs even if a phase assertion or driver fails.
@@ -1033,7 +1091,7 @@ func runConfigurationBrowser(t *testing.T, f acceptanceBrowserStart, driver stri
 	}
 	t.Cleanup(shutdown)
 	go func() { served <- srv.Serve(listener) }()
-	input := map[string]string{"origin": "http://" + listener.Addr().String(), "id": f.ID, "session": f.Session, "csrf": f.CSRF, "mode": "configuration", "endpoint": f.Endpoint, "secret": f.Secret}
+	input := map[string]string{"origin": "http://" + listener.Addr().String(), "id": f.ID, "session": f.Session, "csrf": f.CSRF, "mode": os.Getenv("GOTTH_MAIL_BROWSER_MODE"), "endpoint": f.Endpoint, "secret": f.Secret}
 	bootstrap, err := json.Marshal(input)
 	acceptanceCheck(t, err)
 	runctx, runcancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -1049,6 +1107,13 @@ func runConfigurationBrowser(t *testing.T, f acceptanceBrowserStart, driver stri
 	o.mu.Lock()
 	if o.failure != "" {
 		t.Error(o.failure)
+	}
+	if o.noCSS {
+		if o.stylesheets != [2]bool{} {
+			t.Error("blocked CSS reached configuration server")
+		}
+	} else if o.stylesheets != [2]bool{true, true} {
+		t.Error("both configuration stylesheets must load")
 	}
 	if o.phase != 2 || o.posts != 2 || o.reloads < 1 {
 		t.Errorf("configuration sequence incomplete: phase=%d posts=%d reloads=%d", o.phase, o.posts, o.reloads)
@@ -1067,7 +1132,7 @@ func runConfigurationBrowser(t *testing.T, f acceptanceBrowserStart, driver stri
 		t.Errorf("configuration browser failed: %v (sanitized proof)", runErr)
 	}
 	if !t.Failed() {
-		t.Log("PASS native configuration: independent SQL preview/apply/reload, AES-GCM, audit, no bearer/receiver/child, response privacy; login injected; renderer/B1 not admitted")
+		t.Logf("PASS native configuration noCSS=%t: independent SQL preview/apply/reload, AES-GCM, audit, no bearer/receiver/child, response privacy; login injected; renderer/B1 not admitted", o.noCSS)
 	}
 }
 
@@ -1564,12 +1629,8 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 			return
 		}
 		detail := "/admin/extensions/" + f.ID
-		if r.Header.Get("Authorization") != "" || r.URL.RawQuery != "" {
-			fail("unexpected authority or query")
-			return
-		}
-		if r.URL.Path != detail && r.URL.Path != "/admin/extensions" && r.URL.Path != "/favicon.ico" {
-			fail("unexpected connection-test route")
+		if err := connectionBrowserRequest(r, detail); err != nil {
+			fail(err.Error())
 			return
 		}
 		if r.Method == "POST" {
@@ -1609,6 +1670,10 @@ func runConnectionBrowser(t *testing.T, f acceptanceBrowserStart, driver string)
 		}
 		if rec.Code != expected {
 			fail("unexpected Test response status")
+			return
+		}
+		if err := connectionBrowserAssetResponse(r, rec); err != nil {
+			fail(err.Error())
 			return
 		}
 		state, err := configurationSnapshot(ctx, f.DB)
@@ -2270,4 +2335,1784 @@ func runInventoryPolicyBrowser(t *testing.T, f acceptanceBrowserStart, driver st
 		t.Error("policy separate full/HX/injection counts differ")
 	}
 	t.Logf("policy counters full %d HX %d injected %d cookie %d bearer %d methods %d routes %d", o.full.Load(), o.hx.Load(), o.injections.Load(), o.cookies.Load(), o.authorization.Load(), o.methods.Load(), o.routes.Load())
+}
+
+// Closed request-policy regression: a delegated response sentinel proves allowed
+// requests crossed the route guard; no SQL acceptance is inferred from it.
+func TestConfigurationBrowserRequestPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, path string
+		phase              int
+		allow              bool
+	}{
+		{"empty", "GET", "/admin/extensions/id", 0, true},
+		{"system", "POST", "/admin/extensions/id?theme=system", 0, true},
+		{"light", "POST", "/admin/extensions/id?theme=light", 0, true},
+		{"dark", "POST", "/admin/extensions/id?theme=dark", 0, true},
+		{"tokens", "GET", "/admin/extensions/assets/tokens.css", 0, true},
+		{"detail-css-preview", "GET", "/admin/extensions/assets/detail.css", 1, true},
+		{"tokens-after", "GET", "/admin/extensions/assets/tokens.css", 2, true},
+		{"unknown-theme", "GET", "/admin/extensions/id?theme=other", 0, false},
+		{"duplicate", "GET", "/admin/extensions/id?theme=dark&theme=dark", 0, false},
+		{"mixed", "GET", "/admin/extensions/id?theme=dark&action=enable", 0, false},
+		{"encoded", "GET", "/admin/extensions/id?%74heme=dark", 0, false},
+		{"authority", "GET", "/admin/extensions/id?csrf_token=secret", 0, false},
+		{"inventory-query", "GET", "/admin/extensions?theme=dark", 0, false},
+		{"favicon-query", "GET", "/favicon.ico?theme=dark", 0, false},
+		{"asset-query", "GET", "/admin/extensions/assets/detail.css?theme=dark", 0, false},
+		{"asset-post", "POST", "/admin/extensions/assets/detail.css", 0, false},
+		{"asset-head", "HEAD", "/admin/extensions/assets/tokens.css", 0, false},
+		{"asset-prefix", "GET", "/admin/extensions/assets/detail.css/extra", 0, false},
+		{"vendor", "GET", "/admin/extensions/assets/htmx.js", 0, false},
+		{"page-beforeapply", "GET", "/admin/extensions/id?theme=dark", 1, false},
+		{"inventory-beforeapply", "GET", "/admin/extensions", 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invoked := false
+			o := &configurationBrowserOracle{phase: tc.phase, f: acceptanceBrowserStart{ID: "id", Secret: "private-canary", Session: "session-canary", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				invoked = true
+				_, _ = io.WriteString(w, "private-canary")
+			})}}
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader("action=configure-preview"))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			o.ServeHTTP(w, req)
+			if invoked != tc.allow || w.Code != 500 || o.failure == "" {
+				t.Fatal("closed policy mismatch")
+			}
+			if tc.allow && o.failure != "response secret leak or fixture size exceeded" {
+				t.Fatal("allowed request skipped response privacy barrier")
+			}
+			if o.phase != tc.phase || o.reloads != 0 {
+				t.Fatal("rejected/asset request advanced phase")
+			}
+		})
+	}
+}
+
+func TestConfigurationBrowserCSSBarrier(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	baseline, err := configurationSnapshot(context.Background(), db)
+	acceptanceCheck(t, err)
+	for _, tc := range []struct {
+		name                       string
+		phase                      int
+		status                     int
+		mime, cache, nosniff, body string
+		bearer, ok                 bool
+	}{
+		{"initial", 0, 200, "text/css; charset=utf-8", "no-store", "nosniff", "body{}", false, true},
+		{"after-apply", 2, 200, "text/css; charset=utf-8", "no-store", "nosniff", "body{}", false, true},
+		{"wrong-status", 0, 404, "text/css; charset=utf-8", "no-store", "nosniff", "body{}", false, false},
+		{"wrong-MIME", 0, 200, "text/html", "no-store", "nosniff", "body{}", false, false},
+		{"cache", 0, 200, "text/css; charset=utf-8", "public", "nosniff", "body{}", false, false},
+		{"sniff", 0, 200, "text/css; charset=utf-8", "no-store", "", "body{}", false, false},
+		{"secret", 0, 200, "text/css; charset=utf-8", "no-store", "nosniff", "secret-canary", false, false},
+		{"session", 0, 200, "text/css; charset=utf-8", "no-store", "nosniff", "session-canary", false, false},
+		{"size", 0, 200, "text/css; charset=utf-8", "no-store", "nosniff", strings.Repeat("x", (1<<20)+1), false, false},
+		{"bearer", 0, 200, "text/css; charset=utf-8", "no-store", "nosniff", "body{}", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &configurationBrowserOracle{phase: tc.phase, baseline: baseline, applied: baseline, f: acceptanceBrowserStart{ID: "id", DB: db, Secret: "secret-canary", Session: "session-canary", RuntimeRoot: t.TempDir(), Executable: "/nonexistent/fixture", Requests: func() int32 { return 0 }, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.mime)
+				w.Header().Set("Cache-Control", tc.cache)
+				w.Header().Set("X-Content-Type-Options", tc.nosniff)
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			})}}
+			for _, path := range []string{"/admin/extensions/assets/tokens.css", "/admin/extensions/assets/detail.css"} {
+				r := httptest.NewRequest("GET", path, nil)
+				if tc.bearer {
+					r.Header.Set("Authorization", "Bearer synthetic")
+				}
+				w := httptest.NewRecorder()
+				o.ServeHTTP(w, r)
+				if (w.Code == 200) != tc.ok {
+					t.Fatal("CSS gate mismatch")
+				}
+			}
+			if o.phase != tc.phase || o.posts != 0 || o.reloads != 0 {
+				t.Fatal("CSS credited phase/post/reload")
+			}
+			if tc.ok && o.stylesheets != [2]bool{true, true} {
+				t.Fatal("successful CSS not recorded")
+			}
+			if !tc.ok && o.stylesheets != [2]bool{} {
+				t.Fatal("failed CSS credited")
+			}
+			after, err := configurationSnapshot(context.Background(), db)
+			acceptanceCheck(t, err)
+			if baseline != after {
+				t.Fatal("CSS changed SQL")
+			}
+		})
+	}
+}
+
+// SETUP only: configure through the service, add an independently encrypted
+// retained slot and an unrelated configured instance. No native-action credit.
+func secretsBrowserSetup(t *testing.T, f acceptanceBrowserStart, key []byte) {
+	t.Helper()
+	ctx := context.Background()
+	svc, err := extensionsadmin.NewService(f.DB, key, nil)
+	acceptanceCheck(t, err)
+	actor := audit.ActorRef{Type: "oidc_subject", ID: f.ActorID}
+	input := extensionsadmin.ConfigureInput{Configuration: map[string]any{"webhook.endpoint": f.Endpoint, "webhook.timeout-seconds": 2}, Secrets: map[string]string{"webhook.hmac-key": f.Secret}}
+	configure := func(id string) {
+		p, e := svc.PreviewConfigure(ctx, actor, id, input)
+		acceptanceCheck(t, e)
+		_, e = svc.ApplyConfigure(ctx, actor, id, p.ID, p.Confirmation, input)
+		acceptanceCheck(t, e)
+	}
+	configure(f.ID)
+	item := f.Current()
+	other := acceptanceUUID(t)
+	_, err = svc.Install(ctx, actor, extensionsadmin.InstallRequest{InstanceID: other, ExtensionID: "notification.d3-survivor", Repository: item.Repository, ArtifactPin: item.ArtifactPin, ManifestDigest: item.ManifestDigest, GrantDigest: item.GrantDigest, SessionDigest: item.SessionDigest, Capabilities: item.Capabilities, Interfaces: item.Interfaces, SecretSlots: item.SecretSlots, Metadata: item.Metadata})
+	acceptanceCheck(t, err)
+	configure(other)
+	_, err = svc.PreviewDeleteSecrets(ctx, actor, other)
+	acceptanceCheck(t, err)
+	block, err := aes.NewCipher(key)
+	acceptanceCheck(t, err)
+	gcm, err := cipher.NewGCM(block)
+	acceptanceCheck(t, err)
+	nonce := make([]byte, gcm.NonceSize())
+	_, err = rand.Read(nonce)
+	acceptanceCheck(t, err)
+	slot := "retained.d3-key"
+	encrypted := gcm.Seal(nil, nonce, []byte(f.Secret), []byte(f.ID+"\x00"+slot))
+	_, err = f.DB.Exec("INSERT INTO extension_secrets(instance_id,slot,nonce,ciphertext,key_version,configured_at,rotated_at) VALUES($1,$2,$3,$4,1,now(),now())", f.ID, slot, nonce, encrypted)
+	acceptanceCheck(t, err)
+	_, err = f.DB.Exec("UPDATE extension_instances SET tested_revision=configuration_revision,health_code='extension.ready' WHERE instance_id=$1", f.ID)
+	acceptanceCheck(t, err)
+	var count int
+	acceptanceCheck(t, f.DB.QueryRow("SELECT count(*) FROM extension_secrets WHERE instance_id=$1", f.ID).Scan(&count))
+	if count != 2 || item.Enabled || item.Routed {
+		t.Fatal("D3 setup not disabled/current+retained")
+	}
+}
+
+// Concrete fixed four-table comparison; all decoded row material stays in memory.
+// Time O(B+N*N), space O(B+N), excluding JSON delegates; not a production abstraction.
+func secretsBrowserDelta(before, after [4]string, action, actor, id, previewID, phrase string, key []byte) error {
+	var a, b [4][]map[string]any
+	for i := range a {
+		if json.Unmarshal([]byte(before[i]), &a[i]) != nil || json.Unmarshal([]byte(after[i]), &b[i]) != nil {
+			return errors.New("D3 SQL decode")
+		}
+	}
+	if action == "denied" || action == "read" {
+		if before != after {
+			return errors.New("D3 denial/read mutated SQL")
+		}
+		return nil
+	}
+	if action == "preview" {
+		for _, i := range []int{0, 1, 3} {
+			if before[i] != after[i] {
+				return errors.New("D3 preview authoritative mutation")
+			}
+		}
+		if len(b[2]) != len(a[2])+1 {
+			return errors.New("D3 preview cardinality")
+		}
+		old := map[string]map[string]any{}
+		for _, r := range a[2] {
+			old[r["id"].(string)] = r
+		}
+		var added map[string]any
+		for _, r := range b[2] {
+			if prior, ok := old[r["id"].(string)]; ok {
+				if !reflect.DeepEqual(prior, r) {
+					return errors.New("D3 prior preview changed")
+				}
+				delete(old, r["id"].(string))
+			} else {
+				if added != nil {
+					return errors.New("D3 extra preview")
+				}
+				added = r
+			}
+		}
+		if len(old) != 0 || added == nil || added["id"] != previewID || added["instance_id"] != id || added["operation"] != "delete_secrets" || added["actor_type"] != "oidc_subject" || added["actor_id"] != actor || added["consumed_at"] != nil || !reflect.DeepEqual(added["payload_json"], map[string]any{}) {
+			return errors.New("D3 preview binding")
+		}
+		var revision any
+		for _, r := range a[0] {
+			if r["instance_id"] == id {
+				revision = r["configuration_revision"]
+			}
+		}
+		digest := sha256.Sum256([]byte("{}"))
+		mac := hmac.New(sha256.New, key)
+		empty := hex.EncodeToString(mac.Sum(nil))
+		mac.Write([]byte("extension-preview-confirmation\x00" + phrase))
+		if revision == nil || added["base_revision"] != revision || added["payload_sha256"] != hex.EncodeToString(digest[:]) || added["secret_binding_sha256"] != empty || added["confirmation_sha256"] != hex.EncodeToString(mac.Sum(nil)) {
+			return errors.New("D3 preview digest")
+		}
+		created, e1 := time.Parse("2006-01-02T15:04:05.999999", added["created_at"].(string))
+		expires, e2 := time.Parse("2006-01-02T15:04:05.999999", added["expires_at"].(string))
+		if e1 != nil || e2 != nil || !expires.After(time.Now().UTC()) || !expires.After(created) {
+			return errors.New("D3 preview expiry")
+		}
+		return nil
+	}
+	if action != "apply" {
+		return errors.New("D3 unknown delta")
+	}
+	if len(a[0]) != 2 || len(b[0]) != 2 {
+		return errors.New("D3 registry cardinality")
+	}
+	chosen := false
+	for _, r := range b[0] {
+		var prior map[string]any
+		for _, p := range a[0] {
+			if p["instance_id"] == r["instance_id"] {
+				prior = p
+			}
+		}
+		if prior == nil {
+			return errors.New("D3 registry identity")
+		}
+		if r["instance_id"] == id {
+			chosen = true
+			if prior["enabled"] != false || prior["routed"] != false || r["configuration_revision"] != prior["configuration_revision"].(float64)+1 || r["tested_revision"] != nil || r["health_code"] != "extension.unknown" {
+				return errors.New("D3 revision/health")
+			}
+			for _, k := range []string{"configuration_revision", "tested_revision", "health_code", "updated_at"} {
+				delete(prior, k)
+				delete(r, k)
+			}
+		}
+		if !reflect.DeepEqual(prior, r) {
+			return errors.New("D3 registry/survivor changed")
+		}
+	}
+	if !chosen {
+		return errors.New("D3 chosen registry missing")
+	}
+	survivors := []map[string]any{}
+	removed := 0
+	for _, r := range a[1] {
+		if r["instance_id"] == id {
+			removed++
+		} else {
+			survivors = append(survivors, r)
+		}
+	}
+	if removed != 2 || !reflect.DeepEqual(survivors, b[1]) {
+		return errors.New("D3 current/retained/survivor secrets")
+	}
+	if len(a[2]) != len(b[2]) {
+		return errors.New("D3 preview count changed")
+	}
+	consumed := false
+	for _, r := range b[2] {
+		var prior map[string]any
+		for _, p := range a[2] {
+			if p["id"] == r["id"] {
+				prior = p
+			}
+		}
+		if prior == nil {
+			return errors.New("D3 preview replaced")
+		}
+		if r["id"] == previewID {
+			consumed = true
+			if prior["consumed_at"] != nil || r["consumed_at"] == nil {
+				return errors.New("D3 preview consumption")
+			}
+			delete(prior, "consumed_at")
+			delete(r, "consumed_at")
+		}
+		if !reflect.DeepEqual(prior, r) {
+			return errors.New("D3 older preview changed")
+		}
+	}
+	if !consumed {
+		return errors.New("D3 selected preview missing")
+	}
+	return updateAudit(before[3], after[3], actor, id, "extension.secrets.delete", map[string]any{"deleted_secret_slots": "[REDACTED]"})
+}
+
+// Fixed identity-table oracle; JSON stays in memory. O(B) time/space plus SQL.
+func recoveryIdentitySnapshot(ctx context.Context, db *sql.DB) ([4]string, error) {
+	var out [4]string
+	for i, table := range []string{"tokens", "sessions", "identity_refs", "role_bindings"} {
+		if err := db.QueryRowContext(ctx, "SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb)::text FROM "+table+" t").Scan(&out[i]); err != nil {
+			return out, errors.New("recovery identity snapshot")
+		}
+	}
+	return out, nil
+}
+
+type secretsBrowserOracle struct {
+	recovery       bool
+	noCSS          bool
+	authority      string
+	identity       [4]string
+	f              acceptanceBrowserStart
+	key            []byte
+	mu             sync.Mutex
+	posts, reloads int
+	failure        string
+	state          [4]string
+	styles         [2]bool
+	previewID      string
+}
+
+func (o *secretsBrowserOracle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	fail := func(s string) {
+		if o.failure == "" {
+			o.failure = s
+		}
+		http.Error(w, "secret deletion fixture failed", 500)
+	}
+	if o.failure != "" {
+		fail(o.failure)
+		return
+	}
+	if r.Header.Get("Authorization") != "" {
+		fail("D3 bearer forbidden")
+		return
+	}
+	detail := "/admin/extensions/" + o.f.ID
+	asset := -1
+	if r.URL.Path == "/admin/extensions/assets/tokens.css" {
+		asset = 0
+	}
+	if r.URL.Path == "/admin/extensions/assets/detail.css" {
+		asset = 1
+	}
+	if o.noCSS && (asset >= 0 || r.Host != o.authority || r.URL.Host != "" || r.URL.Scheme != "" || r.URL.User != nil || r.URL.Fragment != "" || r.URL.RawPath != "" || r.URL.ForceQuery) {
+		fail("recovery no-CSS request crossed transport boundary")
+		return
+	}
+	queryOK := r.URL.RawQuery == ""
+	if r.URL.Path == detail {
+		switch r.URL.RawQuery {
+		case "theme=system", "theme=light", "theme=dark":
+			queryOK = true
+		}
+	}
+	favicon := r.URL.Path == "/favicon.ico" && r.Method == "GET"
+	if !queryOK || (asset >= 0 && r.Method != "GET") || (r.URL.Path != detail && r.URL.Path != "/admin/extensions" && !favicon && asset < 0) {
+		fail("D3 unexpected route")
+		return
+	}
+	action := "read"
+	previewID := ""
+	if r.Method == "POST" {
+		limit := 5
+		if o.recovery {
+			limit = 2
+		}
+		if r.URL.Path != detail || o.posts >= limit {
+			fail("D3 unexpected POST")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if r.ParseForm() != nil {
+			fail("D3 bad form")
+			return
+		}
+		sequence := []string{"secrets-delete-preview", "secrets-delete-preview", "secrets-delete-apply", "secrets-delete-preview", "secrets-delete-apply"}
+		if o.recovery {
+			sequence = []string{"secrets-delete-preview", "secrets-delete-apply"}
+		}
+		expected := sequence[o.posts]
+		if r.PostForm.Get("action") != expected {
+			fail("D3 unexpected action/phase")
+			return
+		}
+		action = "preview"
+		if !o.recovery && o.posts == 2 {
+			action = "denied"
+		}
+		if (!o.recovery && o.posts == 4) || (o.recovery && o.posts == 1) {
+			action = "apply"
+		}
+		previewID = r.PostForm.Get("preview_id")
+		if action != "preview" && (o.previewID == "" || previewID != o.previewID) {
+			fail("D3 Apply preview not latest rendered")
+			return
+		}
+	} else if r.Method != "GET" || (o.posts > 0 && ((!o.recovery && o.posts < 5) || (o.recovery && o.posts < 2)) && asset < 0 && !favicon) {
+		fail("D3 unexpected GET/method")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	rec := httptest.NewRecorder()
+	o.f.Handler.ServeHTTP(rec, r.WithContext(ctx))
+	body := rec.Body.Bytes()
+	if len(body) > 1<<20 || bytes.Contains(body, []byte(o.f.Secret)) || bytes.Contains(body, []byte(o.f.Session)) {
+		fail("D3 response privacy")
+		return
+	}
+	want := 200
+	if r.URL.Path == "/admin/extensions" {
+		want = 401
+	}
+	if favicon {
+		want = 404
+	}
+	if rec.Code != want {
+		fail("D3 response status")
+		return
+	}
+	if asset >= 0 && (rec.Header().Get("Content-Type") != "text/css; charset=utf-8" || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("X-Content-Type-Options") != "nosniff") {
+		fail("D3 CSS privacy")
+		return
+	}
+	phrase := ""
+	if action == "preview" {
+		p := regexp.MustCompile("name=\"preview_id\" value=\"([^\"]+)\"").FindSubmatch(body)
+		c := regexp.MustCompile("<code>(confirm-[a-f0-9]{32})</code>").FindSubmatch(body)
+		if len(p) != 2 || len(c) != 2 {
+			fail("D3 rendered preview missing")
+			return
+		}
+		previewID = string(p[1])
+		phrase = string(c[1])
+	}
+	state, err := configurationSnapshot(ctx, o.f.DB)
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	if o.recovery {
+		identity, e := recoveryIdentitySnapshot(ctx, o.f.DB)
+		if e != nil || identity != o.identity {
+			fail("recovery identity mutation")
+			return
+		}
+		if r.URL.Path == detail && (!bytes.Contains(body, []byte("Extension recovery")) || bytes.Contains(body, []byte("recovery-metadata-canary")) || bytes.Contains(body, []byte(`id="configuration"`))) {
+			fail("recovery projection")
+			return
+		}
+	}
+	if err = secretsBrowserDelta(o.state, state, action, o.f.ActorID, o.f.ID, previewID, phrase, o.key); err != nil {
+		fail(err.Error())
+		return
+	}
+	for _, s := range state {
+		for _, v := range []string{o.f.Secret, o.f.Session, o.f.CSRF} {
+			if v != "" && strings.Contains(s, v) {
+				fail("D3 SQL plaintext leak")
+				return
+			}
+		}
+	}
+	quiet := configurationBrowserOracle{f: o.f}
+	if err = quiet.quiet(); err != nil {
+		fail(err.Error())
+		return
+	}
+	if r.Method == "POST" {
+		accepted := bytes.Contains(body, []byte("extension operation accepted"))
+		if accepted == (action == "denied") {
+			fail("D3 acceptance/denial projection")
+			return
+		}
+		o.posts++
+	}
+	if asset >= 0 {
+		o.styles[asset] = true
+	}
+	if r.Method == "GET" && r.URL.Path == detail && ((!o.recovery && o.posts == 5) || (o.recovery && o.posts == 2)) {
+		o.reloads++
+	}
+	if action == "preview" {
+		o.previewID = previewID
+	}
+	o.state = state
+	for k, vs := range rec.Header() {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(rec.Code)
+	_, _ = w.Write(body)
+}
+
+func runSecretsBrowser(t *testing.T, f acceptanceBrowserStart, driver string) {
+	raw, err := os.ReadFile(f.MasterFile)
+	acceptanceCheck(t, err)
+	key, err := hex.DecodeString(string(raw))
+	clear(raw)
+	acceptanceCheck(t, err)
+	defer clear(key)
+	secretsBrowserSetup(t, f, key)
+	noCSS := os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "secrets-delete-recovery-no-css"
+	recovery := os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "secrets-delete-recovery" || noCSS
+	if recovery {
+		// SETUP only: independently authenticate both seeded secret rows in memory.
+		block, e := aes.NewCipher(key)
+		acceptanceCheck(t, e)
+		gcm, e := cipher.NewGCM(block)
+		acceptanceCheck(t, e)
+		rows, e := f.DB.Query("SELECT slot,nonce,ciphertext FROM extension_secrets WHERE instance_id=$1", f.ID)
+		acceptanceCheck(t, e)
+		count := 0
+		for rows.Next() {
+			var slot string
+			var nonce, ciphertext []byte
+			acceptanceCheck(t, rows.Scan(&slot, &nonce, &ciphertext))
+			plain, e := gcm.Open(nil, nonce, ciphertext, []byte(f.ID+"\x00"+slot))
+			valid := e == nil && bytes.Equal(plain, []byte(f.Secret))
+			clear(plain)
+			if !valid {
+				rows.Close()
+				t.Fatal("recovery setup secret authentication")
+			}
+			count++
+		}
+		acceptanceCheck(t, rows.Err())
+		acceptanceCheck(t, rows.Close())
+		if count != 2 {
+			t.Fatal("recovery setup secret count")
+		}
+		_, e = f.DB.Exec(`UPDATE extension_instances SET metadata_json=jsonb_set(jsonb_set(metadata_json,'{fields,0,kind}','"unknown"'::jsonb),'{fields,0,label}','"recovery-metadata-canary"'::jsonb) WHERE instance_id=$1`, f.ID)
+		acceptanceCheck(t, e)
+	}
+	state, err := configurationSnapshot(context.Background(), f.DB)
+	acceptanceCheck(t, err)
+	o := &secretsBrowserOracle{f: f, key: key, state: state, recovery: recovery, noCSS: noCSS}
+	if recovery {
+		o.identity, err = recoveryIdentitySnapshot(context.Background(), f.DB)
+		acceptanceCheck(t, err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	acceptanceCheck(t, err)
+	o.authority = listener.Addr().String()
+	srv := &http.Server{Handler: o, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 10 * time.Second}
+	served := make(chan error, 1)
+	var once sync.Once
+	shutdown := func() {
+		once.Do(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(ctx); err != nil {
+				t.Error("D3 HTTP shutdown")
+				_ = srv.Close()
+			}
+			if err := <-served; err != nil && err != http.ErrServerClosed {
+				t.Error("D3 serve")
+			}
+		})
+	}
+	t.Cleanup(shutdown)
+	go func() { served <- srv.Serve(listener) }()
+	bootstrap, err := json.Marshal(map[string]string{"origin": "http://" + listener.Addr().String(), "id": f.ID, "session": f.Session, "csrf": f.CSRF, "mode": os.Getenv("GOTTH_MAIL_BROWSER_MODE"), "secret": f.Secret})
+	acceptanceCheck(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "node", driver, os.Getenv("GOTTH_MAIL_BROWSER_OUTPUT"))
+	cmd.Stdin = bytes.NewReader(bootstrap)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 20 * time.Second
+	runErr := cmd.Run()
+	clear(bootstrap)
+	shutdown()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.failure != "" {
+		t.Error(o.failure)
+	}
+	expectedPosts := 5
+	if recovery {
+		expectedPosts = 2
+	}
+	wantStyles := [2]bool{true, true}
+	if noCSS {
+		wantStyles = [2]bool{}
+	}
+	if o.posts != expectedPosts || o.reloads < 1 || o.styles != wantStyles {
+		t.Errorf("D3 incomplete posts=%d reloads=%d CSS=%v", o.posts, o.reloads, o.styles)
+	}
+	after, err := configurationSnapshot(context.Background(), f.DB)
+	if err != nil || after != o.state {
+		t.Error("D3 final state drift")
+	}
+	quiet := configurationBrowserOracle{f: f}
+	if err = quiet.quiet(); err != nil {
+		t.Error(err)
+	}
+	if recovery {
+		identity, e := recoveryIdentitySnapshot(context.Background(), f.DB)
+		if e != nil || identity != o.identity {
+			t.Error("recovery final identity mutation")
+		}
+	}
+	if runErr != nil {
+		t.Errorf("D3 browser failed: %v (safe proof)", runErr)
+	}
+	if !t.Failed() {
+		if recovery {
+			t.Log("PASS native recovery two POSTs, blank required denial, refresh, eight-table delta and independently authenticated setup, runtime zero")
+			return
+		}
+		t.Log("PASS native D3 five POSTs, re-preview isolation, required denial, wrong phrase unchanged, all chosen secrets deleted, survivor/registry preserved, exact revision/preview/audit, zero runtime/receiver")
+	}
+}
+
+func TestSecretsBrowserRunnerMode(t *testing.T) {
+	for _, mode := range []string{"secrets-delete", "secrets-delete-recovery", "secrets-delete-recovery-no-css"} {
+		for _, extra := range []bool{false, true} {
+			args := []string{"../../scripts/extensions-browser-acceptance.sh", "/missing-binary", "/missing-archive", "/missing-pg", "/missing-output", mode}
+			want := 1
+			if extra {
+				args = append(args, "/extra")
+				want = 2
+			}
+			err := exec.Command("bash", args...).Run()
+			var e *exec.ExitError
+			if !errors.As(err, &e) || e.ExitCode() != want {
+				t.Fatal("D3 runner mode contract")
+			}
+		}
+	}
+}
+
+func TestSecretsBrowserDelta(t *testing.T) {
+	encode := func(v any) string { b, e := json.Marshal(v); acceptanceCheck(t, e); return string(b) }
+	for _, kind := range []string{"valid", "registry", "survivor", "secret", "revision", "tested", "health", "preview", "older", "actor", "audit", "audit-payload"} {
+		t.Run(kind, func(t *testing.T) {
+			chosen := map[string]any{"instance_id": "chosen", "configuration_revision": 2, "tested_revision": 2, "health_code": "extension.ready", "enabled": false, "routed": false, "lifecycle": "stopped", "configuration_json": map[string]any{"endpoint": "fixed"}}
+			other := map[string]any{"instance_id": "other", "configuration_revision": 2, "configuration_json": "survivor"}
+			previews := []map[string]any{{"id": "old", "consumed_at": nil}, {"id": "chosen-preview", "consumed_at": nil}}
+			survivor := map[string]any{"instance_id": "other", "slot": "current", "ciphertext": "fixed"}
+			before := [4]string{encode([]any{chosen, other}), encode([]any{map[string]any{"instance_id": "chosen", "slot": "current"}, map[string]any{"instance_id": "chosen", "slot": "retained"}, survivor}), encode(previews), "[]"}
+			chosen["configuration_revision"] = 3
+			chosen["tested_revision"] = nil
+			chosen["health_code"] = "extension.unknown"
+			chosen["updated_at"] = "later"
+			previews[1]["consumed_at"] = "later"
+			event := map[string]any{"id": "event", "actor_type": "oidc_subject", "actor_id": "actor", "resource_type": "extension", "resource_id": "chosen", "action": "extension.secrets.delete", "result": "success", "after_redacted_json": encode(map[string]any{"deleted_secret_slots": "[REDACTED]"})}
+			after := [4]string{encode([]any{chosen, other}), encode([]any{survivor}), encode(previews), encode([]any{event})}
+			switch kind {
+			case "registry":
+				chosen["configuration_json"] = "changed"
+			case "survivor":
+				other["configuration_json"] = "changed"
+			case "secret":
+				after[1] = before[1]
+			case "revision":
+				chosen["configuration_revision"] = 4
+			case "tested":
+				chosen["tested_revision"] = 2
+			case "health":
+				chosen["health_code"] = "extension.ready"
+			case "preview":
+				previews[1]["consumed_at"] = nil
+			case "older":
+				previews[0]["consumed_at"] = "later"
+			case "actor":
+				event["actor_id"] = "other"
+			case "audit":
+				event["action"] = "extension.uninstall"
+			case "audit-payload":
+				event["after_redacted_json"] = "{}"
+			}
+			after[0] = encode([]any{chosen, other})
+			after[2] = encode(previews)
+			after[3] = encode([]any{event})
+			if (secretsBrowserDelta(before, after, "apply", "actor", "chosen", "chosen-preview", "", nil) == nil) != (kind == "valid") {
+				t.Fatal("D3 apply delta corruption mismatch")
+			}
+			if secretsBrowserDelta(before, before, "denied", "actor", "chosen", "", "", nil) != nil || secretsBrowserDelta(before, after, "denied", "actor", "chosen", "", "", nil) == nil {
+				t.Fatal("D3 denial exact snapshot mismatch")
+			}
+		})
+	}
+	key := bytes.Repeat([]byte{7}, 32)
+	phrase := "confirm-" + strings.Repeat("a", 32)
+	for _, kind := range []string{"valid", "actor", "target", "operation", "revision", "payload", "hash", "secretbinding", "confirmation", "expired", "consumed", "older", "authoritative"} {
+		t.Run("preview-"+kind, func(t *testing.T) {
+			digest := sha256.Sum256([]byte("{}"))
+			mac := hmac.New(sha256.New, key)
+			empty := hex.EncodeToString(mac.Sum(nil))
+			mac.Write([]byte("extension-preview-confirmation\x00" + phrase))
+			row := map[string]any{"id": "new", "instance_id": "chosen", "operation": "delete_secrets", "actor_type": "oidc_subject", "actor_id": "actor", "base_revision": 2, "payload_json": map[string]any{}, "payload_sha256": hex.EncodeToString(digest[:]), "secret_binding_sha256": empty, "confirmation_sha256": hex.EncodeToString(mac.Sum(nil)), "consumed_at": nil, "created_at": time.Now().UTC().Format("2006-01-02T15:04:05.999999"), "expires_at": time.Now().Add(time.Minute).UTC().Format("2006-01-02T15:04:05.999999")}
+			old := map[string]any{"id": "old", "consumed_at": nil}
+			before := [4]string{encode([]any{map[string]any{"instance_id": "chosen", "configuration_revision": 2}}), "[]", encode([]any{old}), "[]"}
+			after := before
+			switch kind {
+			case "actor":
+				row["actor_id"] = "other"
+			case "target":
+				row["instance_id"] = "other"
+			case "operation":
+				row["operation"] = "uninstall"
+			case "revision":
+				row["base_revision"] = 3
+			case "payload":
+				row["payload_json"] = map[string]any{"bad": true}
+			case "hash":
+				row["payload_sha256"] = "bad"
+			case "secretbinding":
+				row["secret_binding_sha256"] = "bad"
+			case "confirmation":
+				row["confirmation_sha256"] = "bad"
+			case "expired":
+				row["expires_at"] = "2000-01-01T00:00:00"
+			case "consumed":
+				row["consumed_at"] = "later"
+			case "older":
+				old["consumed_at"] = "later"
+			case "authoritative":
+				after[1] = "[{}]"
+			}
+			after[2] = encode([]any{old, row})
+			if (secretsBrowserDelta(before, after, "preview", "actor", "chosen", "new", phrase, key) == nil) != (kind == "valid") {
+				t.Fatal("D3 preview corruption mismatch")
+			}
+		})
+	}
+}
+
+func TestSecretsBrowserRejectsUnexpected(t *testing.T) {
+	// Client-injected denial must keep both assets outside the real handler.
+	for _, path := range []string{"/admin/extensions/assets/detail.css", "/admin/extensions/assets/tokens.css"} {
+		invoked := false
+		o := &secretsBrowserOracle{recovery: true, noCSS: true, authority: "127.0.0.1:1234", f: acceptanceBrowserStart{ID: "id", Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { invoked = true })}}
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "http://127.0.0.1:1234"+path, nil)
+		r.URL.Scheme = ""
+		r.URL.Host = ""
+		o.ServeHTTP(w, r)
+		if w.Code != 500 || invoked || o.failure != "recovery no-CSS request crossed transport boundary" || o.posts != 0 || o.styles != [2]bool{} {
+			t.Fatal("recovery CSS crossed denial boundary")
+		}
+	}
+	for _, tc := range []struct {
+		method, path, body string
+		posts              int
+	}{
+		{"POST", "/admin/extensions/id", "action=uninstall-apply", 0},
+		{"POST", "/admin/extensions/id", "action=secrets-delete-apply", 0},
+		{"POST", "/admin/extensions/id", "action=secrets-delete-preview", 5},
+		{"GET", "/admin/extensions/id?theme=dark&theme=light", "", 0},
+		{"GET", "/admin/extensions/id?csrf_token=x", "", 0},
+		{"GET", "/admin/extensions/id", "", 1},
+		{"POST", "/admin/extensions/assets/detail.css", "", 0},
+		{"GET", "/admin/extensions/assets/detail.css?theme=dark", "", 0},
+		{"GET", "/admin/extensions/assets/evil.js", "", 0},
+	} {
+		invoked := false
+		o := &secretsBrowserOracle{posts: tc.posts, f: acceptanceBrowserStart{ID: "id", Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { invoked = true })}}
+		r := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		o.ServeHTTP(w, r)
+		if w.Code != 500 || o.failure == "" || invoked || o.posts != tc.posts {
+			t.Fatal("D3 forbidden request crossed barrier")
+		}
+	}
+}
+
+// D4 concrete four-table delta; time O(B+N), space O(B+N) including decoded rows.
+func uninstallBrowserDelta(before, after [4]string, action, actor, id, previewID, phrase string, key []byte, auditBefore string) error {
+	var a, b [4][]map[string]any
+	for i := range a {
+		if json.Unmarshal([]byte(before[i]), &a[i]) != nil || json.Unmarshal([]byte(after[i]), &b[i]) != nil {
+			return errors.New("D4 SQL decode")
+		}
+	}
+	if action == "denied" || action == "read" {
+		if before != after {
+			return errors.New("D4 denial/read mutated SQL")
+		}
+		return nil
+	}
+	if action == "preview" {
+		for _, i := range []int{0, 1, 3} {
+			if before[i] != after[i] {
+				return errors.New("D4 preview authoritative mutation")
+			}
+		}
+		if len(b[2]) != len(a[2])+1 {
+			return errors.New("D4 preview cardinality")
+		}
+		old := map[string]map[string]any{}
+		for _, r := range a[2] {
+			old[r["id"].(string)] = r
+		}
+		var added map[string]any
+		for _, r := range b[2] {
+			if prior, ok := old[r["id"].(string)]; ok {
+				if !reflect.DeepEqual(prior, r) {
+					return errors.New("D4 prior preview changed")
+				}
+				delete(old, r["id"].(string))
+			} else {
+				if added != nil {
+					return errors.New("D4 extra preview")
+				}
+				added = r
+			}
+		}
+		if len(old) != 0 || added == nil || added["id"] != previewID || added["instance_id"] != id || added["operation"] != "uninstall" || added["actor_type"] != "oidc_subject" || added["actor_id"] != actor || added["consumed_at"] != nil || !reflect.DeepEqual(added["payload_json"], map[string]any{}) {
+			return errors.New("D4 preview binding")
+		}
+		var revision any
+		for _, r := range a[0] {
+			if r["instance_id"] == id {
+				revision = r["configuration_revision"]
+			}
+		}
+		digest := sha256.Sum256([]byte("{}"))
+		mac := hmac.New(sha256.New, key)
+		empty := hex.EncodeToString(mac.Sum(nil))
+		mac.Write([]byte("extension-preview-confirmation\x00" + phrase))
+		if revision == nil || added["base_revision"] != revision || added["payload_sha256"] != hex.EncodeToString(digest[:]) || added["secret_binding_sha256"] != empty || added["confirmation_sha256"] != hex.EncodeToString(mac.Sum(nil)) {
+			return errors.New("D4 preview digest")
+		}
+		created, e1 := time.Parse("2006-01-02T15:04:05.999999", added["created_at"].(string))
+		expires, e2 := time.Parse("2006-01-02T15:04:05.999999", added["expires_at"].(string))
+		if e1 != nil || e2 != nil || !expires.After(time.Now().UTC()) || !expires.After(created) {
+			return errors.New("D4 preview expiry")
+		}
+		return nil
+	}
+	if action != "apply" {
+		return errors.New("D4 unknown delta")
+	}
+	for _, table := range []int{0, 1, 2} {
+		expected := []map[string]any{}
+		removed := 0
+		for _, r := range a[table] {
+			if r["instance_id"] == id {
+				removed++
+				if table == 1 {
+					return errors.New("D4 retained secrets before uninstall")
+				}
+			} else {
+				expected = append(expected, r)
+			}
+		}
+		if table == 0 && removed != 1 {
+			return errors.New("D4 chosen registry absent before")
+		}
+		if table == 2 && removed < 1 {
+			return errors.New("D4 uninstall preview absent before")
+		}
+		if !reflect.DeepEqual(expected, b[table]) {
+			return errors.New("D4 target cascade/survivor mismatch")
+		}
+	}
+	if len(b[3]) != len(a[3])+1 {
+		return errors.New("D4 audit cardinality")
+	}
+	old := map[any]map[string]any{}
+	for _, e := range a[3] {
+		old[e["id"]] = e
+	}
+	var event map[string]any
+	for _, e := range b[3] {
+		if prior, ok := old[e["id"]]; ok {
+			if !reflect.DeepEqual(prior, e) {
+				return errors.New("D4 prior audit changed")
+			}
+			delete(old, e["id"])
+		} else {
+			if event != nil {
+				return errors.New("D4 extra audit")
+			}
+			event = e
+		}
+	}
+	if len(old) != 0 || event == nil || event["actor_type"] != "oidc_subject" || event["actor_id"] != actor || event["resource_type"] != "extension" || event["resource_id"] != id || event["action"] != "extension.uninstall" || event["result"] != "success" || event["after_redacted_json"] != "null" {
+		return errors.New("D4 audit binding")
+	}
+	var expected, got any
+	raw, ok := event["before_redacted_json"].(string)
+	if !ok || json.Unmarshal([]byte(auditBefore), &expected) != nil || json.Unmarshal([]byte(raw), &got) != nil || !reflect.DeepEqual(expected, got) {
+		return errors.New("D4 audit prior projection")
+	}
+	return nil
+}
+
+// Explicit D4 setup, not browser credit. Current statuses are empty, while two
+// valid encrypted rows remain. Metadata and grants remove the same secret fields.
+func uninstallBrowserSetup(t *testing.T, f acceptanceBrowserStart, key []byte) string {
+	t.Helper()
+	secretsBrowserSetup(t, f, key)
+	item := f.Current()
+	fields := []extensionsadmin.Field{}
+	for _, field := range item.Metadata.Fields {
+		if field.Kind != extensionsadmin.FieldSecret {
+			fields = append(fields, field)
+		}
+	}
+	item.Metadata.Fields = fields
+	acceptanceCheck(t, extensionsadmin.ValidateMetadata(item.Metadata))
+	_, err := extensionsadmin.ValidateConfiguration(item.Metadata, item.Configuration, nil)
+	acceptanceCheck(t, err)
+	metadata, err := json.Marshal(item.Metadata)
+	acceptanceCheck(t, err)
+	_, err = f.DB.Exec("UPDATE extension_instances SET metadata_json=$1,secret_slots_json='[]'::jsonb WHERE instance_id=$2", metadata, f.ID)
+	acceptanceCheck(t, err)
+	item = f.Current()
+	if len(item.Secrets) != 0 || len(item.SecretSlots) != 0 || item.Enabled || item.Routed {
+		t.Fatal("D4 empty current statuses setup")
+	}
+	var count int
+	acceptanceCheck(t, f.DB.QueryRow("SELECT count(*) FROM extension_secrets WHERE instance_id=$1", f.ID).Scan(&count))
+	if count != 2 {
+		t.Fatal("D4 retained rows setup")
+	}
+	var survivor string
+	acceptanceCheck(t, f.DB.QueryRow("SELECT instance_id::text FROM extension_instances WHERE instance_id<>$1", f.ID).Scan(&survivor))
+	return survivor
+}
+
+type uninstallBrowserOracle struct {
+	f                                     acceptanceBrowserStart
+	key                                   []byte
+	mu                                    sync.Mutex
+	phase, previewID, phrase, auditBefore string
+	posts, inventory, notFound            int
+	failure                               string
+	state                                 [4]string
+	styles                                [3]bool
+}
+
+func (o *uninstallBrowserOracle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	fail := func(s string) {
+		if o.failure == "" {
+			o.failure = s
+		}
+		http.Error(w, "uninstall fixture failed", 500)
+	}
+	if o.failure != "" {
+		fail(o.failure)
+		return
+	}
+	if r.Header.Get("Authorization") != "" {
+		fail("D4 bearer forbidden")
+		return
+	}
+	detail := "/admin/extensions/" + o.f.ID
+	list := r.URL.Path == "/admin/extensions"
+	asset := -1
+	switch r.URL.Path {
+	case "/admin/extensions/assets/tokens.css":
+		asset = 0
+	case "/admin/extensions/assets/detail.css":
+		asset = 1
+	case "/admin/extensions/assets/inventory.css":
+		asset = 2
+	case "/admin/extensions/assets/inventory.js":
+		asset = 3
+	}
+	queryOK := r.URL.RawQuery == ""
+	if r.URL.Path == detail || list {
+		switch r.URL.RawQuery {
+		case "theme=system", "theme=light", "theme=dark":
+			queryOK = true
+		}
+	}
+	favicon := r.URL.Path == "/favicon.ico" && r.Method == "GET"
+	if !queryOK || (asset >= 0 && r.Method != "GET") || (asset >= 2 && (o.phase != "empty" || o.posts != 2)) || (r.URL.Path != detail && !list && !favicon && asset < 0) {
+		fail("D4 unexpected route")
+		return
+	}
+	action := "read"
+	pid := ""
+	targetPosts := 5
+	if o.phase == "empty" {
+		targetPosts = 2
+	}
+	if r.Method == "POST" {
+		if r.URL.Path != detail || o.posts >= targetPosts {
+			fail("D4 unexpected POST")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if r.ParseForm() != nil {
+			fail("D4 bad form")
+			return
+		}
+		actions := []string{"uninstall-preview", "uninstall-preview", "uninstall-apply", "uninstall-preview", "uninstall-apply"}
+		if o.phase == "empty" {
+			actions = []string{"uninstall-preview", "uninstall-apply"}
+		}
+		if r.PostForm.Get("action") != actions[o.posts] {
+			fail("D4 action phase")
+			return
+		}
+		action = "preview"
+		if r.PostForm.Get("action") == "uninstall-apply" {
+			pid = r.PostForm.Get("preview_id")
+			if pid == "" || pid != o.previewID {
+				fail("D4 selected preview binding")
+				return
+			}
+			action = "denied"
+			if o.phase == "empty" {
+				action = "apply"
+			}
+			if (o.phase == "empty" || o.posts == 4) && r.PostForm.Get("confirmation") != o.phrase {
+				fail("D4 correct phrase not actually submitted")
+				return
+			}
+			if o.phase == "retained" && o.posts == 2 && (r.PostForm.Get("confirmation") == "" || r.PostForm.Get("confirmation") == o.phrase) {
+				fail("D4 wrong nonblank phrase not exercised")
+				return
+			}
+		}
+	} else if r.Method != "GET" || (o.posts > 0 && o.posts < targetPosts && asset < 0 && !favicon) {
+		fail("D4 unexpected GET/method")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	rec := httptest.NewRecorder()
+	o.f.Handler.ServeHTTP(rec, r.WithContext(ctx))
+	body := rec.Body.Bytes()
+	if len(body) > 1<<20 || bytes.Contains(body, []byte(o.f.Secret)) || bytes.Contains(body, []byte(o.f.Session)) {
+		fail("D4 response privacy")
+		return
+	}
+	want := 200
+	if list && o.posts == 0 {
+		want = 401
+	}
+	if favicon {
+		want = 404
+	}
+	oldDetail := r.Method == "GET" && r.URL.Path == detail && o.phase == "empty" && o.posts == 2
+	if oldDetail {
+		want = 404
+	}
+	if rec.Code != want {
+		fail("D4 response status")
+		return
+	}
+	if asset >= 0 {
+		mime := "text/css; charset=utf-8"
+		if asset == 3 {
+			mime = "text/javascript; charset=utf-8"
+		}
+		if rec.Header().Get("Content-Type") != mime || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+			fail("D4 asset MIME/privacy")
+			return
+		}
+	}
+	phrase := ""
+	if action == "preview" {
+		p := regexp.MustCompile("name=\"preview_id\" value=\"([^\"]+)\"").FindSubmatch(body)
+		c := regexp.MustCompile("<code>(confirm-[a-f0-9]{32})</code>").FindSubmatch(body)
+		if len(p) != 2 || len(c) != 2 {
+			fail("D4 rendered preview absent")
+			return
+		}
+		pid = string(p[1])
+		phrase = string(c[1])
+	}
+	state, err := configurationSnapshot(ctx, o.f.DB)
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	if err = uninstallBrowserDelta(o.state, state, action, o.f.ActorID, o.f.ID, pid, phrase, o.key, o.auditBefore); err != nil {
+		fail(err.Error())
+		return
+	}
+	for _, table := range state {
+		for _, secret := range []string{o.f.Secret, o.f.Session, o.f.CSRF} {
+			if secret != "" && strings.Contains(table, secret) {
+				fail("D4 SQL privacy")
+				return
+			}
+		}
+	}
+	quiet := configurationBrowserOracle{f: o.f}
+	if err = quiet.quiet(); err != nil {
+		fail(err.Error())
+		return
+	}
+	if action == "apply" {
+		if !bytes.Contains(body, []byte("Selected extension uninstalled. Other installed extensions are unchanged.")) {
+			fail("D4 terminal receipt missing")
+			return
+		}
+		for _, forbidden := range []string{"<form", "<input", "No extensions installed", o.f.ID, o.f.CSRF, pid, o.phrase} {
+			if forbidden != "" && bytes.Contains(body, []byte(forbidden)) {
+				fail("D4 terminal leaked stale/form material")
+				return
+			}
+		}
+	} else if r.Method == "POST" {
+		accepted := bytes.Contains(body, []byte("extension operation accepted"))
+		if accepted == (action == "denied") {
+			fail("D4 acceptance/denial projection")
+			return
+		}
+	}
+	if r.Method == "POST" {
+		o.posts++
+	}
+	if action == "preview" {
+		o.previewID = pid
+		o.phrase = phrase
+	}
+	if asset >= 0 && asset < 3 {
+		o.styles[asset] = true
+	}
+	if list && want == 200 && o.phase == "empty" && o.posts == 2 {
+		o.inventory++
+	}
+	if oldDetail {
+		o.notFound++
+	}
+	o.state = state
+	for k, vs := range rec.Header() {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(rec.Code)
+	_, _ = w.Write(body)
+}
+
+func runUninstallBrowserPhase(t *testing.T, f acceptanceBrowserStart, key []byte, driver, phase, survivor string) {
+	state, err := configurationSnapshot(context.Background(), f.DB)
+	acceptanceCheck(t, err)
+	item := f.Current()
+	item.Secrets = nil
+	payload, err := json.Marshal(audit.Redact(item))
+	acceptanceCheck(t, err)
+	o := &uninstallBrowserOracle{f: f, key: key, phase: phase, state: state, auditBefore: string(payload)}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	acceptanceCheck(t, err)
+	srv := &http.Server{Handler: o, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 10 * time.Second}
+	served := make(chan error, 1)
+	var once sync.Once
+	shutdown := func() {
+		once.Do(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(ctx); err != nil {
+				t.Error("D4 HTTP shutdown")
+				_ = srv.Close()
+			}
+			if err := <-served; err != nil && err != http.ErrServerClosed {
+				t.Error("D4 HTTP serve")
+			}
+		})
+	}
+	t.Cleanup(shutdown)
+	go func() { served <- srv.Serve(listener) }()
+	bootstrap, err := json.Marshal(map[string]string{"origin": "http://" + listener.Addr().String(), "id": f.ID, "session": f.Session, "csrf": f.CSRF, "mode": "uninstall", "phase": phase, "survivor": survivor, "secret": f.Secret})
+	acceptanceCheck(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "node", driver, os.Getenv("GOTTH_MAIL_BROWSER_OUTPUT")+"-"+phase)
+	cmd.Stdin = bytes.NewReader(bootstrap)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 20 * time.Second
+	runErr := cmd.Run()
+	clear(bootstrap)
+	shutdown()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.failure != "" {
+		t.Error(o.failure)
+	}
+	expected := 5
+	if phase == "empty" {
+		expected = 2
+	}
+	if o.posts != expected {
+		t.Errorf("D4 phase %s incomplete posts=%d", phase, o.posts)
+	}
+	if o.styles[0] != true || o.styles[1] != true {
+		t.Error("D4 detail CSS incomplete")
+	}
+	if phase == "empty" && (!o.styles[2] || o.inventory < 1 || o.notFound < 1) {
+		t.Error("D4 terminal/inventory/404 incomplete")
+	}
+	after, err := configurationSnapshot(context.Background(), f.DB)
+	if err != nil || after != o.state {
+		t.Error("D4 postdrain state drift")
+	}
+	quiet := configurationBrowserOracle{f: f}
+	if err = quiet.quiet(); err != nil {
+		t.Error(err)
+	}
+	if runErr != nil {
+		t.Errorf("D4 %s browser failed: %v (safe proof)", phase, runErr)
+	}
+	if !t.Failed() {
+		t.Logf("PASS native D4 %s exact POSTs=%d, SQL/audit/preview/survivor/runtime barriers", phase, expected)
+	}
+}
+
+func runUninstallBrowser(t *testing.T, f acceptanceBrowserStart, driver string) {
+	raw, err := os.ReadFile(f.MasterFile)
+	acceptanceCheck(t, err)
+	key, err := hex.DecodeString(string(raw))
+	clear(raw)
+	acceptanceCheck(t, err)
+	defer clear(key)
+	survivor := uninstallBrowserSetup(t, f, key)
+	if !t.Run("retained-secret-refusal", func(t *testing.T) { runUninstallBrowserPhase(t, f, key, driver, "retained", survivor) }) {
+		return
+	}
+	// Browser A and HTTP handlers have exited/drained. Service deletion is SETUP,
+	// independently checked, not part of a continuous native delete/uninstall flow.
+	svc, err := extensionsadmin.NewService(f.DB, key, nil)
+	acceptanceCheck(t, err)
+	actor := audit.ActorRef{Type: "oidc_subject", ID: f.ActorID}
+	ctx := context.Background()
+	before, err := configurationSnapshot(ctx, f.DB)
+	acceptanceCheck(t, err)
+	preview, err := svc.PreviewDeleteSecrets(ctx, actor, f.ID)
+	acceptanceCheck(t, err)
+	prepared, err := configurationSnapshot(ctx, f.DB)
+	acceptanceCheck(t, err)
+	acceptanceCheck(t, secretsBrowserDelta(before, prepared, "preview", f.ActorID, f.ID, preview.ID, preview.Confirmation, key))
+	_, err = svc.ApplyDeleteSecrets(ctx, actor, f.ID, preview.ID, preview.Confirmation)
+	acceptanceCheck(t, err)
+	after, err := configurationSnapshot(ctx, f.DB)
+	acceptanceCheck(t, err)
+	acceptanceCheck(t, secretsBrowserDelta(prepared, after, "apply", f.ActorID, f.ID, preview.ID, "", key))
+	t.Log("D4 inter-phase service DeleteSecrets SETUP verified; no native deletion credit")
+	t.Run("empty-secret-uninstall", func(t *testing.T) { runUninstallBrowserPhase(t, f, key, driver, "empty", survivor) })
+}
+
+func TestUninstallBrowserRunnerMode(t *testing.T) {
+	for _, extra := range []bool{false, true} {
+		args := []string{"../../scripts/extensions-browser-acceptance.sh", "/missing-binary", "/missing-archive", "/missing-pg", "/missing-output", "uninstall"}
+		want := 1
+		if extra {
+			args = append(args, "/extra")
+			want = 2
+		}
+		err := exec.Command("bash", args...).Run()
+		var e *exec.ExitError
+		if !errors.As(err, &e) || e.ExitCode() != want {
+			t.Fatal("D4 runner argument contract")
+		}
+	}
+}
+
+func TestUninstallCleanupAbsence(t *testing.T) {
+	for _, kind := range []string{"installed", "verified-absent", "missing-audit", "wrong-actor", "lookup-error"} {
+		t.Run(kind, func(t *testing.T) {
+			db := testpg.DB(t, store.MigrateSQL)
+			id := acceptanceUUID(t)
+			actor := audit.ActorRef{Type: "oidc_subject", ID: "cleanup-actor"}
+			ctx := context.Background()
+			svc, err := extensionsadmin.NewService(db, bytes.Repeat([]byte{1}, 32), nil)
+			acceptanceCheck(t, err)
+			_, err = svc.Install(ctx, actor, extensionsadmin.InstallRequest{InstanceID: id, ExtensionID: "notification.cleanup", Repository: "https://github.com/gotthboard/gotth-extension-cleanup", ArtifactPin: "sha256:" + strings.Repeat("a", 64), ManifestDigest: strings.Repeat("b", 64), GrantDigest: strings.Repeat("c", 64), SessionDigest: strings.Repeat("d", 64), Metadata: extensionsadmin.Metadata{Schema: extensionsadmin.MetadataSchema}})
+			acceptanceCheck(t, err)
+			if kind != "installed" && kind != "lookup-error" {
+				p, e := svc.PreviewUninstall(ctx, actor, id)
+				acceptanceCheck(t, e)
+				acceptanceCheck(t, svc.ApplyUninstall(ctx, actor, id, p.ID, p.Confirmation))
+			}
+			if kind == "missing-audit" {
+				_, err = db.Exec("DELETE FROM audit_events WHERE action='extension.uninstall'")
+				acceptanceCheck(t, err)
+			}
+			if kind == "wrong-actor" {
+				actor.ID = "different"
+			}
+			if kind == "lookup-error" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			absent, err := acceptanceUninstallAbsent(ctx, db, id, actor.ID)
+			if kind == "installed" {
+				if absent || err != nil {
+					t.Fatal("installed must Disable")
+				}
+			} else if kind == "verified-absent" {
+				if !absent || err != nil {
+					t.Fatal("proven absent not admitted")
+				}
+			} else if absent || err == nil {
+				t.Fatal("uncertain absence did not fail closed")
+			}
+		})
+	}
+}
+
+func TestUninstallBrowserDelta(t *testing.T) {
+	encode := func(v any) string { b, e := json.Marshal(v); acceptanceCheck(t, e); return string(b) }
+	for _, kind := range []string{"valid", "registry", "survivor", "secrets", "preview", "old-preview", "audit-count", "actor", "target", "action", "result", "before", "after", "prior-audit"} {
+		t.Run(kind, func(t *testing.T) {
+			survivor := map[string]any{"instance_id": "other", "configuration": "unchanged"}
+			secret := map[string]any{"instance_id": "other", "ciphertext": "fixed"}
+			preview := map[string]any{"instance_id": "other", "id": "other-preview", "consumed_at": nil}
+			prior := map[string]any{"id": "prior", "action": "extension.configure"}
+			chosen := map[string]any{"instance_id": "chosen", "enabled": false}
+			before := [4]string{encode([]any{chosen, survivor}), encode([]any{secret}), encode([]any{map[string]any{"instance_id": "chosen", "id": "old"}, map[string]any{"instance_id": "chosen", "id": "new"}, preview}), encode([]any{prior})}
+			payload := encode(chosen)
+			event := map[string]any{"id": "new-event", "actor_type": "oidc_subject", "actor_id": "actor", "resource_type": "extension", "resource_id": "chosen", "action": "extension.uninstall", "result": "success", "before_redacted_json": payload, "after_redacted_json": "null"}
+			after := [4]string{encode([]any{survivor}), encode([]any{secret}), encode([]any{preview}), ""}
+			switch kind {
+			case "registry":
+				after[0] = before[0]
+			case "survivor":
+				after[0] = "[]"
+			case "secrets":
+				after[1] = "[]"
+			case "preview":
+				after[2] = before[2]
+			case "old-preview":
+				after[2] = encode([]any{preview, map[string]any{"instance_id": "chosen", "id": "old"}})
+			case "actor":
+				event["actor_id"] = "wrong"
+			case "target":
+				event["resource_id"] = "other"
+			case "action":
+				event["action"] = "extension.disable"
+			case "result":
+				event["result"] = "denied"
+			case "before":
+				event["before_redacted_json"] = "{}"
+			case "after":
+				event["after_redacted_json"] = "{}"
+			case "prior-audit":
+				prior["action"] = "changed"
+			}
+			after[3] = encode([]any{prior, event})
+			if kind == "audit-count" {
+				after[3] = encode([]any{prior, event, event})
+			}
+			if (uninstallBrowserDelta(before, after, "apply", "actor", "chosen", "new", "", nil, payload) == nil) != (kind == "valid") {
+				t.Fatal("D4 cascade/audit corruption mismatch")
+			}
+			if uninstallBrowserDelta(before, before, "denied", "actor", "chosen", "", "", nil, payload) != nil || uninstallBrowserDelta(before, after, "denied", "actor", "chosen", "", "", nil, payload) == nil {
+				t.Fatal("D4 denial must preserve all state")
+			}
+		})
+	}
+}
+
+func TestUninstallBrowserRequestPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		method, path, body, phase string
+		posts                     int
+	}{
+		{"POST", "/admin/extensions/id", "action=uninstall-apply", "retained", 0},
+		{"POST", "/admin/extensions/id", "action=uninstall-preview", "retained", 5},
+		{"POST", "/admin/extensions/id", "action=uninstall-apply&preview_id=other&confirmation=wrong", "empty", 1},
+		{"GET", "/admin/extensions/id?theme=dark&theme=light", "", "retained", 0},
+		{"GET", "/admin/extensions/id?unexpected=authority", "", "retained", 0},
+		{"GET", "/admin/extensions/id", "", "retained", 1},
+		{"POST", "/admin/extensions/assets/detail.css", "", "retained", 0},
+		{"GET", "/admin/extensions/assets/inventory.js", "", "retained", 0},
+		{"GET", "/admin/extensions/assets/htmx-2.0.10.min.js", "", "empty", 2},
+		{"GET", "/admin/extensions/assets/inventory.css?theme=dark", "", "empty", 2},
+	} {
+		invoked := false
+		o := &uninstallBrowserOracle{phase: tc.phase, posts: tc.posts, previewID: "expected", f: acceptanceBrowserStart{ID: "id", Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { invoked = true })}}
+		r := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		o.ServeHTTP(w, r)
+		if w.Code != 500 || o.failure == "" || invoked || o.posts != tc.posts || o.inventory != 0 || o.notFound != 0 {
+			t.Fatal("D4 rejected request crossed barrier")
+		}
+	}
+}
+
+// Shared Test/activation/update/rollback fixture policy, not a production router.
+// Fixed path/query comparisons: O(B) time, O(1) auxiliary space.
+func connectionBrowserRequest(r *http.Request, detail string) error {
+	if r.Header.Get("Authorization") != "" {
+		return errors.New("unexpected authority")
+	}
+	if r.URL.Path == "/admin/extensions/assets/tokens.css" || r.URL.Path == "/admin/extensions/assets/detail.css" {
+		if r.Method != "GET" || r.URL.RawQuery != "" {
+			return errors.New("unexpected lifecycle asset method/query")
+		}
+		return nil
+	}
+	if r.URL.Path != detail && r.URL.Path != "/admin/extensions" && r.URL.Path != "/favicon.ico" {
+		return errors.New("unexpected connection-test route")
+	}
+	if r.URL.RawQuery != "" {
+		if r.URL.Path != detail {
+			return errors.New("unexpected query outside detail")
+		}
+		switch r.URL.RawQuery {
+		case "theme=system", "theme=light", "theme=dark":
+		default:
+			return errors.New("unexpected detail query")
+		}
+	}
+	return nil
+}
+func connectionBrowserAssetResponse(r *http.Request, rec *httptest.ResponseRecorder) error {
+	if r.URL.Path != "/admin/extensions/assets/tokens.css" && r.URL.Path != "/admin/extensions/assets/detail.css" {
+		return nil
+	}
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "text/css; charset=utf-8" || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		return errors.New("lifecycle asset status/MIME/privacy")
+	}
+	return nil
+}
+func TestConnectionBrowserRequestPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, path string
+		bearer, ok         bool
+	}{
+		{"detail", "GET", "/admin/extensions/id", false, true},
+		{"post-theme", "POST", "/admin/extensions/id?theme=system", false, true},
+		{"light", "GET", "/admin/extensions/id?theme=light", false, true},
+		{"dark", "GET", "/admin/extensions/id?theme=dark", false, true},
+		{"tokens", "GET", "/admin/extensions/assets/tokens.css", false, true},
+		{"detail-css", "GET", "/admin/extensions/assets/detail.css", false, true},
+		{"inventory", "GET", "/admin/extensions", false, true},
+		{"favicon", "GET", "/favicon.ico", false, true},
+		{"arbitrary-query", "GET", "/admin/extensions/id?unexpected=1", false, false},
+		{"duplicate-theme", "GET", "/admin/extensions/id?theme=dark&theme=light", false, false},
+		{"encoded-theme", "GET", "/admin/extensions/id?theme=%64ark", false, false},
+		{"theme-case", "GET", "/admin/extensions/id?theme=DARK", false, false},
+		{"inventory-query", "GET", "/admin/extensions?theme=light", false, false},
+		{"favicon-query", "GET", "/favicon.ico?theme=light", false, false},
+		{"asset-query", "GET", "/admin/extensions/assets/detail.css?theme=light", false, false},
+		{"asset-post", "POST", "/admin/extensions/assets/detail.css", false, false},
+		{"asset-head", "HEAD", "/admin/extensions/assets/tokens.css", false, false},
+		{"arbitrary-asset", "GET", "/admin/extensions/assets/inventory.js", false, false},
+		{"bearer", "GET", "/admin/extensions/id", true, false},
+		{"route", "GET", "/unrelated", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(tc.method, tc.path, nil)
+			if tc.bearer {
+				r.Header.Set("Authorization", "Bearer fixture")
+			}
+			if (connectionBrowserRequest(r, "/admin/extensions/id") == nil) != tc.ok {
+				t.Fatal("closed lifecycle request policy mismatch")
+			}
+		})
+	}
+}
+
+func TestConnectionBrowserAssetResponse(t *testing.T) {
+	for _, kind := range []string{"valid", "status", "mime", "cache", "sniff"} {
+		t.Run(kind, func(t *testing.T) {
+			for _, path := range []string{"/admin/extensions/assets/tokens.css", "/admin/extensions/assets/detail.css"} {
+				r := httptest.NewRequest("GET", path, nil)
+				rec := httptest.NewRecorder()
+				rec.Header().Set("Content-Type", "text/css; charset=utf-8")
+				rec.Header().Set("Cache-Control", "no-store")
+				rec.Header().Set("X-Content-Type-Options", "nosniff")
+				switch kind {
+				case "status":
+					rec.Code = 401
+				case "mime":
+					rec.Header().Set("Content-Type", "text/html")
+				case "cache":
+					rec.Header().Set("Cache-Control", "public")
+				case "sniff":
+					rec.Header().Del("X-Content-Type-Options")
+				}
+				if (connectionBrowserAssetResponse(r, rec) == nil) != (kind == "valid") {
+					t.Fatal("CSS response guard mismatch")
+				}
+			}
+		})
+	}
+}
+
+// Closed test-only admission; production query compatibility is not changed.
+func detailThemeRequest(r *http.Request, detail, authority string) (bool, error) {
+	if r.Method != "GET" || r.Header.Get("Authorization") != "" || r.Host != authority || r.URL.Host != "" || r.URL.Scheme != "" || r.URL.User != nil || r.URL.Fragment != "" || r.URL.RawPath != "" || r.URL.ForceQuery {
+		return false, errors.New("theme request authority/method")
+	}
+	if r.URL.Path == "/admin/extensions/assets/tokens.css" || r.URL.Path == "/admin/extensions/assets/detail.css" {
+		if r.URL.RawQuery != "" {
+			return false, errors.New("theme asset query")
+		}
+		return true, nil
+	}
+	if r.URL.Path != detail {
+		return false, errors.New("theme path")
+	}
+	switch r.URL.RawQuery {
+	case "", "theme=system", "theme=light", "theme=dark":
+		return false, nil
+	}
+	return false, errors.New("theme query")
+}
+func TestDetailThemeRequest(t *testing.T) {
+	const d = "/admin/extensions/11111111-1111-4111-8111-111111111111"
+	for _, tc := range []struct {
+		url   string
+		good  bool
+		asset bool
+	}{{d, true, false}, {d + "?theme=system", true, false}, {d + "?theme=light", true, false}, {d + "?theme=dark", true, false}, {"/admin/extensions/assets/tokens.css", true, true}, {"/admin/extensions/assets/detail.css", true, true}, {d + "?theme=dark&theme=light", false, false}, {d + "?theme=%64ark", false, false}, {d + "?theme=dark&x=1", false, false}, {d + "?", false, false}, {d + "/audit", false, false}, {d + "/other", false, false}, {"/admin/extensions", false, false}, {"/admin/extensions/assets/detail.css?x=1", false, false}, {"/admin/extensions/assets/inventory.js", false, false}} {
+		t.Run(tc.url, func(t *testing.T) {
+			r := httptest.NewRequest("GET", tc.url, nil)
+			r.Host = "127.0.0.1:1234"
+			a, e := detailThemeRequest(r, d, r.Host)
+			if (e == nil) != tc.good || (e == nil && a != tc.asset) {
+				t.Fatal("request classification")
+			}
+		})
+	}
+	for _, bad := range []string{"method", "bearer", "authority", "absolute", "fragment", "rawpath"} {
+		t.Run(bad, func(t *testing.T) {
+			r := httptest.NewRequest("GET", d, nil)
+			r.Host = "127.0.0.1:1234"
+			switch bad {
+			case "method":
+				r.Method = "POST"
+			case "bearer":
+				r.Header.Set("Authorization", "Bearer fixture")
+			case "authority":
+				r.Host = "other"
+			case "absolute":
+				r.URL.Host = "other"
+			case "fragment":
+				r.URL.Fragment = "x"
+			case "rawpath":
+				r.URL.RawPath = d
+			}
+			if _, e := detailThemeRequest(r, d, "127.0.0.1:1234"); e == nil {
+				t.Fatal("admitted invalid request")
+			}
+		})
+	}
+}
+
+// One initial read-only fixture, serialized response/state barriers and final drain.
+func runDetailThemeBrowser(t *testing.T, f acceptanceBrowserStart, driver string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	before, err := configurationSnapshot(ctx, f.DB)
+	cancel()
+	acceptanceCheck(t, err)
+	f.EmptyRuntime()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	acceptanceCheck(t, err)
+	detail := "/admin/extensions/" + f.ID
+	var mu sync.Mutex
+	failure := ""
+	pages, unauth, posts, bearers := 0, 0, 0, 0
+	assets := map[string]int{}
+	quiet := func(ctx context.Context) error {
+		state, e := configurationSnapshot(ctx, f.DB)
+		if e != nil || state != before {
+			return errors.New("theme changed SQL")
+		}
+		entries, e := os.ReadDir(f.RuntimeRoot)
+		if e != nil || len(entries) != 0 || f.Requests() != 0 {
+			return errors.New("theme runtime/receiver changed")
+		}
+		return nil
+	}
+	srv := &http.Server{ReadHeaderTimeout: 3 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		fail := func(reason string) {
+			if failure == "" {
+				failure = reason
+			}
+			http.Error(w, "theme fixture failed", 500)
+		}
+		if failure != "" {
+			fail(failure)
+			return
+		}
+		if r.Method != "GET" {
+			posts++
+		}
+		if r.Header.Get("Authorization") != "" {
+			bearers++
+		}
+		asset, e := detailThemeRequest(r, detail, listener.Addr().String())
+		if e != nil {
+			fail(e.Error())
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if e = quiet(ctx); e != nil {
+			fail(e.Error())
+			return
+		}
+		rec := httptest.NewRecorder()
+		f.Handler.ServeHTTP(rec, r.WithContext(ctx))
+		body := rec.Body.Bytes()
+		if len(body) > 1<<20 || len(rec.Header().Values("Set-Cookie")) != 0 {
+			fail("theme response size/persistence")
+			return
+		}
+		clean := string(body)
+		if !asset {
+			clean = strings.ReplaceAll(clean, `name="csrf_token" value="`+f.CSRF+`"`, "expected-csrf")
+		}
+		for _, s := range []string{f.Secret, f.Session, f.CSRF} {
+			if s != "" && strings.Contains(clean, s) {
+				fail("theme response private leak")
+				return
+			}
+		}
+		if asset {
+			if rec.Code != 200 || rec.Header().Get("Content-Type") != "text/css; charset=utf-8" || rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("Cache-Control") != "no-store" {
+				fail("theme CSS response")
+				return
+			}
+			assets[r.URL.Path]++
+		} else {
+			authenticated := false
+			if c, e := r.Cookie("gotth_mail_session"); e == nil && c.Value == f.Session {
+				authenticated = true
+			}
+			want := 401
+			if authenticated {
+				want = 200
+			}
+			if rec.Code != want || !strings.Contains(rec.Header().Get("Cache-Control"), "no-store") || !strings.Contains(rec.Header().Get("Content-Security-Policy"), "script-src 'none'") {
+				fail("theme document auth/status/privacy")
+				return
+			}
+			if authenticated {
+				if !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") || strings.Contains(strings.ToLower(clean), "<script") {
+					fail("theme document script/MIME")
+					return
+				}
+				pages++
+			} else {
+				unauth++
+			}
+		}
+		if e = quiet(ctx); e != nil {
+			fail(e.Error())
+			return
+		}
+		for k, v := range rec.Header() {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(body)
+	})}
+	served := make(chan error, 1)
+	var once sync.Once
+	shutdown := func() {
+		once.Do(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if e := srv.Shutdown(ctx); e != nil {
+				t.Error("theme HTTP shutdown")
+				_ = srv.Close()
+			}
+			if e := <-served; e != nil && e != http.ErrServerClosed {
+				t.Error("theme HTTP serve")
+			}
+		})
+	}
+	t.Cleanup(shutdown)
+	go func() { served <- srv.Serve(listener) }()
+	raw, err := json.Marshal(map[string]string{"origin": "http://" + listener.Addr().String(), "id": f.ID, "session": f.Session, "csrf": f.CSRF, "mode": "detail-theme"})
+	acceptanceCheck(t, err)
+	runctx, stop := context.WithTimeout(context.Background(), 90*time.Second)
+	defer stop()
+	cmd := exec.CommandContext(runctx, "node", driver, os.Getenv("GOTTH_MAIL_BROWSER_OUTPUT"))
+	cmd.Stdin = bytes.NewReader(raw)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 20 * time.Second
+	runErr := cmd.Run()
+	clear(raw)
+	shutdown() // Browser exit AND HTTP drain precede final state/admission.
+	mu.Lock()
+	defer mu.Unlock()
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if e := quiet(ctx); e != nil {
+		t.Error(e.Error())
+	}
+	if failure != "" {
+		t.Error(failure)
+	}
+	if runErr != nil {
+		t.Errorf("detail-theme driver: %v", runErr)
+	}
+	if pages != 7 || unauth != 1 || posts != 0 || bearers != 0 || assets["/admin/extensions/assets/tokens.css"] != 7 || assets["/admin/extensions/assets/detail.css"] != 7 {
+		t.Errorf("theme request counts pages=%d unauth=%d posts=%d bearers=%d styles=%d/%d", pages, unauth, posts, bearers, assets["/admin/extensions/assets/tokens.css"], assets["/admin/extensions/assets/detail.css"])
+	}
+	proof, e := os.ReadFile(filepath.Join(os.Getenv("GOTTH_MAIL_BROWSER_OUTPUT"), "proof.json"))
+	if e != nil {
+		t.Error("theme proof absent")
+		return
+	}
+	for _, s := range []string{f.Secret, f.Session, f.CSRF} {
+		if s != "" && bytes.Contains(proof, []byte(s)) {
+			t.Error("theme proof private leak")
+		}
+	}
+	var p struct {
+		DetailThemeGate string
+		ThemeStates     []json.RawMessage
+		BrowserExit     struct{ Code int }
+		Cleanup         struct {
+			MainExited bool
+			Remaining  []any
+		}
+	}
+	if json.Unmarshal(proof, &p) != nil || p.DetailThemeGate != "PASS" || len(p.ThemeStates) != 12 || !p.Cleanup.MainExited || len(p.Cleanup.Remaining) != 0 || p.BrowserExit.Code != 0 {
+		t.Error("theme proof incomplete")
+	}
+	if !t.Failed() {
+		t.Log("PASS detail-theme only: 12 states, 7 authenticated GETs, 14 exact CSS GETs, no POST/bearer/SQL/runtime/receiver changes; browser and HTTP drained")
+	}
+}
+
+func TestConfigurationNoCSSServerDenial(t *testing.T) {
+	for _, path := range []string{"/admin/extensions/assets/tokens.css", "/admin/extensions/assets/detail.css", "/favicon.ico?x=1", "/favicon.ico/more", "/admin/extensions/id?theme=system&x=1"} {
+		t.Run(path, func(t *testing.T) {
+			invoked := false
+			o := &configurationBrowserOracle{noCSS: true, authority: "127.0.0.1:1234", f: acceptanceBrowserStart{ID: "id", Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { invoked = true })}}
+			r := httptest.NewRequest("GET", path, nil)
+			r.Host = o.authority
+			w := httptest.NewRecorder()
+			o.ServeHTTP(w, r)
+			if w.Code != 500 || o.failure == "" || invoked || o.stylesheets != [2]bool{} {
+				t.Fatal("no-CSS request reached handler")
+			}
+		})
+	}
+}
+
+// Admission probe only: deliberate downstream non404 stops before SQL. Real404/SQL
+// preservation is checked by the same oracle in the physical action, not this seam.
+func TestConfigurationNoCSSFaviconAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, host string
+		allowed            bool
+	}{{"exact", "GET", "127.0.0.1:1234", true}, {"method", "POST", "127.0.0.1:1234", false}, {"foreign", "GET", "other", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			invoked := false
+			o := &configurationBrowserOracle{noCSS: true, authority: "127.0.0.1:1234", f: acceptanceBrowserStart{ID: "id", Secret: "fixture-secret-canary", Session: "fixture-session-canary", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { invoked = true; w.WriteHeader(403) })}}
+			r := httptest.NewRequest(tc.method, "/favicon.ico", nil)
+			r.Host = tc.host
+			w := httptest.NewRecorder()
+			o.ServeHTTP(w, r)
+			if invoked != tc.allowed || o.phase != 0 || o.posts != 0 || o.reloads != 0 || o.stylesheets != [2]bool{} {
+				t.Fatal("favicon admission/credit changed")
+			}
+			if tc.allowed && o.failure != "unexpected application status" {
+				t.Fatal("favicon response guard not reached")
+			}
+		})
+	}
 }

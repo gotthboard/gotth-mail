@@ -29,18 +29,27 @@ Stable `1.0.0` requires all of the following:
 1. the foundation and reference deployment workstream;
 2. production Postfix, Dovecot, Rspamd, DNS, TLS, and delivery proof, including
    the owner-prioritized per-domain `same_domain_only` outbound policy across
-   every submission, expansion, automatic-message, retry, and replay path;
+   every submission, expansion, automatic-message, retry, replay, and final
+   remote DATA path;
 3. Authentik-backed web login and SCIM provisioning using the admitted
    `gotth-oidc` and `gotth-scim` libraries through consumer-owned persistence,
    authorization, audit, and product adapters;
 4. durable administration, including one host-owned Extensions surface for
    setup, testing, enable/disable, update, rollback, and audit; Mailu
    adoption/import, backup, isolated restore, abuse controls, and diagnostics;
-5. production IMAP/SMTP webmail with the required exact-sender OpenPGP policy;
+5. production IMAP/SMTP webmail with the required exact-sender OpenPGP policy
+   and final delivery custody that cannot bypass current policy on native retry;
 6. notification delivery, approvals, identity binding, and key lifecycle;
 7. container deployment, upgrade, rollback, security, accessibility,
    monitoring, and operator handoff evidence; and
 8. explicit owner acceptance of the complete deployed stack.
+
+Forwarding release acceptance binds the immutable complete original final-envelope
+recipient set and expansion provenance to the final queue before delivery; every
+qmgr request rechecks that full set rather than trusting its current batch. For a
+non-null forward, the configured local forwarding identity is both SMTP envelope
+sender and local DSN destination; the remote author is never envelope authority.
+A null-sender trigger remains null and bounce-suppressed.
 
 ## Production artifacts
 

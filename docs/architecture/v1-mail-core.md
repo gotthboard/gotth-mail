@@ -62,8 +62,22 @@ bypasses.
 Postfix asks the control plane at `RCPT TO`, after each expansion, and again at
 the final transport boundary. Queue entries retain the originating policy-
 domain set but are checked against every current policy revision on retry and
-replay. This double boundary prevents a stale queue or an indirect recipient
-expansion from bypassing a later restriction.
+replay. The final Postfix queue remains sole body custodian. Before it becomes
+deliverable, immutable original final-envelope recipients and authoritative
+expansion provenance are bound to its queue ID. The active DELIVER_REQUEST batch
+is not that authority, and no racy queue scan may replace it. For each qmgr
+delivery request, a thin delivery-agent gate asks a fail-closed broker to evaluate
+the full bound set before any external DNS/connect, and on allow delegates the
+same request through Postfix deliver_pass to stock smtp. It does not perform
+SMTP or reinject. On forbiddance it durably records hold_required and tempfails; every later batch
+for that queue is denied before network while a privileged reconciler holds and
+verifies the original queue after the request returns. Release rechecks policy. A second Postfix queue created after
+admission is not an authorization boundary: executable RED evidence showed
+native retry of that second queue can deliver after revocation without a fresh
+policy call. Queue admission may fast-path a truly direct unchanged original/final recipient only
+after the already-loaded expansion map shows that the original is not an
+authoritative alias or catch-all root; an equal self-cycle or root alias fails
+before queue registration.
 
 Authenticated SMTP preserves SMTP's per-recipient behavior: each forbidden
 recipient receives `550 5.7.1`, while separately admitted recipients may
@@ -76,7 +90,10 @@ source domain and crosses the outbound boundary normally.
 
 Automatic mail, including notifications, autoresponders, DSNs, and bounces,
 inherits the originating domain identity in durable queue metadata and crosses
-the same policy boundary. A restricted domain must not accept mail and later
+the same policy boundary. For non-null signed forwarding, the configured local
+forwarding identity is the SMTP envelope sender and local DSN destination; the
+remote original author is never envelope or DSN authority. A null-sender trigger
+stays null and bounce-suppressed. A restricted domain must not accept mail and later
 create an external DSN when an SMTP-time rejection was possible. When no safe
 SMTP-time rejection exists, the automatic external message is suppressed,
 given a safe terminal policy disposition, and audited without message content.
@@ -272,3 +289,40 @@ Snapshots are reference points, not rollback guarantees unless paired with verif
 - smoke test passes including webmail visibility
 - plugin containers pass authenticated gRPC health/capability checks
 - mail delivery and daemon lookup smoke/contract checks pass with Authentik unavailable or isolated
+
+## Exact-sender outbound forwarding (release 1.0)
+
+FWD-1..4 use a bounded webmail MIME construction component composed with the
+existing SenderIdentityResolver, OpenPGPSigner and ExactSenderVerifier. Core
+retains context authorization and authoritative expansion-to-identity mapping.
+The component has no SMTP, queue, policy-mutation or identity-enrollment side
+effects. It returns only verified bytes and signature status, never unsigned
+intermediates. Local inbound LMTP remains outside this transformation.
+
+The original is opaque base64 data, not reparsed or normalized. RFC 2046 §5.2.1
+forbids base64 on message/rfc822, hence application/octet-stream/original.eml.
+Outer MIME follows RFC 3156 §§3/5: seven-bit bytes, CRLF and no trailing
+whitespace; the existing OpenPGP implementation owns detached signing, packet
+hash checks, authoritative header binding and raw-entity verification. Existing
+BuildMIME attachments are raw and lack transfer-encoding; changing all compose
+callers is unnecessary. Use standard MIME/base64 construction for this distinct
+opaque attachment while reusing identity/header validation and crypto APIs.
+The inbound/parser side enforces the same part ceiling on both encoded octets
+and decoded octets. Decoder EOF after an encoded cap sentinel is not trusted as
+whole-part EOF; oversize encoded data fails instead of returning a valid prefix.
+
+Gate.Deliver before final remote DATA is the intended integration point, NOT
+wired by this component slice. Durable provenance/context admission,
+original/local and external queue ownership, stable artifacts, failure
+disposition and retry policy must precede that integration. Do not infer a
+system author from null MAIL FROM, remote From or a queue ID. The old
+private-10027/content-filter shape is RED-proven insufficient for current-policy
+retry enforcement because queue B is owned by stock smtp without another policy
+call; do not call this global enforcement or beta completion.
+
+Full-size component capacity is private to SignedForwardBuilder: captured
+original bytes are capped at 50MiB (52,428,800 octets), while the signed wrapper
+has its own 72,796,392-byte ceiling. Public SMTP/Postfix limits, queue custody,
+retry and Gate concurrency stay outside this component. The parser's 25MiB
+display limit is intentionally not relaxed; forwarding tests recover the opaque
+original from the signed MIME without using the hostile-display parser.

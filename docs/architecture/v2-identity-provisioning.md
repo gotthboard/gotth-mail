@@ -109,6 +109,47 @@ Mappings are represented in core state and verified by tests/doctor. No local ma
 
 Authentik outage may break new SSO/provisioning actions but not mail delivery or daemon lookup paths.
 
+## Durable Group-to-role projection architecture (planned)
+
+Implements IDP-GROUP-001 through IDP-GROUP-007. An admitted exact issuer/scope/
+opaque-Group mapping is the only exception to non-authoritative Group inventory.
+One effective role binding retains operator ownership and independent per-mapping
+origins, preserving the existing global/scoped unique constraints. Removing one
+origin cannot delete another; legacy rows remain operator-owned.
+
+A small SQL projection leaf accepts the caller's transaction. SCIM Group/User
+changes reconcile origins before audit/commit; first verified OIDC identity
+binding reconciles preexisting membership before session admission. No projection
+creates identities or calls an operator service that opens another transaction.
+SCIM keeps its once-only serializable callback and post-commit memory update;
+OIDC attempt consumption precedes exchange, and later admission failure requires
+fresh login. Absent-row races abort rather than replaying callbacks.
+
+Group origins encode exact SCIM ownership/membership, not local enabled flags.
+Local import/bulk mailbox/domain toggles retain origins; narrow enabled guards
+suppress their authority. Canonical SCIM disable removes origins and revokes
+sessions transactionally; re-enable never revives revoked sessions.
+
+The configured issuer is a runtime dependency, not a request claim. Reuse main's
+existing TrimSpace then TrimRight("/")+"/" normalization, without inventing URL
+canonicalization. Shared protected deployment input supplies the CLI and must
+match the service's normalized GOTTH_MAIL_AUTHENTIK_ISSUER. Missing/mismatched
+input admits no Group authority. Both SQL projection and admission receive that
+value. BoundSession narrowly requires current issuer = bound identity issuer =
+source mapping issuer for Group origins, including after restart/config change;
+operator origins are unaffected. Its two reads use a coherent read-only snapshot.
+UI boundUIIdentity consumes guarded Roles. API identityRequestActor continues its
+existing mailbox-only actor (no new Roles copying); its BoundSession must be the
+same configured store, not a separately reconstructed unguarded instance.
+
+This is not rolling-compatible. Operational quiescence fences old service and CLI
+readers/writers before migration; an old identity CLI does not run the migration
+ledger check. Feature-disable preserves operator origins and all history.
+Binary rollback requires a separately tested schema-compatible build or an
+explicitly bounded, verified snapshot restore; never erase ledger entries.
+Implementation details and recovery gates are in the existing
+[identity spec](../implementation/v2-identity-provisioning.md#durable-group-to-role-projection-planned).
+
 ## Permission simulator architecture
 
 The permission simulator explains actor/action/resource decisions for:
@@ -331,3 +372,43 @@ Plugin service identity proves the plugin is admitted; it does not grant user/ad
 - Authentik-compatible SCIM provisioning path verified without bypassing GOTTH Mail validation/state admission
 - app passwords work for Dovecot auth using the same Authentik-compatible Django encoded hash/verifier contract where applicable
 - every identity/provisioning mutation audited
+
+## IDP-GROUP-007 all-role unit — 2026-10-03
+
+Extend the admitted domain_manager mechanism, not the authorization policy.
+Shared eligibility carries actual role; reconciliation and pure preview key every
+binding by (role, nullable domain), retaining independent origins/UUID per tuple.
+Global NULL target skips only target lookup, never common mailbox/domain/issuer
+guards. Scoped roles resolve an exact enabled target UUID. No new migration,
+configuration framework or retry layer. Versioned confirmation covers the full
+all-role diff; see the identity implementation spec for conditional CLI inputs.
+
+### Read-only local identity diagnostics — 2026-10-03
+
+A bounded repeatable-read inventory over existing mapping/typed Group/domain
+state uses protected CurrentIssuer, without grant/projection/network dependencies.
+Public Doctor/API/monitor return safe Check summaries; explicit local CLI details
+are separate from that public report type. No schema/cache/repair framework or
+renderer-contract change. See identity implementation spec for status and
+compatibility/disclosure table; local scope coverage is not external correlation.
+
+### Recovery Phase A boundary
+GroupRecoveryService owns one read-only repeatable preview or SERIALIZABLE apply;
+existing RemoveMappingSources receives that same transaction. No per-tuple commits,
+retries, new grants or repairs. External quiescence and trusted public/session/
+credential administration remain prerequisites, never inferred by a --fenced flag.
+Recovery only sets pg_catalog,public,pg_temp and row_security=off before all reads;
+apply locks ledger/mappings/bindings/sources before ANY SELECT. New SQL is qualified.
+No legacy migration/startup/session policy rewrite. Phase B needs separate assignment.
+
+## Phase B qualification boundary (2026-10-04)
+Separate new disposable cluster administrator, maintenance, old, current and rollback
+principals. Use initdb SCRAM authentication (existing testpg TRUST cannot prove a
+credential fence), synthetic private files and no global settings. DB authentication
+identifies roles, NOT binaries: new credentials can launch an old binary. Same-OS-user
+fixtures cannot prove external credential isolation or supervisor exclusion. Denied
+old principals stay denied across both resumes; deny current at rollback cutover.
+Immutable rollback archive bb16776c83a8d6bb3b295b1582a10cfe3c4ce6c444f412727c6afd09e3020dcb
+is conditionally compatible only with mappings disabled/sources0/nonoperatororphans0.
+Missing MatchesBinding then cannot promote Group authority; mapping/projection/local
+doctor capabilities are intentionally absent. c365 is negative CLI, not rollback.

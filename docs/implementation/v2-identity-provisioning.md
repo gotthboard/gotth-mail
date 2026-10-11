@@ -154,19 +154,178 @@ secret distribution, SCIM provider configuration, or product roles.
 
 Role mapping source is the required Authentik profile. Stored mapping includes:
 
-- `authentik_group_id_or_name`
+- exact configured issuer, actor-derived scope and opaque SCIM Group ID (never a name)
 - target role: `global_admin`, `domain_manager`, `scoped_domain_access`
-- optional domain selector
-- verification status and last checked timestamp
+- one domain UUID for scoped roles; NULL for global_admin
+- enabled/retired state, revision and mutation timestamps (no stored verification status)
 
 Doctor checks:
 
-- required groups exist
-- mapped roles can be resolved
-- domain-scoped mappings match known domains or documented selectors
+- local same-scope typed Groups and eligible durable role tuples exist
+- all three roles have eligible local mapping coverage (not live provider proof)
+- scoped mappings resolve exact known enabled domains; no selectors
 - mail delivery/daemon lookups still pass when Authentik is unavailable
 
 No local manual edit should be required to assign global admin/domain manager/scoped domain access through Authentik.
+
+## Durable Group-to-role projection (planned)
+
+Implements IDP-GROUP-001..007; no implementation/migration/live acceptance is
+claimed here. The admitted 2026-10-03 first child supported domain_manager only.
+The IDP-GROUP-007 all-role unit below extends that historical boundary; remaining
+feature gates are not implied complete. Migration 0019 supplies the existing
+all-role schema; this unit adds no migration.
+
+### Authoritative issuer input and consumers
+
+Extract/reuse the exact normalization now in main.configureOIDCFromEnv:
+TrimSpace(raw), reject empty for Group authority, then TrimRight(value,"/")+"/".
+Do not add URL rewriting or derive an issuer from config.Authentik.BaseURL.
+The proposed protected input is a bounded JSON file selected by
+GOTTH_MAIL_IDENTITY_RUNTIME_CONFIG_FILE, containing only the string key
+GOTTH_MAIL_AUTHENTIK_ISSUER (maximum file size 4096 bytes, reject unknown/duplicate
+keys). Require a regular non-symlink file owned by root or the effective user,
+with no group/world writes and only explicitly admitted service-reader access.
+The deployment owns this file; it is not a request body or profile generator.
+
+Both service and group-role CLI load that SAME protected deployment file through
+one loader. The service additionally requires its existing normalized
+GOTTH_MAIL_AUTHENTIK_ISSUER environment value to equal the file value; configured
+file error/mismatch fails startup. The CLI obtains authority from the file, not
+its supplied --issuer, YAML BaseURL or an arbitrary environment issuer override.
+--issuer must equal the resulting authority. Existing environment-only OIDC is
+preserved when the file is absent, but Group admission/projection/reads then have
+no authority. No credentials belong in this file or plan output.
+
+Pass immutable CurrentIssuer explicitly to authn.SQLStore, SCIM projection and
+mapping service before handlers are exposed (database setup currently constructs
+the store before OIDC setup). Missing issuer => no Group grants. On every
+BoundSession Group-role read require CurrentIssuer = identity_refs.issuer =
+source mapping.issuer, with nonempty CurrentIssuer. This narrow guard survives
+restart/config changes; do not delete or reinterpret operator origins. Keep the
+existing two session/role queries in a read-only repeatable-read snapshot; add
+only Group-source/current-issuer and local enabled guards, not a full SCIM graph
+join per request. SQL errors deny; no role cache.
+
+UI boundUIIdentity and API identityRequestActor must use the same configured
+store. The UI uses guarded Roles. identityRequestActor currently returns a
+mailbox-only actor: preserve that restriction, bearer handling and CSRF behavior;
+do not start copying Roles to broaden API authority as part of this feature.
+
+### Exact predicate and scope
+
+Share api.provisioningScope's existing RawURLEncoding(SHA256 of
+"gotth-mail/scim-scope/v1" + NUL + stable scim_client actor ID). No --scope input.
+All structural equalities are mandatory (aliases map, ir, m, u, g, edge):
+
+- map.issuer = CurrentIssuer = ir.issuer; ir.provider = authentik;
+- ir.mailbox_id = m.id AND m.scim_resource_id = u.id;
+- u.resource_type = User; u.scope = map.scope; u.external_id = ir.subject;
+- g.resource_type = Group; g.scope = map.scope; g.id = map.group_id;
+- (edge.scope, edge.group_id, edge.user_id) = (map.scope, g.id, u.id).
+
+User/Group must be live, User canonically active, mapping enabled/not deleted.
+Structural origins may exist while local flags are off; effective Group
+permission additionally needs mailbox, mailbox-domain and target-domain enabled.
+Local import/bulk paths only toggle those flags, not ownership UUIDs. Retain
+origins across local toggles; preserve existing non-SCIM session semantics rather
+than claiming those paths revoke cookies. Duplicate subject elsewhere never
+substitutes for the mailbox-to-User ownership equality.
+
+### Storage, preview and origin mutations
+
+Keep migration 0018 uniqueness: one effective role row per identity/role/domain.
+Add operator_owned boolean NOT NULL DEFAULT TRUE (existing rows TRUE), and
+positive authority_revision bigint NOT NULL DEFAULT 1. Group inserts explicitly
+FALSE. Legacy insert meaning is preserved, NOT old delete/read compatibility.
+
+Add identity_group_role_mappings: UUID id, issuer text length 1..2048, scope and
+Group ID text length 1..1024, role, nullable domain FK, positive revision,
+enabled/deleted flags and timestamps; all except domain NOT NULL. Use existing
+role/domain shape checks and global/scoped unique tuple indexes. Retain disabled
+and tombstoned mapping rows; never rebind a deleted opaque Group ID.
+Add role_binding_group_sources(binding_id FK CASCADE, mapping_id FK RESTRICT),
+composite primary key and mapping-first index. Mapping role/domain must equal the
+binding. Remove effective row only when no operator or Group origin remains;
+preserve its UUID otherwise. Audit/increment revision on every origin change.
+
+CLI identity group-role preview|apply uses closed flags: operation admit|disable,
+issuer, scim-actor, group-id, role, conditional domain and confirm. Global_admin
+MUST omit --domain; domain_manager/scoped_domain_access require an exact domain.
+Tuple changes require separate disable/admit confirmations. Admit requires live
+Group and an enabled known target domain for scoped roles;
+disable remains possible after deletion/disable. No-op writes nothing. Preview
+uses repeatable-read; digest binds request/schema version, mapping revision,
+Group version/absence, domain and sorted member/identity/provenance inputs.
+Output origins/counts/effective_after and future-member delegation explicitly.
+Apply repeats under SERIALIZABLE; stale state rejects. Per-origin and mapping
+redacted success audits share the mutation transaction. Audit never carries
+credentials or raw provider payloads.
+
+Existing operator flags stay. Its grant adds operator origin even to a Group-only
+row; revoke removes only operator origin and an orphan effective row. Versioned
+preview/digest/result/audit expose remaining sources/effective_after; never say
+access was revoked if another origin survives. No mandatory --origin flag.
+
+### Transaction and lifecycle seams
+
+A small internal/roleprojection SQL leaf supplies SyncGroup, SyncIdentity and
+RemoveMappingSources with caller *sql.Tx, CurrentIssuer and audit metadata;
+never Begin/Commit/retry or invoke operator Apply. SyncGroup diffs current members
+AND prior sources, including removed users. SCIM projectRecord invokes it after
+replaceGroupMembers and before audit; User changes reconcile bound identities.
+Group DELETE disables/tombstones mappings and removes their origins before
+membership cascade. Mapping disable removes only its sources.
+
+PutIdentitySession becomes SERIALIZABLE: verified exact identity binding ->
+SyncIdentity -> session/login audit -> commit. Membership before login cannot
+create identity. ConsumeAttempt has ALREADY committed used_at before exchange;
+projection failure rolls back identity/origins/session/audit, not used_at. Fresh
+login is required, never callback replay. SCIM Transact stays once-callback,
+SERIALIZABLE and memory-after-commit. Canonical disable removes Group origins and
+uses revokeSessionsForSCIMID in that transaction; re-enable reprojects without
+reviving old sessions. Referenced User DELETE stays409. Group DELETE leaves
+other grants/sessions intact. Next snapshot sees role loss; admitted work is not
+retroactively cancelled. Predicate reads/unique constraints cover absent-row
+races; ordered existing-row locks alone are insufficient. Audit, deadlock and
+serialization failure abort fully; no automatic retry/network in projection.
+
+### Fence and rollback (future deployment authority required)
+
+Before migration block OIDC/admin/SCIM ingress; pause SCIM/jobs/mutating CLI
+launches; drain and stop sole control-plane; disable restart/replacement. Restrict
+DB/config access to the designated maintenance operator and remove old service/
+CLI entrypoints. Verify no old processes/containers, mutating jobs/CLIs or runtime
+DB sessions/transactions, with supervisor desired state stopped. Missing checks
+block migration. An old gotth-mailctl identity path does NOT check the migration
+ledger: restart/ledger validation alone is not a fence.
+
+Capture protected DB/config snapshot, ledger/artifact identities and isolated
+restore proof. Replace BOTH service and CLI after migration/parity; verify fixture
+mode off, correct ledger, no admitted mappings, one compatible writer/no old
+readers, matching protected issuer input; keep ingress closed through checks.
+
+Feature-disable under that fence is an audited compatible transaction: disable
+mappings, remove ONLY Group origins/orphans, preserve operator UUIDs/grants and
+all audit/revision/ledger history. Verify zero Group sources/nonoperator orphans.
+Never promote Group origins to operator. Before candidate deployment prepare/test
+a schema-compatible rollback build recognizing the ledger/provenance. Old binaries
+reject unknown migrations when they invoke the checker; never erase ledger rows.
+Without compatible rollback remain stopped/disabled. Snapshot downgrade is safe
+only within verified no-write interval; after traffic resumes it loses later
+writes and needs explicit restore/data-loss approval plus preserved post-cutover
+evidence/grants. Feature-disable is not binary/schema rollback.
+
+### Acceptance trace
+
+The planned [feature README](../../workflow/features/v2.identity-provisioning/group-role-projection/README.md)
+traces IDP-GROUP-001..007 to exact files and test oracles. Required tests include
+issuer change/missing authority across restart in both consumers; duplicate
+subject/other-mailbox/cross-scope identity denial; independent origins; audited
+rollback; absent-row concurrency; spent OIDC attempts; local enabled guards;
+SCIM revocation; fenced legacy CLI rejection and operator-preserving recovery.
+First-slice estimate is 4-8 engineering hours plus reviews/full gates/rollout,
+not a completion promise or all-roles acceptance.
 
 ## Permission simulator
 
@@ -541,3 +700,161 @@ Required tests:
 - CSRF missing/mismatch rejection and session/CSRF secret non-disclosure
 - `git diff --check`
 - `go test ./...`
+
+## IDP-GROUP-007 all-role unit — 2026-10-03
+
+The admitted earlier domain_manager-only checkpoints are historical bounded slices.
+This unit extends the same durable mapping/projection mechanism to global_admin
+and scoped_domain_access; existing authz actions and mailbox-only API actors do
+not change. Global mapping requires NULL domain; CLI MUST omit --domain (even an
+explicit empty flag rejects). Both scoped roles require one exact known enabled
+domain on admit, resolved to its UUID; no selector or --scope input.
+
+Keys and source invariants are (identity, role, nullable domain), never domain
+alone. Shared eligibility carries actual role. Preview predicts the entire
+SyncGroup diff across all roles/targets and binds it into group-role-plan/v2,
+rejecting old v1 confirmations. Global absence of target domain bypasses ONLY
+target-domain lookup, not mailbox/mailbox-domain/current-issuer/source guards.
+Two Groups and operator ownership remain independent for EACH role/target;
+source revision/audit, UUID preservation, delayed orphan cleanup, retirement,
+recovery disable, no-op zero DML and SERIALIZABLE confirmation remain unchanged.
+
+Verification: native schema/service/projector and real compiled CLI through SCIM,
+existing provider stub/real OIDC SQL binding, BoundSession and existing authz
+allow/deny. Cross-role/domain source corruption, stale provenance/schema,
+rollback, no-op and one-winner races are required. Earlier supported-role
+denials become explicit invalid role/shape controls, not removed tests.
+Profile/doctor/import/provider setup, live grants/browser proof and broad
+performance/full-feature admission are excluded and remain open.
+
+## Local durable identity diagnostics — 2026-10-03
+
+Three evidence classes stay separate: pinned renderer/artifact consistency, local
+DB mapping health, and external provider/profile correlation/live grant proof.
+Doctor inspects only local state; it neither verifies nor modifies the renderer,
+provider, mappings, identities, bindings or authority. No verification columns
+exist: observation time belongs to the read result, not persisted authority.
+
+Configured mode uses the shared protected CurrentIssuer and one bounded read-only
+REPEATABLE READ inventory query. Eligible rows require exact current issuer,
+enabled/nonretired mapping, same-scope typed live opaque Group, no retirement
+tombstone/barrier, and valid role/target shape: global NULL; both scoped roles an
+existing enabled exact domain UUID. Zero members is valid future delegation.
+Role coverage across locally admitted scopes does NOT prove intended external
+profile/actor correlation. Static names/Verified/operator grants never count.
+
+| Condition | Local check | Disclosure / compatibility |
+| --- | --- | --- |
+| Complete three-role coverage, all rows eligible | OK | local facts only |
+| Complete coverage plus inactive/ineligible rows | Warn | safe summary; local row reasons |
+| Missing any required eligible role | Fail | safe incomplete-coverage reason |
+| Missing DB/schema/query error/cancel/malformed issuer | Fail | fixed reason; no raw error |
+| Empty current authority | Warn | explicitly unavailable, never Unknown-only→OK |
+| External provider proof | Warn/not performed | never implied by pointers or local OK |
+| Artifact consistency | Unknown/not rerun by doctor | pinned external renderer unchanged |
+| No --config CLI | Existing fixture unchanged | same text/JSON/report/exit behavior |
+| Configured CLI report failure | Existing exit0 retained | configuration/usage errors exit1 |
+
+Public ops.Doctor/API/notification reports contain only existing Check envelopes
+and fixed safe reasons: no issuer/scope/Group/domain UUID/subject/provider payload,
+raw SQL error or credential. Explicit local DoctorLocal/configured CLI can include
+the observed tuple inventory, revisions, eligibility and fixed exclusion reasons;
+unsafe issuer shapes are omitted, never credential-bearing URLs or DB errors.
+Existing plugin checks/daemon behavior and unrelated worst() logic are unchanged.
+Configured pointer/enablement facts are labeled as such, not live reachability.
+
+Use a fixed3s query context honoring earlier cancellation, no cache/tunable/N+1
+application loop. No DB bootstrap/migrations, repairs, mutation planner/projector
+or network discovery. API and both production notification callers provide the
+same DB/CurrentIssuer inputs. CLI configured mode validates existing config and
+loads only the shared protected issuer; BaseURL/group names are not authority.
+
+Native tests prove old CLI outputs/exits first; schema-backed all-role coverage,
+read-only/write-denial/no table delta, exclusions, restart A→B, missing/cancelled
+inputs, static-name nonauthority, actual configured CLI text/JSON, and public API/
+monitor redaction with canaries. Full affected ops/CLI plus selected API/monitor/
+daemon race, vet/both builds remain required. No live provider/profile/beta claim.
+
+Configured CLI has no deployed webmail/daemon clients: those checks are Warn,
+not_inspected_in_configured_cli, not fabricated fixture successes or failures.
+This qualification is local CLI only; API/monitor actual runtime checks and the
+legacy no-config fixture remain unchanged. Configured local OK still aggregates
+to Warn because external proof is not performed.
+
+Configured local identity health retains the existing identity/authentik-role-mapping
+check key so durable monitor transition/pending-state identity is not renamed.
+Its fixed local_* reasons distinguish actual local inventory from legacy static
+validation; no existing notification state migration or cleanup is introduced.
+
+## IDP-GROUP-006 Phase A recovery contract (2026-10-03)
+Closed commands: identity group-feature-disable preview --config FILE; apply
+--config FILE --confirm DIGEST. No selectors/force/issuer/fence flags. Existing
+commands unchanged; all-issuer withdrawal needs no protected issuer file.
+Read-only RR preview; SERIALIZABLE apply;15s deadline/no retry/chunk commits.
+Both SET LOCAL search_path=pg_catalog,public,pg_temp and row_security=off as utility
+commands. Apply NOWAIT locks public.schema_migrations SHARE then public mappings,
+bindings,sources SHARE ROW EXCLUSIVE BEFORE SELECT/catalog/database/user/validator.
+Trusted public ownership/CREATE exclusion and session setup are external assumptions;
+RLS off errors rather than bypasses. No ownership/BYPASSRLS or schema scanner.
+ValidateCurrentSQL requires every known registered migration/checksum/clean row,
+rejects unknown/missing; never MigrateSQL/bootstrap. Full ordered mapping/binding/
+source/ledger snapshot, NULL-distinct, includes revisions/timestamps/identities/
+operator bits/tuples; digest schema gotth-mail/group-feature-disable-plan/v1 plus
+database/current_user. It is neither clone identity nor fence. Local plans expose
+only UUID/role/target/revision/removal/operator effects, no payload/subject/secrets.
+Prevalidate dangling FK endpoints, malformed mapping text/shape/revisions, cross-role/
+domain sources and preexisting nonoperator orphans; fail without DML. Missing Group,
+old issuer, disabled local flags or malformed User JSON do not block withdrawal.
+Enabled OR source-bearing mappings change to disabled/revision+1 once; preserve
+tombstone and row. Source-free disabled rows unchanged. Same-tx RemoveMappingSources
+revises/audits each origin and deletes only newly orphaned nonoperators. Preserve
+operator bits/UUIDs/identity/role/target. Per-mapping disable and one change-summary
+audit; assert zero enabled mappings/sources/orphans and unchanged operator set/ledger.
+One commit; stale/lock/serialization/audit failure rolls back with no retry. Commit
+ambiguity requires inspection. No-op timestamps/revisions/audits unchanged.
+ACLs: preview SELECT mappings/bindings/sources/identity_refs/domains/ledger. Apply
+adds mapping/binding UPDATE, source/binding DELETE, audit INSERT. Ledger PG16
+SELECT+UPDATE is REAL DML capability (unused by code, guarded by tests); PG17
+SELECT+MAINTAIN avoids UPDATE but permits VACUUM, ANALYZE, CLUSTER, REINDEX,
+REFRESH MATERIALIZED VIEW and LOCK TABLE maintenance. It is not zero-power.
+DELETE on sources already permits any lock in16/17; no source UPDATE. No history
+DELETE, schema CREATE/ALTER/DROP, role escalation, owner/superuser/BYPASSRLS grants.
+Initialized existing startup needs ledger strong lock privilege plus SELECT
+domains/mailboxes/tokens; startup policy remains unchanged. No security-definer
+workaround. Scoped native nonsuperuser ACL/namespace/RLS/atomicity proof belongs A;
+old-binary fencing, restart/rollback/dump-restore belong unassigned B; live C open.
+
+## Phase B exact owned proof plan (2026-10-04; before executable evidence)
+1. Verify admitted133 production inputs, parent checkpoint-only delta, sealed current
+   pair/tool receipts. Rebuild both UNMODIFIED bb16776c archive binaries; separately
+   build c365 legacy CLI. Record distinct hashes/source/config/environment identities.
+2. One new PG16.14 lane then proportional PG17.10; existing Go1.26.6 offline/-p1/GOMAX2.
+   initdb --auth-local=scram-sha-256 --auth-host=scram-sha-256 --pwfile uses private
+   synthetic password files; no TRUST credential claim. Inventory exact data_dir,
+   DB, role/PID/backend_start and prepared transactions before role/session actions.
+   Verify wrong-password/user/admin-selection/SET ROLE denial, no inheritance/owner/
+   BYPASSRLS escape. Existing initialized-schema startup with optional workers and
+   reference fixture off; exact exercised grants, no blanket ALL. PG16 ledger UPDATE
+   is real DML capability, PG17 MAINTAIN disclosed as in A.
+3. Real c365 changing revoke preview on0019/exactdigest. Hold target identity_refs
+   FOR UPDATE, observe actual old apply lock wait and separate established old SELECT.
+   Revoke PUBLIC/old CONNECT +NOLOGIN; prove established old session survives. While
+   blocker held, terminate ONLY this lane's inventoried old backends with matching
+   backend_start. Actual CLI nonzero from termination, unchanged grants/sources/audits;
+   timeout/bad digest/wrong query is FAIL. Permanently deny old credential thereafter.
+4. Compiled current maintenance preview/apply, exact all-role operator/state/ledger
+   assertions. Actual current service PID/readiness/CLI/SCIM/login/session/BoundSession/
+   authz/operator/daemon checks under current principal; mailbox-only API isn't role
+   proof. Stop owned readers/writers and verify no sessions; deny current, switch BOTH
+   qualified rollback binaries to distinct principal, actual new PID/readiness and
+   behavior again. Repeat old entrypoint/credential denial after EACH resume.
+5. Owned no-write cut: actual pg_dump, new empty phase-created restore DB, isolated
+   pg_restore with explicit owner/ACL options and logical history/business authority
+   comparison. Later disposable sentinel absent from backup demonstrates loss, not
+   permission to restore real data. No ledger/history deletion or downgrade workaround.
+6. Any production defect blocks product edits: preserve bounded finding. Any missing
+   startup prerequisite requiring a helper chain>15min stops the chain, not a tool
+   campaign. Failure remains fenced. No provider/live/host/global-config authority.
+Native argv, binary/config hashes, redacted env, tool versions, limits, logs/exits and
+owned shutdown retained. Uninstrumented children give behavioral—not parent-coverage—
+proof. No generic fault/scale/OS-isolation/backup-generalization claim.

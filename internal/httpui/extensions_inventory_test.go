@@ -294,12 +294,12 @@ func TestInventoryRenderContract(t *testing.T) {
 		if w.Code != 200 {
 			t.Fatal(w.Code)
 		}
-		for _, want := range []string{"&lt;script&gt;", "sha256:" + strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), "notification.send", "notification.v1", "webhook.key", "stopped", "extension.untested", "No update available", "No rollback pin", "Disabled", "/admin/extensions/" + item.InstanceID} {
+		for _, want := range []string{"&lt;script&gt;", "sha256:" + strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), "data-permission-count=\"capabilities\">1</dd>", "data-permission-count=\"interfaces\">1</dd>", "data-permission-count=\"secret_slots\">1</dd>", "View permissions", "stopped", "extension.untested", "No update available", "No rollback pin", "Disabled", "/admin/extensions/" + item.InstanceID} {
 			if !strings.Contains(body, want) {
 				t.Errorf("missing projection %q", want)
 			}
 		}
-		for _, forbidden := range []string{hostile, "private_config", "private_session", "private_metadata", "hx-get=", "hx-boost=", "style=", "name=\"csrf_token\""} {
+		for _, forbidden := range []string{hostile, "notification.send", "notification.v1", "webhook.key", "private_config", "private_session", "private_metadata", "hx-get=", "hx-boost=", "style=", "name=\"csrf_token\""} {
 			if strings.Contains(body, forbidden) {
 				t.Errorf("unsafe body contains %q", forbidden)
 			}
@@ -526,12 +526,12 @@ func TestInventoryReadOnlyProjectionPG(t *testing.T) {
 		if w.Code != 200 || strings.HasPrefix(body, inventoryMarker) != tc.fragment || w.Header().Get("Cache-Control") != "private, no-store" || w.Header().Get("Content-Type") != "text/html; charset=utf-8" {
 			t.Fatalf("projection status/envelope: %+v status=%d", tc, w.Code)
 		}
-		for _, want := range []string{"notification.inventory", "inventory.key", "fixture runtime quarantined"} {
+		for _, want := range []string{"notification.inventory", "data-permission-count=\"secret_slots\">1</dd>", "View permissions", "fixture runtime quarantined"} {
 			if !strings.Contains(body, want) {
 				t.Fatal("missing projection", want)
 			}
 		}
-		if strings.Contains(body, "fixture-secret-never-render") || strings.Contains(body, preview.Confirmation) {
+		if strings.Contains(body, "inventory.key") || strings.Contains(body, "fixture-secret-never-render") || strings.Contains(body, preview.Confirmation) {
 			t.Fatal("secret/confirmation leaked")
 		}
 		if !tc.fragment && !strings.Contains(body, "data-theme=\""+inventoryTheme(tc.theme)+"\"") {

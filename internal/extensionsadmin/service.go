@@ -127,6 +127,46 @@ const instanceColumns = `instance_id, product, extension_id, repository, artifac
 
 type rowScanner interface{ Scan(...any) error }
 
+// Same Fields/Default shape as Metadata, but raw defaults retain their integer
+// spelling. Nested callers embed this as a STRUCT, not a last RawMessage blob:
+// encoding/json must preserve object merges and slice reset/reuse semantics.
+type metadataDefaults struct {
+	Fields []struct {
+		Default json.RawMessage `json:"default"`
+	} `json:"fields"`
+}
+
+// Restore only a legacy-decoded integer field's numeric plain-int64 default.
+// Both arguments come from the same JSON decoded into initially zero values.
+// Int64 conversion failure intentionally retains legacy decimal/exponent/range
+// behavior; whole-projection decode errors are checked by the callers.
+// Complexity: compatible shapes take time O(1+F+D), Omega(1+F), Theta(1+F+D), where
+// F is fields and D is numeric candidate bytes parsed by encoding/json. Auxiliary
+// space O(1+F+D), Omega(1); tight Theta is not established across boxing/error
+// allocations. Shape mismatch is Theta(1) time/space. No SQL or validation.
+func restoreMetadataIntegerDefaults(metadata *Metadata, defaults metadataDefaults) error {
+	if len(metadata.Fields) != len(defaults.Fields) {
+		return errors.New("invalid stored metadata shape")
+	}
+	for i := range metadata.Fields {
+		if metadata.Fields[i].Kind != FieldInteger {
+			continue
+		}
+		if _, ok := metadata.Fields[i].Default.(float64); !ok {
+			continue
+		}
+		var value int64
+		if err := json.Unmarshal(defaults.Fields[i].Default, &value); err == nil {
+			metadata.Fields[i].Default = value
+		}
+	}
+	return nil
+}
+
+// Complexity: time O(B+F+D+Q), Omega(1), auxiliary space O(B+F+D+M),
+// Omega(1); tight Theta is not established across errors/driver work. B is legacy
+// JSON bytes, F metadata fields, D copied raw-default bytes; Q/M are Scan/driver
+// time/space. Metadata receives an additional full JSON scan and raw projection.
 func scanInstance(row rowScanner) (Instance, error) {
 	var out Instance
 	var previous, available sql.NullString
@@ -155,6 +195,13 @@ func scanInstance(row rowScanner) (Instance, error) {
 		return Instance{}, err
 	}
 	if err := json.Unmarshal(configuration, &out.Configuration); err != nil {
+		return Instance{}, err
+	}
+	var defaults metadataDefaults
+	if err := json.Unmarshal(metadata, &defaults); err != nil {
+		return Instance{}, err
+	}
+	if err := restoreMetadataIntegerDefaults(&out.Metadata, defaults); err != nil {
 		return Instance{}, err
 	}
 	return out, nil
@@ -208,8 +255,13 @@ func (s *Service) List(ctx context.Context) ([]Instance, error) {
 	return result, nil
 }
 
+const secretStatusQuery = `SELECT slot, rotated_at FROM extension_secrets WHERE instance_id=$1 AND slot=ANY($2::text[]) ORDER BY slot`
+
+// loadSecretStatus costs O(grant bytes + returned current rows + grant count)
+// in application work/storage, plus database work that may scan retained rows.
+// Always query, even for empty grants, to preserve database/cancellation errors.
 func (s *Service) loadSecretStatus(ctx context.Context, instance *Instance) error {
-	rows, err := s.DB.QueryContext(ctx, `SELECT slot, rotated_at FROM extension_secrets WHERE instance_id=$1 ORDER BY slot`, instance.InstanceID)
+	rows, err := s.DB.QueryContext(ctx, secretStatusQuery, instance.InstanceID, postgresTextArray(instance.SecretSlots))
 	if err != nil {
 		return err
 	}
@@ -452,10 +504,11 @@ func (s *Service) ApplyConfigure(ctx context.Context, actor audit.ActorRef, expe
 	return s.Get(ctx, instance.InstanceID)
 }
 
-// Complexity: time O(B+Q), Omega(1); space O(B+M), Omega(1); tight Theta
-// not established across errors/delegates. B is target/preview/instance bytes;
-// Q/M include SQL, locks, JSON, validation/sorting, audit and Get. One scalar
-// target query holds the preview lock before taking the instance lock.
+// Complexity: time O(B+F+D+Q), Omega(1); space O(B+F+D+M), Omega(1);
+// tight Theta is not established across errors/delegates. B is target/preview/
+// instance bytes, F projected metadata fields, D copied default bytes. Q/M are
+// delegated SQL/locks, validation/sorting, audit and Get time/space. Payload JSON
+// is scanned again for its typed metadata projection; target lock ordering is unchanged.
 func (s *Service) ApplyUpdate(ctx context.Context, actor audit.ActorRef, expectedInstanceID, previewID, confirmation string) (Instance, error) {
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
@@ -478,6 +531,15 @@ func (s *Service) ApplyUpdate(ctx context.Context, actor audit.ActorRef, expecte
 	}
 	var in UpdateInput
 	if err := json.Unmarshal(p.Payload, &in); err != nil {
+		return Instance{}, ErrConfirmation
+	}
+	var defaults struct {
+		Metadata metadataDefaults `json:"metadata"`
+	}
+	if err := json.Unmarshal(p.Payload, &defaults); err != nil {
+		return Instance{}, ErrConfirmation
+	}
+	if err := restoreMetadataIntegerDefaults(&in.Metadata, defaults.Metadata); err != nil {
 		return Instance{}, ErrConfirmation
 	}
 	validated := InstallRequest{InstanceID: instance.InstanceID, ExtensionID: instance.ExtensionID, Repository: instance.Repository, ArtifactPin: in.ArtifactPin, ManifestDigest: in.ManifestDigest, GrantDigest: in.GrantDigest, SessionDigest: in.SessionDigest, Capabilities: in.Capabilities, Interfaces: in.Interfaces, SecretSlots: in.SecretSlots, Metadata: in.Metadata}
@@ -797,11 +859,12 @@ func (s *Service) Disable(ctx context.Context, actor audit.ActorRef, id string) 
 	return s.Get(ctx, id)
 }
 
-// Complexity: time O(B+Q), Omega(1), auxiliary space O(B+M), Omega(1);
-// tight Theta not established across errors/SQL waits. B is actor, confirmation
-// and version/configuration bytes; Q/M include BeginTx/rollback, row locking,
-// decoding, validation, update, audit and final Get. Long-ID rejection adds
-// constant local work after actor validation and transaction setup, before the first UUID lookup.
+// Complexity: time O(B+F+D+Q), Omega(1), auxiliary space O(B+F+D+M),
+// Omega(1); tight Theta is not established across errors/delegates. B is actor,
+// confirmation and version/configuration bytes; F projected metadata fields,
+// D copied defaults. Q/M cover transaction/locks, validation, update/audit and
+// final Get time/space. Previous JSON receives an extra typed projection scan.
+// Long-ID rejection remains constant local work before the first UUID lookup.
 func (s *Service) Rollback(ctx context.Context, actor audit.ActorRef, id, confirmation string) (Instance, error) {
 	if err := validateActor(actor); err != nil {
 		return Instance{}, err
@@ -827,6 +890,15 @@ func (s *Service) Rollback(ctx context.Context, actor audit.ActorRef, id, confir
 	}
 	var previous versionSnapshot
 	if err := json.Unmarshal(previousJSON, &previous); err != nil || !artifactPattern.MatchString(previous.ArtifactPin) {
+		return Instance{}, ErrConflict
+	}
+	var defaults struct {
+		Metadata metadataDefaults `json:"metadata"`
+	}
+	if err := json.Unmarshal(previousJSON, &defaults); err != nil {
+		return Instance{}, ErrConflict
+	}
+	if err := restoreMetadataIntegerDefaults(&previous.Metadata, defaults.Metadata); err != nil {
 		return Instance{}, ErrConflict
 	}
 	currentJSON, err := json.Marshal(versionSnapshotFrom(instance))

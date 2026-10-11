@@ -1,8 +1,11 @@
 package notifyruntime
 
 import (
+	"bytes"
 	"context"
 	"crypto"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -572,5 +575,116 @@ func writeEmailConfigKeyAt(t *testing.T, path, armorType string, resign bool, en
 	}
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Fixed public synthetic fixture: binary packet whitespace is data, not text.
+// Exercise protected-file admission and the real configured crypto path, no SMTP.
+func TestNewSignedEmailBackendPreservesBinaryKeyPackets(t *testing.T) {
+	raw, err := os.ReadFile("../webmail/testdata/synthetic-whitespace.pgp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	if hex.EncodeToString(sum[:]) != "fbc7918e856947a3ef5331f93669ade507692ac4ecff1b4b56a5d1f7cb4a9f35" {
+		t.Fatal("fixture hash mismatch")
+	}
+	one, err := protonpgp.ReadKeyRing(bytes.NewReader(raw))
+	if err != nil || len(one) != 1 {
+		t.Fatal("raw single oracle", err)
+	}
+	dup := append(bytes.Clone(raw), raw...)
+	two, err := protonpgp.ReadKeyRing(bytes.NewReader(dup))
+	if err != nil || len(two) != 2 {
+		t.Fatal("raw duplicate oracle", err)
+	}
+	trimmed := bytes.TrimSpace(dup)
+	partial, err := protonpgp.ReadKeyRing(bytes.NewReader(trimmed))
+	if err != nil || len(partial) != 1 || len(trimmed) != len(dup)-1 {
+		t.Fatal("trimmed duplicate oracle", err)
+	}
+	t.Logf("ORACLE rawCount=%d duplicateCount=%d trimmedCount=%d rawBytes=%d duplicateBytes=%d trimmedBytes=%d rawSHA256=%x duplicateSHA256=%x trimmedSHA256=%x", len(one), len(two), len(partial), len(raw), len(dup), len(trimmed), sum, sha256.Sum256(dup), sha256.Sum256(trimmed))
+	encode := func(input []byte) []byte {
+		var b bytes.Buffer
+		w, e := armor.Encode(&b, protonpgp.PrivateKeyType, nil)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = w.Write(input); e != nil {
+			t.Fatal(e)
+		}
+		if e = w.Close(); e != nil {
+			t.Fatal(e)
+		}
+		return b.Bytes()
+	}
+	now := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	fp := emailConfigFingerprint(one[0])
+	from := "forward@example.test"
+	for _, tc := range []struct {
+		name string
+		data []byte
+		deny bool
+		mode os.FileMode
+	}{
+		{"binary-single", raw, false, 0600}, {"binary-duplicate", dup, true, 0600}, {"armor-single", encode(raw), false, 0600}, {"armor-duplicate", encode(dup), true, 0600}, {"unsafe-mode", encode(raw), true, 0644},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "public-synthetic.pgp")
+			if err := os.WriteFile(path, tc.data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(path)
+			if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != tc.mode {
+				t.Fatal("mode oracle", err)
+			}
+			entity, loadErr := loadNotificationSigningEntity(path, fp, from, now)
+			t.Logf("LOADER bytes=%d sha256=%x mode=%04o entity=%t error=%v ambiguous=%t unusable=%t", len(tc.data), sha256.Sum256(tc.data), info.Mode().Perm(), entity != nil, loadErr, errors.Is(loadErr, ErrAmbiguousSigner), errors.Is(loadErr, ErrSigningKeyUnusable))
+			cfg := validEmailConfig(path, fp)
+			cfg.From = from
+			cfg.SMTPUsername = "system:" + from
+			cfg.SMTPPassword = "public-synthetic-test-only"
+			cfg.Now = func() time.Time { return now }
+			backend, ctorErr := NewSignedEmailBackend(cfg)
+			t.Logf("CONSTRUCTOR accepted=%t error=%v ambiguous=%t unusable=%t", ctorErr == nil, ctorErr, errors.Is(ctorErr, ErrAmbiguousSigner), errors.Is(ctorErr, ErrSigningKeyUnusable))
+			if ctorErr == nil {
+				id, e := backend.Resolver.ResolveSender(context.Background(), fp, from, "")
+				if e != nil {
+					t.Fatal("accepted constructor cannot resolve", e)
+				}
+				msg, e := webmail.BuildMIME(webmail.Draft{From: from, To: "ops@example.test", Subject: "verification only", Body: "synthetic"})
+				if e != nil {
+					t.Fatal(e)
+				}
+				signed, status, e := backend.Signer.SignMIME(context.Background(), id, msg)
+				if e != nil || !status.Signed {
+					t.Fatal("accepted config cannot sign", e)
+				}
+				verified, e := backend.Verifier.VerifyExactSender(context.Background(), signed, id)
+				if e != nil || !verified.Signed || verified.Identity != from || verified.Fingerprint != fp {
+					t.Fatal("configured verify failed", e)
+				}
+				t.Logf("CONFIGURED-PATH resolve=true sign=true verify=true signedBytes=%d smtpSubmitCalls=0", len(signed))
+			}
+			if tc.deny {
+				if loadErr == nil || entity != nil {
+					t.Error("REGRESSION: ambiguous/unsafe input admitted by private loader")
+				}
+				if ctorErr == nil {
+					t.Error("REGRESSION: ambiguous/unsafe input admitted by configured constructor")
+				}
+				if tc.name == "armor-duplicate" && (!errors.Is(loadErr, ErrAmbiguousSigner) || !errors.Is(ctorErr, ErrAmbiguousSigner)) {
+					t.Error("armor ambiguity control wrong error")
+				}
+				if tc.name == "unsafe-mode" && (!errors.Is(loadErr, ErrSigningKeyUnusable) || !errors.Is(ctorErr, ErrSigningKeyUnusable)) {
+					t.Error("protected-mode control wrong error")
+				}
+			} else if loadErr != nil || entity == nil || ctorErr != nil {
+				t.Error("REGRESSION: independently valid single key rejected")
+			}
+		})
 	}
 }

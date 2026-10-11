@@ -1,5 +1,8 @@
 package httpui
 
+import "strings"
+import "strconv"
+
 // Complexity on successful render: time O(B+W), Omega(B); auxiliary O(B),
 // Omega(1), tight bounds depend on templ buffering and delegated writer W.
 // B escaped blocker text plus fixed receipt markup. No registry/secret reads.
@@ -26,6 +29,417 @@ templ extensionTerminalDocument(theme string, blockedReason string) {
     </nav>
     if blockedReason != "" {
      <p role="alert" class="text-danger break-words">Runtime blocked: { blockedReason }</p>
+    }
+   </main>
+  </body>
+ </html>
+}
+
+// Complexity: successful render time O(F+O+B+W), Omega(F+O+B); auxiliary
+// O(B+S), Omega(1). F projected fields, O enum options, B escaped input/output
+// bytes including comparisons, W/S delegated writer/templ work and storage.
+// Tight Theta is not established across writer failures or templ buffering.
+// Closed field kinds only; the caller's buffer discards partial output on error.
+// Uses Fields, never raw metadata/configuration/defaults or submitted secret maps.
+templ extensionConfigurationForms(view extensionPageView) {
+ <section id="configuration">
+  <h2>Configuration</h2>
+  <form method="post" action={ view.ActionURL }>
+   <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+   for _, field := range view.Fields {
+    <label>{ field.Label }
+     switch field.Kind {
+      case "boolean":
+       <input type="checkbox" name={ "field." + field.Name } checked?={ field.Checked }/>
+      case "enum":
+       <select name={ "field." + field.Name } required?={ field.Required }>
+        if !field.Required {
+         <option value="" selected?={ field.Value == "" }>Not set</option>
+        }
+        for _, option := range field.Options {
+         <option value={ option } selected?={ option == field.Value }>{ option }</option>
+        }
+       </select>
+      case "secret":
+       <input type="password" name={ "field." + field.Name } autocomplete="new-password" required?={ field.Required }/>
+      case "integer":
+       <input type="number" name={ "field." + field.Name } value={ field.Value } required?={ field.Required }/>
+      case "string":
+       <input type="text" name={ "field." + field.Name } value={ field.Value } required?={ field.Required }/>
+      default:
+       {{ return errExtensionDetailRender }}
+     }
+    </label>
+   }
+   <button name="action" value="configure-preview">Preview configuration</button>
+  </form>
+  if view.Preview.Operation == "configure" {
+   <form method="post" action={ view.ActionURL }>
+    <h3>Reviewed configuration</h3>
+    <p>Apply uses the values below. Editing the configuration above does not change this target; preview again to review those edits.</p>
+    <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+    <input type="hidden" name="preview_id" value={ view.Preview.ID }/>
+    <dl id="configuration-reviewed">
+     for _, field := range view.Fields {
+      if field.Kind != "secret" {
+       <dt>{ field.Label } (<code>{ field.Name }</code>)</dt>
+       <dd>
+        if field.Kind == "boolean" {
+         if field.Checked {
+          true
+         } else {
+          false
+         }
+        } else if field.Value != "" {
+         { field.Value }
+        } else {
+         Not set
+        }
+       </dd>
+      }
+     }
+    </dl>
+    for _, field := range view.Fields {
+     switch field.Kind {
+      case "secret":
+       <label>{ field.Label } <input type="password" name={ "field." + field.Name } autocomplete="new-password" required?={ field.Required }/></label>
+      case "boolean":
+       if field.Checked {
+        <input type="hidden" name={ "field." + field.Name } value="on"/>
+       }
+      case "string", "integer", "enum":
+       <input type="hidden" name={ "field." + field.Name } value={ field.Value }/>
+      default:
+       {{ return errExtensionDetailRender }}
+     }
+    }
+    <p>Re-enter all changed secrets, then type <code>{ view.Preview.Confirmation }</code>.</p>
+    <label>Configuration confirmation <input name="confirmation" autocomplete="off" required/></label>
+    <button name="action" value="configure-apply">Apply configuration</button>
+   </form>
+  }
+ </section>
+}
+
+// Complexity: successful time O(N+B+W), Omega(N+B); auxiliary O(B+S),
+// Omega(1). N permission/diff entries joined, B identity/token/diff and escaped
+// output bytes, W/S delegated writer/templ costs. strings.Join allocates joined
+// bytes; templ may buffer. Tight Theta not established across writer failures.
+// No service calls or metadata editor; accepted target is display-only on Apply.
+templ extensionUpdateForms(view extensionPageView) {
+ <section id="versions">
+  <h2>Versions / update</h2>
+  <p>Current pin: <code>{ view.Item.ArtifactPin }</code>; previous pin: <code>{ view.Item.PreviousArtifact }</code>; available pin: <code>{ view.Item.AvailableUpdate }</code>.</p>
+  <form method="post" action={ view.ActionURL }>
+   <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+   <label>Artifact pin <input name="artifact_pin" placeholder="sha256:…" required/></label>
+   <label>Manifest SHA-256 <input name="manifest_sha256" placeholder="manifest SHA-256" required/></label>
+   <label>Grant SHA-256 <input name="grant_sha256" placeholder="grant SHA-256" required/></label>
+   <label>Session SHA-256 <input name="session_sha256" placeholder="session SHA-256" required/></label>
+   <label>Capabilities <input name="capabilities" value={ strings.Join(view.Item.Capabilities, ",") }/></label>
+   <label>Interfaces <input name="interfaces" value={ strings.Join(view.Item.Interfaces, ",") }/></label>
+   <label>Secret slots <input name="secret_slots" value={ strings.Join(view.Item.SecretSlots, ",") }/></label>
+   <button name="action" value="update-preview">Preview update</button>
+  </form>
+  if view.Preview.Operation == "update" {
+   <form method="post" action={ view.ActionURL }>
+    <h3>Reviewed update</h3>
+    <p>Apply uses the accepted target below. Editing Preview does not change it; preview again to review another target.</p>
+    <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+    <dl>
+     <dt>Target artifact</dt><dd><code>{ view.UpdateTarget.ArtifactPin }</code></dd>
+     <dt>Target manifest</dt><dd><code>{ view.UpdateTarget.ManifestDigest }</code></dd>
+     <dt>Target grant</dt><dd><code>{ view.UpdateTarget.GrantDigest }</code></dd>
+     <dt>Target session</dt><dd><code>{ view.UpdateTarget.SessionDigest }</code></dd>
+    </dl>
+    <p>Privilege diff: <code>{ strings.Join(view.Preview.PrivilegeDiff, ", ") }</code></p>
+    <p>Configuration-schema diff: <code>{ strings.Join(view.Preview.ConfigurationDiff, ", ") }</code></p>
+    <p>Secret-slot diff: <code>{ strings.Join(view.Preview.SecretSlotDiff, ", ") }</code></p>
+    <p>Type <code>{ view.Preview.Confirmation }</code>.</p>
+    <input type="hidden" name="preview_id" value={ view.Preview.ID }/>
+    <label>Update confirmation <input name="confirmation" autocomplete="off" required/></label>
+    <button name="action" value="update-apply">Apply update</button>
+   </form>
+  }
+ </section>
+}
+
+// Complexity: successful time O(S+B+W), Omega(S+B); auxiliary O(B+M),
+// Omega(1). S current status entries, B escaped slot/confirmation/output bytes,
+// W/M delegated writer/templ costs. Tight Theta not established across errors.
+// Statuses are not an inventory of retained encrypted rows. No query or secret value.
+templ extensionSecretForms(view extensionPageView) {
+ <section id="secrets">
+  <h2>Secrets</h2>
+  <p>Current slot status does not prove whether other stored secrets exist. Deletion removes all stored secrets for this extension, including retained slots no longer in the current list. It does not uninstall the extension.</p>
+  if len(view.Item.Secrets) == 0 {
+   <p>No current slot status entries.</p>
+  } else {
+   <ul>
+    for _, status := range view.Item.Secrets {
+     <li><code>{ status.Slot }</code>:
+      if status.Configured {
+       Configured
+      } else {
+       Not configured
+      }
+     </li>
+    }
+   </ul>
+  }
+  <form method="post" action={ view.ActionURL }>
+   <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+   <button name="action" value="secrets-delete-preview">Preview secret deletion</button>
+  </form>
+  if view.Preview.Operation == "delete_secrets" {
+   <form method="post" action={ view.ActionURL }>
+    <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+    <input type="hidden" name="preview_id" value={ view.Preview.ID }/>
+    <p>To delete all stored secrets for this extension, type <code>{ view.Preview.Confirmation }</code>.</p>
+    <label>Secret deletion confirmation <input name="confirmation" autocomplete="off" required/></label>
+    <button name="action" value="secrets-delete-apply">Delete secrets</button>
+   </form>
+  }
+ </section>
+}
+
+// Complexity: successful time O(B+W), Omega(B); auxiliary O(B+M), Omega(1).
+// B escaped identity/phrase/control bytes; W/M delegated writer/templ costs.
+// Tight Theta not established across errors. No queries or status-based authority.
+templ extensionRollbackUninstallForms(view extensionPageView) {
+ <section id="rollback">
+  <h2>Rollback / uninstall</h2>
+  if view.Item.PreviousArtifact != "" {
+   <form method="post" action={ view.ActionURL }>
+    <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+    <p>Type <code>{ "rollback " + view.Item.ExtensionID + " to " + view.Item.PreviousArtifact }</code>.</p>
+    <label>Rollback confirmation <input name="confirmation" autocomplete="off" required/></label>
+    <button name="action" value="rollback">Rollback</button>
+   </form>
+  }
+  <p>Secrets must be deleted separately before uninstall, including retained slots no longer in the current list. Uninstall does not automatically delete stored secrets.</p>
+  <form method="post" action={ view.ActionURL }>
+   <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+   <button name="action" value="uninstall-preview">Preview uninstall</button>
+  </form>
+  if view.Preview.Operation == "uninstall" {
+   <form method="post" action={ view.ActionURL }>
+    <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+    <input type="hidden" name="preview_id" value={ view.Preview.ID }/>
+    <p>Type <code>{ view.Preview.Confirmation }</code>.</p>
+    <label>Uninstall confirmation <input name="confirmation" autocomplete="off" required/></label>
+    <button name="action" value="uninstall-apply">Uninstall</button>
+   </form>
+  }
+ </section>
+}
+
+// Complexity: O(N+B+R+W) successful time, Omega(N+B); auxiliary O(B+S),
+// Omega(1). N permission entries, B shell/escaped bytes, R/S component costs,
+// W writer cost. URL escaping and joins copy bytes; templ buffers. No tight
+// Theta across delegated errors; no new reads or authority from displayed state.
+templ extensionDetailDocument(view extensionPageView, authorizedRouteID string, theme string) {
+ {{ permissions, permissionsErr := permissionsWindow(view.Item.Capabilities, view.Item.Interfaces, view.Item.SecretSlots, max(uint64(1), view.PermissionsPage)) }}
+ if permissionsErr != nil {
+  {{ return errExtensionDetailRender }}
+ }
+ <!DOCTYPE html>
+ <html lang="en" data-theme={ inventoryTheme(theme) }>
+  <head>
+   <meta charset="utf-8"/>
+   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+   <title>Extension — GOTTH Mail</title>
+   <link rel="stylesheet" href="/admin/extensions/assets/tokens.css"/>
+   <link rel="stylesheet" href="/admin/extensions/assets/detail.css"/>
+  </head>
+  <body class="bg-bg text-ink font-sans p-4 sm:p-6">
+   <main class="mx-auto max-w-6xl min-w-0 grid gap-4">
+    <nav aria-label="Breadcrumb"><a href="/">GOTTH Mail</a> / <a href={ "/admin/extensions?theme=" + inventoryTheme(theme) }>Extensions</a></nav>
+    <h1 class="text-2xl font-bold break-words">{ view.Item.ExtensionID }</h1>
+    <nav aria-label="Detail theme" class="flex flex-wrap gap-4">
+     <a href={ permissionsPageURL(authorizedRouteID, "system", permissions.Number) }>System theme</a>
+     <a href={ permissionsPageURL(authorizedRouteID, "light", permissions.Number) }>Light theme</a>
+     <a href={ permissionsPageURL(authorizedRouteID, "dark", permissions.Number) }>Dark theme</a>
+    </nav>
+    if view.Preview.Operation != "" {
+     <p>Changing theme: theme navigation reloads stored state rather than applying this displayed form. Preview again after navigation.</p>
+    }
+    if view.Message != "" {
+     if view.OperationError {
+      <p role="alert">{ view.Message }</p>
+     } else {
+      <p role="status">{ view.Message }</p>
+     }
+    }
+    if view.BlockedReason != "" {
+     <p role="alert">Runtime blocked: { view.BlockedReason }</p>
+    }
+    <nav aria-label="Extension sections" class="flex flex-wrap gap-4"><a href="#overview">Overview</a><a href="#configuration">Configuration</a><a href="#secrets">Secrets</a><a href="#permissions">Permissions</a><a href="#health">Health</a><a href="#audit">Audit</a><a href="#versions">Versions</a><a href="#rollback">Rollback</a></nav>
+    <section id="overview">
+     <h2>Overview</h2>
+     <dl><dt>Repository</dt><dd>{ view.Item.Repository }</dd><dt>Artifact</dt><dd><code>{ view.Item.ArtifactPin }</code></dd><dt>Manifest</dt><dd><code>{ view.Item.ManifestDigest }</code></dd><dt>Lifecycle</dt><dd>{ view.Item.Lifecycle }</dd><dt>Enabled / routed</dt><dd>{ strconv.FormatBool(view.Item.Enabled) } / { strconv.FormatBool(view.Item.Routed) }</dd></dl>
+     <form method="post" action={ view.ActionURL }>
+      <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+      <button name="action" value="test">Test</button>
+      if view.Item.Enabled {
+       <button name="action" value="enable" aria-describedby="extension-recovery-help">Recover / revalidate</button>
+       <button name="action" value="disable">Disable</button>
+      } else {
+       <button name="action" value="enable">Enable</button>
+      }
+     </form>
+     <p id="extension-recovery-help">Stored lifecycle is not proof of a live runtime. Recover / revalidate explicitly checks the existing approved configuration, secrets, identity and health before routing. It grants no new permissions. Disable remains available.</p>
+    </section>
+    @extensionConfigurationForms(view)
+    @extensionSecretForms(view)
+    @extensionPermissions(permissions, authorizedRouteID, theme)
+    <section id="health"><h2>Health</h2><p>{ view.Item.HealthCode }; tested revision { strconv.FormatInt(view.Item.TestedRevision, 10) }; configuration revision { strconv.FormatInt(view.Item.ConfigurationRev, 10) }</p></section>
+    <section id="audit"><h2>Audit</h2><a href={ "/admin/extensions/" + view.Item.InstanceID + "/audit" }>Export recent redacted audit (up to 1,000 events)</a><p>Newest events only; this is not a complete-history export.</p></section>
+    @extensionUpdateForms(view)
+    @extensionRollbackUninstallForms(view)
+   </main>
+  </body>
+ </html>
+}
+
+
+// Complexity: O(B+P+W) successful time, Omega(B), auxiliary O(B+P+S),
+// Omega(1); B escaped bytes in <=25 borrowed entries, P escaped route bytes,
+// W/S delegated writer/templ costs. No tight bound across failures. Entry bytes,
+// the full mutation forms/diffs and loaded backing arrays remain unbounded here.
+templ extensionPermissions(page permissionsPageView, route string, theme string) {
+ <section id="permissions">
+  <h2>Permissions</h2>
+  <nav aria-label="Permissions pages" class="flex flex-wrap gap-4">
+   <p>Page { strconv.Itoa(page.Number) } of { strconv.Itoa(page.Pages) }. Up to 25 entries per page.</p>
+   if page.Number > 1 {
+    <a id="permissions-previous" href={ permissionsPageURL(route, theme, page.Number-1) }>Previous</a>
+   }
+   if page.Number < page.Pages {
+    <a id="permissions-next" href={ permissionsPageURL(route, theme, page.Number+1) }>Next</a>
+   }
+  </nav>
+  if len(page.Capabilities)+len(page.Interfaces)+len(page.SecretSlots) == 0 {
+   <p>No granted permissions.</p>
+  }
+  if len(page.Capabilities) != 0 {
+   <h3>Capabilities</h3>
+   <ul>
+    for _, value := range page.Capabilities {
+     <li data-permission-category="capabilities"><code>{ value }</code></li>
+    }
+   </ul>
+  }
+  if len(page.Interfaces) != 0 {
+   <h3>Interfaces</h3>
+   <ul>
+    for _, value := range page.Interfaces {
+     <li data-permission-category="interfaces"><code>{ value }</code></li>
+    }
+   </ul>
+  }
+  if len(page.SecretSlots) != 0 {
+   <h3>Granted secret slots (names only)</h3>
+   <ul>
+    for _, value := range page.SecretSlots {
+     <li data-permission-category="secret_slots"><code>{ value }</code></li>
+    }
+   </ul>
+  }
+ </section>
+}
+
+// Dedicated metadata-free document; never invokes normal detail components.
+// Complexity: O(B+W) successful time, Omega(B), auxiliary O(B+S), Omega(1).
+// B escaped scalar/CSRF and fixed markup bytes; W/S templ/writer costs. No tight
+// Theta across writer failures. Caller buffers complete output; no service reads.
+// Current valid pin: fixed 71-byte guard, five zero-copy slices and four <wbr>
+// elements (20 extra markup bytes): O(1), Omega(1), Theta(1) extra time/space;
+// escaping/writer allocations remain in B/W/S. Invalid direct input escapes whole.
+templ extensionMetadataRecoveryDocument(view extensionRecoveryView) {
+ <!DOCTYPE html>
+ <html lang="en" data-theme={ view.Theme }>
+  <head>
+   <meta charset="utf-8"/>
+   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+   <title>Extension recovery — invalid configuration metadata</title>
+   <link rel="stylesheet" href="/admin/extensions/assets/tokens.css"/>
+   <link rel="stylesheet" href="/admin/extensions/assets/detail.css"/>
+  </head>
+  <body class="bg-bg text-ink font-sans p-4 sm:p-6">
+   <main id="extension-recovery" class="mx-auto max-w-6xl min-w-0 grid gap-4">
+    <nav aria-label="Breadcrumb"><a href="/">GOTTH Mail</a> / <a href={ "/admin/extensions?theme=" + view.Theme }>Extensions</a></nav>
+    <h1 class="text-2xl font-bold">Extension recovery — invalid configuration metadata</h1>
+    <p role="alert">Configuration metadata is invalid. Normal configuration, test, enable, and update preview forms are withheld. Existing recovery actions still require authorization and confirmation.</p>
+    <nav aria-label="Recovery theme" class="flex flex-wrap gap-4">
+     <a href={ extensionDetailActionURL(view.RouteID, "system") }>System theme</a>
+     <a href={ extensionDetailActionURL(view.RouteID, "light") }>Light theme</a>
+     <a href={ extensionDetailActionURL(view.RouteID, "dark") }>Dark theme</a>
+     <a href={ view.ActionURL }>Refresh current state</a>
+    </nav>
+    if view.OperationError {
+     <p>Last observed state; verify current state</p>
+     <p role="alert">{ view.Message }</p>
+    } else if view.Message != "" {
+     <p role="status">{ view.Message }</p>
+    }
+    if view.Blocked {
+     <p role="alert">Runtime blocked. Check administrator runtime status.</p>
+    }
+    <dl>
+     <dt>Extension</dt><dd>{ view.ExtensionID }</dd>
+     <dt>Instance</dt><dd>{ view.InstanceID }</dd>
+     <dt>Artifact</dt><dd>
+      if len(view.Pin) == 71 && recoveryPin.MatchString(view.Pin) {
+       { view.Pin[:7] }<wbr/>{ view.Pin[7:23] }<wbr/>{ view.Pin[23:39] }<wbr/>{ view.Pin[39:55] }<wbr/>{ view.Pin[55:] }
+      } else {
+       { view.Pin }
+      }
+     </dd>
+     <dt>Configuration revision</dt><dd>{ strconv.FormatInt(view.Revision, 10) }</dd>
+     <dt>Enabled / routed (last observed)</dt><dd>{ strconv.FormatBool(view.Enabled) } / { strconv.FormatBool(view.Routed) }</dd>
+    </dl>
+    <form method="post" action={ view.ActionURL }>
+     <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+     <button name="action" value="disable">Disable</button>
+    </form>
+    <p>Secret deletion and uninstall require disabled, unrouted state. Delete all stored secrets separately before uninstall, including retained slots. No secret values or slot list are displayed here.</p>
+    <form method="post" action={ view.ActionURL }>
+     <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+     <button name="action" value="secrets-delete-preview">Preview secret deletion</button>
+    </form>
+    if view.Operation == "delete_secrets" {
+     <form method="post" action={ view.ActionURL }>
+      <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+      <input type="hidden" name="preview_id" value={ view.PreviewID }/>
+      <p>Type <code>{ view.Confirmation }</code> to delete all stored secrets.</p>
+      <label>Secret deletion confirmation <input name="confirmation" autocomplete="off" required/></label>
+      <button name="action" value="secrets-delete-apply">Delete secrets</button>
+     </form>
+    }
+    <form method="post" action={ view.ActionURL }>
+     <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+     <button name="action" value="uninstall-preview">Preview uninstall</button>
+    </form>
+    if view.Operation == "uninstall" {
+     <form method="post" action={ view.ActionURL }>
+      <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+      <input type="hidden" name="preview_id" value={ view.PreviewID }/>
+      <p>Type <code>{ view.Confirmation }</code>.</p>
+      <label>Uninstall confirmation <input name="confirmation" autocomplete="off" required/></label>
+      <button name="action" value="uninstall-apply">Uninstall</button>
+     </form>
+    }
+    if view.PreviousPin != "" {
+     <form method="post" action={ view.ActionURL }>
+      <input type="hidden" name="csrf_token" value={ view.CSRF }/>
+      <p>Rollback requires disabled, unrouted state and a valid previous snapshot. Type <code>{ "rollback " + view.ExtensionID + " to " + view.PreviousPin }</code>.</p>
+      <label>Rollback confirmation <input name="confirmation" autocomplete="off" required/></label>
+      <button name="action" value="rollback">Rollback</button>
+     </form>
+    }
+    if view.Operation != "" {
+     <p>Changing theme or refreshing reloads stored state; preview again after navigation.</p>
     }
    </main>
   </body>

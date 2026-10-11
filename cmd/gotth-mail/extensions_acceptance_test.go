@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -324,9 +325,37 @@ func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(a
 			t.Fatalf("action %s rejected", name)
 		}
 	}
-	// Cleanup always goes through the authorized Disable path, including assertion failures.
+	// Installed instances always use authorized Disable. Only independently proved
+	// uninstall absence may bypass that now-nonexistent target.
+	var uninstallReceiverRequests func() int32
 	t.Cleanup(func() {
-		action("disable")
+		absent := false
+		var lookupErr error
+		if os.Getenv("GOTTH_MAIL_BROWSER_MODE") == "uninstall" {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			absent, lookupErr = acceptanceUninstallAbsent(ctx, db, id, server.OIDCStore.(acceptanceSessions).bound.IdentityRefID)
+			cancel()
+		}
+		if lookupErr != nil {
+			t.Error("uninstall cleanup absence proof failed")
+		} else if !absent {
+			action("disable")
+		}
+		if absent {
+			if uninstallReceiverRequests == nil || uninstallReceiverRequests() != 0 {
+				t.Error("uninstall cleanup receiver activity")
+			}
+			paths, e := filepath.Glob("/proc/[0-9]*/exe")
+			if e != nil {
+				t.Error(e)
+			}
+			for _, path := range paths {
+				target, e := os.Readlink(path)
+				if e == nil && (target == filepath.Join(stage, "gotth-extension-webhook") || target == filepath.Join(stage, "gotth-extension-webhook")+" (deleted)") {
+					t.Error("uninstall cleanup managed process remains")
+				}
+			}
+		}
 		entries, err := os.ReadDir(r)
 		acceptanceCheck(t, err)
 		if len(entries) != 0 {
@@ -354,6 +383,7 @@ func acceptanceLifecycleDriver(t *testing.T, updateRollback bool, browser func(a
 	}
 	var expected atomic.Value
 	var requests, accepted, rejected atomic.Int32
+	uninstallReceiverRequests = requests.Load
 	receiver := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		requests.Add(1)
 		b, err := io.ReadAll(io.LimitReader(req.Body, acceptanceBodyLimit+1))
@@ -780,4 +810,23 @@ func acceptanceStageB(t *testing.T, a string, manifest extensioncore.Manifest, m
 	}
 	t.Logf("B archive=%s binary=%s manifest=%s grant=%s session=%s version=%s", acceptanceArchiveBSHA, binaryB, mdB, sessionB.GrantDigest, sessionB.Fingerprint, strings.TrimSpace(string(outB)))
 	return archiveB, filesB, stageB, mdB, grantB, sessionB
+}
+
+// Concrete D4 cleanup admission, never infer absence from HTTP errors or mode alone.
+func acceptanceUninstallAbsent(ctx context.Context, db *sql.DB, id, actor string) (bool, error) {
+	var installed bool
+	if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM extension_instances WHERE instance_id=$1)", id).Scan(&installed); err != nil {
+		return false, err
+	}
+	if installed {
+		return false, nil
+	}
+	var secrets, previews, events int
+	if err := db.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM extension_secrets WHERE instance_id=$1),(SELECT count(*) FROM extension_operation_previews WHERE instance_id=$1),(SELECT count(*) FROM audit_events WHERE resource_type='extension' AND resource_id=$1::text AND actor_type='oidc_subject' AND actor_id=$2 AND action='extension.uninstall' AND result='success')", id, actor).Scan(&secrets, &previews, &events); err != nil {
+		return false, err
+	}
+	if secrets != 0 || previews != 0 || events != 1 {
+		return false, errors.New("uninstall absence/audit mismatch")
+	}
+	return true, nil
 }

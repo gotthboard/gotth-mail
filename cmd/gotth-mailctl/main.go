@@ -16,6 +16,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/daemon"
 	"forgejo/gotthboard/gotth-mail/internal/diag"
 	"forgejo/gotthboard/gotth-mail/internal/identityadopt"
+	"forgejo/gotthboard/gotth-mail/internal/identityruntime"
 	"forgejo/gotthboard/gotth-mail/internal/ops"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/render"
@@ -102,6 +103,11 @@ func run(args []string) error {
 		return runIdentity(args)
 
 	case "doctor":
+		for _, arg := range args[1:] {
+			if arg == "--config" {
+				return configuredDoctor(args)
+			}
+		}
 		format, ok := flagValue(args, "--format")
 		if !ok || format == "" {
 			format = "text"
@@ -161,9 +167,30 @@ func run(args []string) error {
 	return fmt.Errorf("unknown command %s", args[0])
 }
 
+// runIdentity dispatches one operator preview/apply, with no mutation retry.
+// Complexity: n argument/config/output bytes, D selected service/SQL cost;
+// time O(n+D), Omega(1), no uniform tight bound; auxiliary O(n+S), Omega(1),
+// no tight bound, where S is delegated service/database memory. Role/group paths
+// read at most4097 protected issuer bytes; group flags/authority reject before SQL.
 func runIdentity(args []string) error {
+	if len(args) > 1 && args[1] == "group-feature-disable" {
+		return runGroupRecovery(args)
+	}
 	if len(args) < 3 || args[2] != "preview" && args[2] != "apply" {
 		return identityUsage()
+	}
+	var mappingRequest rolebinding.GroupRequest
+	var mappingIssuer string
+	if args[1] == "group-role" {
+		var err error
+		mappingRequest, err = groupRoleRequest(args)
+		if err != nil {
+			return err
+		}
+		mappingIssuer, err = identityruntime.LoadIssuer(os.Getenv(identityruntime.ConfigFileEnv))
+		if err != nil {
+			return err
+		}
 	}
 	cfg, err := loadValidatedConfig(args)
 	if err != nil {
@@ -180,6 +207,21 @@ func runIdentity(args []string) error {
 		return fmt.Errorf("connect identity database: %w", err)
 	}
 	switch args[1] {
+	case "group-role":
+		service := rolebinding.GroupService{DB: db, CurrentIssuer: mappingIssuer}
+		if args[2] == "preview" {
+			plan, err := service.Preview(ctx, mappingRequest)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(plan)
+		}
+		confirmation, _ := flagValue(args, "--confirm")
+		result, err := service.Apply(ctx, mappingRequest, confirmation)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
 	case "adopt":
 		request, err := adoptionRequest(args)
 		if err != nil {
@@ -234,7 +276,11 @@ func runIdentity(args []string) error {
 		if err != nil {
 			return err
 		}
-		service := rolebinding.Service{DB: db}
+		currentIssuer, err := identityruntime.LoadIssuer(os.Getenv(identityruntime.ConfigFileEnv))
+		if err != nil {
+			return err
+		}
+		service := rolebinding.Service{DB: db, CurrentIssuer: currentIssuer}
 		if args[2] == "preview" {
 			plan, err := service.Preview(ctx, request)
 			if err != nil {
@@ -256,8 +302,10 @@ func runIdentity(args []string) error {
 	}
 }
 
+// identityUsage returns fixed command syntax; time and auxiliary space are
+// O(1), Omega(1), Theta(1), for this constant-size literal.
 func identityUsage() error {
-	return fmt.Errorf("usage: gotth-mailctl identity adopt <preview|apply> --config <file> --mailbox <address> --subject <subject> --scope <scope> --manager <manager> [--confirm <digest>] | gotth-mailctl identity scim-token <preview|apply> --config <file> --id <stable-actor-id> --secret-file <owner-only-file> [--confirm <digest>] | gotth-mailctl identity role-binding <preview|apply> --config <file> --operation <grant|revoke> --issuer <url> --subject <subject> --mailbox <address> --role <role> [--domain <domain>] [--confirm <digest>]")
+	return fmt.Errorf("usage: gotth-mailctl identity adopt <preview|apply> --config <file> --mailbox <address> --subject <subject> --scope <scope> --manager <manager> [--confirm <digest>] | gotth-mailctl identity scim-token <preview|apply> --config <file> --id <stable-actor-id> --secret-file <owner-only-file> [--confirm <digest>] | gotth-mailctl identity role-binding <preview|apply> --config <file> --operation <grant|revoke> --issuer <url> --subject <subject> --mailbox <address> --role <role> [--domain <domain>] [--confirm <digest>] | gotth-mailctl identity group-role <preview|apply> --config <file> --operation <admit|disable> --issuer <url> --scim-actor <stable-id> --group-id <opaque-id> --role <global_admin|domain_manager|scoped_domain_access> [--domain <exact-domain>] [--confirm <digest>] (global_admin MUST omit --domain; scoped roles require it; admit delegates current AND future exact Group members)")
 }
 
 func roleBindingRequest(args []string) (rolebinding.Request, error) {

@@ -288,12 +288,17 @@ func loadNotificationSigningEntity(path, fingerprint, from string, now time.Time
 	return matches[0], nil
 }
 
+// readNotificationKeyRing preserves binary packet octets; only armor is text.
+// For n=max(1,len(raw)), wrapper time O(n), Omega(1), auxiliary Theta(1):
+// TrimSpace returns a view. Total time Theta(w+P), auxiliary Theta(1)+A,
+// where w is actual wrapper work and P/A are library parse costs (ring excluded).
+// No full-key copy, streaming guarantee or constant-cost parser is implied.
 func readNotificationKeyRing(raw []byte) (protonpgp.EntityList, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if bytes.HasPrefix(trimmed, []byte("-----BEGIN PGP")) {
 		return protonpgp.ReadArmoredKeyRing(bytes.NewReader(trimmed))
 	}
-	return protonpgp.ReadKeyRing(bytes.NewReader(trimmed))
+	return protonpgp.ReadKeyRing(bytes.NewReader(raw))
 }
 
 func validateNotificationSigningEntity(entity *protonpgp.Entity, from string, now time.Time) error {

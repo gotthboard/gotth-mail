@@ -47,6 +47,17 @@ from email addresses or groups, bulk-map users, grant extension authority,
 mutate a live database during repository verification, or expose a browser
 role editor.
 
+## Planned Group-origin compatibility amendment
+
+The Group-to-role child intentionally changes revoke from effective-row deletion
+to removal of the operator-owned origin. Existing flags remain. Grant on a
+Group-only row creates an operator origin; revoke may leave Group-derived access.
+Preview, versioned digest, result and audit must disclose origins, remaining
+source count and effective_after; never report access revoked while a Group
+origin survives. No Group-to-operator promotion or deletion of other origins.
+Legacy rows remain operator-owned; no-Group grant/revoke behavior stays.
+This amendment is planned, not proof of implemented or live role projection.
+
 ## Admission
 
 Admission requires migration parity, PostgreSQL integration tests for every

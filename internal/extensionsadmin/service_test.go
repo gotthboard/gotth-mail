@@ -2,10 +2,14 @@ package extensionsadmin
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math/big"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -342,5 +346,543 @@ func TestRuntimeFailuresNeverAdmitOrSilentlyStopRouting(t *testing.T) {
 	}
 	if _, err := db.Exec(`INSERT INTO extension_instances(instance_id,product,extension_id,repository,artifact_pin,manifest_sha256,grant_sha256,session_sha256,metadata_json,created_at,updated_at) VALUES ('00000000-0000-4000-8000-000000000021','other-product','other.extension','https://github.com/gotthboard/gotth-extension-other','sha256:` + strings.Repeat("1", 64) + `','` + strings.Repeat("2", 64) + `','` + strings.Repeat("3", 64) + `','` + strings.Repeat("4", 64) + `','{"schema":"gotth.mail.extension.config.v1","fields":[]}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err == nil {
 		t.Fatal("database admitted a cross-product extension")
+	}
+}
+
+// Exact rational comparison never truncates a float to int64 or rounds an expected
+// fixture. Dynamic float64 versus int64 alone is not a regression.
+func metadataExactDefault(t *testing.T, stage string, got any, want string) {
+	t.Helper()
+	var r *big.Rat
+	switch v := got.(type) {
+	case float64:
+		r = new(big.Rat).SetFloat64(v)
+	case int64:
+		r = new(big.Rat).SetInt64(v)
+	case int:
+		r = new(big.Rat).SetInt64(int64(v))
+	case json.Number:
+		r, _ = new(big.Rat).SetString(string(v))
+	}
+	if r == nil {
+		t.Errorf("PRECISION %s: nonnumeric default", stage)
+		return
+	}
+	expected, ok := new(big.Rat).SetString(want)
+	if !ok {
+		t.Fatal("fixture numeric literal invalid")
+	}
+	if r.Cmp(expected) != 0 {
+		t.Errorf("PRECISION %s: got=%s want=%s", stage, r.RatString(), want)
+	}
+}
+func metadataIntegerFixture(t *testing.T, number string) Metadata {
+	t.Helper()
+	raw := fmt.Sprintf("{\"schema\":\"%s\",\"fields\":[{\"name\":\"config.number\",\"label\":\"Number\",\"kind\":\"integer\",\"required\":true,\"min\":%s,\"max\":%s,\"default\":%s}]}", MetadataSchema, number, number, number)
+	m, err := DecodeMetadata([]byte(raw))
+	if err != nil {
+		t.Fatal("fixture metadata admission failed")
+	}
+	if _, ok := m.Fields[0].Default.(json.Number); !ok {
+		t.Fatal("fixture did not retain raw number")
+	}
+	return m
+}
+func TestMetadataStoredIntegerPrecision(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	runtime := &recordingRuntime{}
+	svc, err := NewService(db, []byte(strings.Repeat("k", 32)), runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	actor := audit.ActorRef{Type: "api_token", ID: "precision-fixture"}
+	for i, n := range []string{"9007199254740991", "9007199254740992", "9007199254740993", "-9223372036854775808", "9223372036854775807"} {
+		t.Run(n, func(t *testing.T) {
+			m := metadataIntegerFixture(t, n)
+			want, _ := strconv.ParseInt(n, 10, 64)
+			in := InstallRequest{InstanceID: fmt.Sprintf("00000000-0000-4000-8000-%012d", 9100+i), ExtensionID: fmt.Sprintf("precision.number%d", i), Repository: "https://github.com/gotthboard/gotth-extension-precision", ArtifactPin: "sha256:" + strings.Repeat("1", 64), ManifestDigest: strings.Repeat("2", 64), GrantDigest: strings.Repeat("3", 64), SessionDigest: strings.Repeat("4", 64), Metadata: m}
+			installed, err := svc.Install(ctx, actor, in)
+			if err != nil {
+				t.Fatal("SETUP install failed")
+			}
+			var def, min, max string
+			if err := db.QueryRow("SELECT metadata_json#>>'{fields,0,default}',metadata_json#>>'{fields,0,min}',metadata_json#>>'{fields,0,max}' FROM extension_instances WHERE instance_id=$1", in.InstanceID).Scan(&def, &min, &max); err != nil {
+				t.Fatal("SETUP SQL read failed")
+			}
+			if def != n || min != n || max != n {
+				t.Fatal("SQL numeric admission changed")
+			}
+			t.Logf("SQL exact default/min/max=%s", n)
+			baseline := targetSnapshot(t, db)
+			get, err := svc.Get(ctx, in.InstanceID)
+			if err != nil {
+				t.Fatal("Get failed")
+			}
+			list, err := svc.List(ctx)
+			if err != nil {
+				t.Fatal("List failed")
+			}
+			values := []Instance{installed, get}
+			for _, v := range list {
+				if v.InstanceID == in.InstanceID {
+					values = append(values, v)
+				}
+			}
+			if len(values) != 3 {
+				t.Fatal("list target cardinality")
+			}
+			for j, v := range values {
+				if len(v.Metadata.Fields) != 1 {
+					t.Fatal("metadata field missing")
+				}
+				f := v.Metadata.Fields[0]
+				if f.Min == nil || f.Max == nil || *f.Min != want || *f.Max != want {
+					t.Fatal("typed bounds changed")
+				}
+				metadataExactDefault(t, []string{"Install", "Get", "List"}[j], f.Default, n)
+				if len(v.Configuration) != 0 {
+					t.Error("default inserted into configuration")
+				}
+			}
+			targetUnchanged(t, db, baseline)
+			if len(runtime.calls) != 0 {
+				t.Error("read invoked runtime")
+			}
+		})
+	}
+}
+
+func TestMetadataVersionIntegerPrecision(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	runtime := &recordingRuntime{}
+	svc, err := NewService(db, []byte(strings.Repeat("k", 32)), runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	actor := audit.ActorRef{Type: "api_token", ID: "precision-version"}
+	seq := 0
+	for _, seam := range []string{"incoming-update", "outgoing-snapshot", "rollback-decode"} {
+		for _, n := range []string{"9007199254740991", "9007199254740993"} {
+			t.Run(seam+"/"+n, func(t *testing.T) {
+				seq++
+				initial := metadataIntegerFixture(t, "7")
+				target := metadataIntegerFixture(t, "9")
+				if seam == "incoming-update" {
+					target = metadataIntegerFixture(t, n)
+				}
+				if seam == "outgoing-snapshot" {
+					initial = metadataIntegerFixture(t, n)
+				}
+				in := InstallRequest{InstanceID: fmt.Sprintf("00000000-0000-4000-8000-%012d", 9200+seq), ExtensionID: fmt.Sprintf("precision.version%d", seq), Repository: "https://github.com/gotthboard/gotth-extension-precision", ArtifactPin: "sha256:" + strings.Repeat("1", 64), ManifestDigest: strings.Repeat("2", 64), GrantDigest: strings.Repeat("3", 64), SessionDigest: strings.Repeat("4", 64), Metadata: initial}
+				_, err := svc.Install(ctx, actor, in)
+				if err != nil {
+					t.Fatal("SETUP install failed")
+				}
+				input := UpdateInput{ArtifactPin: "sha256:" + strings.Repeat("5", 64), ManifestDigest: strings.Repeat("6", 64), GrantDigest: strings.Repeat("7", 64), SessionDigest: strings.Repeat("8", 64), Metadata: target}
+				preview, err := svc.PreviewUpdate(ctx, actor, in.InstanceID, input)
+				if err != nil {
+					t.Fatal("SETUP real PreviewUpdate failed")
+				}
+				encoded, err := json.Marshal(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				sum := sha256.Sum256(encoded)
+				var sqlTarget, sqlActor, sqlType, sqlHash, sqlDefault string
+				var rev int64
+				var consumed bool
+				err = db.QueryRow("SELECT instance_id::text,actor_id,actor_type,base_revision,payload_sha256,payload_json#>>'{metadata,fields,0,default}',consumed_at IS NOT NULL FROM extension_operation_previews WHERE id=$1", preview.ID).Scan(&sqlTarget, &sqlActor, &sqlType, &rev, &sqlHash, &sqlDefault, &consumed)
+				if err != nil || sqlTarget != in.InstanceID || sqlActor != actor.ID || sqlType != actor.Type || rev != 1 || sqlHash != fmt.Sprintf("%x", sum) || sqlHash != preview.PayloadSHA256 || consumed || sqlDefault != string(target.Fields[0].Default.(json.Number)) {
+					t.Fatal("SETUP accepted preview binding mismatch")
+				}
+				before := targetSnapshot(t, db)
+				for _, bad := range []string{"actor", "target", "confirmation"} {
+					a, id, c := actor, in.InstanceID, preview.Confirmation
+					if bad == "actor" {
+						a.ID = "other"
+					}
+					if bad == "target" {
+						id = "00000000-0000-4000-8000-000000999999"
+					}
+					if bad == "confirmation" {
+						c = "wrong"
+					}
+					if _, err := svc.ApplyUpdate(ctx, a, id, preview.ID, c); !errors.Is(err, ErrConfirmation) {
+						t.Fatal("bound denial changed")
+					}
+					targetUnchanged(t, db, before)
+				}
+				updated, err := svc.ApplyUpdate(ctx, actor, in.InstanceID, preview.ID, preview.Confirmation)
+				if err != nil {
+					t.Errorf("PRECISION accepted update failed at %s", seam)
+					targetUnchanged(t, db, before)
+					return
+				}
+				if updated.ArtifactPin != input.ArtifactPin || updated.PreviousArtifact != in.ArtifactPin || updated.ConfigurationRev != 2 || len(updated.Configuration) != 0 {
+					t.Fatal("update identity/revision/config changed")
+				}
+				var audits int
+				if err := db.QueryRow("SELECT consumed_at IS NOT NULL FROM extension_operation_previews WHERE id=$1", preview.ID).Scan(&consumed); err != nil || !consumed {
+					t.Fatal("preview not consumed")
+				}
+				if err := db.QueryRow("SELECT count(*) FROM audit_events WHERE resource_id=$1 AND action='extension.update'", in.InstanceID).Scan(&audits); err != nil || audits != 1 {
+					t.Fatal("update audit count")
+				}
+				currentWant := string(target.Fields[0].Default.(json.Number))
+				metadataExactDefault(t, "ApplyUpdate result", updated.Metadata.Fields[0].Default, currentWant)
+				previousWant := string(initial.Fields[0].Default.(json.Number))
+				if seam == "rollback-decode" {
+					// DIRECT DB SETUP, not a credited product write: isolate rollback decode
+					// from an already-rounded outgoing snapshot. All other snapshot fields stay.
+					exact, _ := json.Marshal(metadataIntegerFixture(t, n))
+					if _, err := db.Exec("UPDATE extension_instances SET previous_version_json=jsonb_set(previous_version_json,'{metadata}',$1::jsonb) WHERE instance_id=$2", exact, in.InstanceID); err != nil {
+						t.Fatal("SETUP previous metadata injection failed")
+					}
+					previousWant = n
+					t.Log("DIRECT DB SETUP: exact previous metadata only")
+				}
+				var stored string
+				if err := db.QueryRow("SELECT previous_version_json#>>'{metadata,fields,0,default}' FROM extension_instances WHERE instance_id=$1", in.InstanceID).Scan(&stored); err != nil {
+					t.Fatal("snapshot SQL read")
+				}
+				if stored != previousWant {
+					t.Errorf("PRECISION previous snapshot SQL got=%s want=%s", stored, previousWant)
+				}
+				before = targetSnapshot(t, db)
+				if _, err := svc.Rollback(ctx, actor, in.InstanceID, "wrong"); !errors.Is(err, ErrConfirmation) {
+					t.Fatal("rollback confirmation changed")
+				}
+				targetUnchanged(t, db, before)
+				rolled, err := svc.Rollback(ctx, actor, in.InstanceID, "rollback "+in.ExtensionID+" to "+in.ArtifactPin)
+				if err != nil {
+					t.Errorf("PRECISION exact previous metadata rollback failed at %s", seam)
+					targetUnchanged(t, db, before)
+					return
+				}
+				if rolled.ConfigurationRev != 3 || rolled.ArtifactPin != in.ArtifactPin || rolled.PreviousArtifact != input.ArtifactPin || len(rolled.Configuration) != 0 {
+					t.Fatal("rollback identity/revision/config changed")
+				}
+				metadataExactDefault(t, "Rollback", rolled.Metadata.Fields[0].Default, previousWant)
+				if err := db.QueryRow("SELECT previous_version_json#>>'{metadata,fields,0,default}' FROM extension_instances WHERE instance_id=$1", in.InstanceID).Scan(&stored); err != nil || stored != currentWant {
+					t.Fatal("reverse snapshot current metadata changed")
+				}
+				reversed, err := svc.Rollback(ctx, actor, in.InstanceID, "rollback "+in.ExtensionID+" to "+input.ArtifactPin)
+				if err != nil {
+					t.Fatal("reverse rollback failed")
+				}
+				metadataExactDefault(t, "ReverseRollback", reversed.Metadata.Fields[0].Default, currentWant)
+				if reversed.ConfigurationRev != 4 || reversed.ArtifactPin != input.ArtifactPin {
+					t.Fatal("reverse identity/revision")
+				}
+				if err := db.QueryRow("SELECT count(*) FROM audit_events WHERE resource_id=$1 AND action='extension.rollback'", in.InstanceID).Scan(&audits); err != nil || audits != 2 {
+					t.Fatal("rollback audit count")
+				}
+				if len(runtime.calls) != 0 {
+					t.Fatal("version operation invoked runtime")
+				}
+			})
+		}
+	}
+}
+
+func TestMetadataLegacyDecodeClasses(t *testing.T) {
+	prefix := fmt.Sprintf("{\"schema\":\"%s\",\"fields\":[{\"name\":\"config.number\",\"label\":\"Number\",\"kind\":\"integer\"", MetadataSchema)
+	for _, tc := range []struct {
+		name, tail        string
+		legacy, admission bool
+	}{
+		{"missing", "}]}", true, true}, {"null", ",\"default\":null}]}", true, true}, {"integer", ",\"default\":7}]}", true, true},
+		{"decimal", ",\"default\":1.0}]}", true, false}, {"exponent", ",\"default\":1e0}]}", true, false}, {"fraction", ",\"default\":1.5}]}", true, false},
+		{"int64-overflow", ",\"default\":9223372036854775808}]}", true, false}, {"float-overflow", ",\"default\":1e400}]}", false, false},
+		{"typed-bound-overflow", ",\"min\":9223372036854775808}]}", false, false}, {"object-default", ",\"default\":{\"x\":7}}]}", true, false},
+		{"array-default", ",\"default\":[7]}]}", true, false}, {"unknown-key", ",\"surprise\":true}]}", true, false},
+		{"duplicate-default", ",\"default\":7,\"default\":8}]}", true, false}, {"case-default", ",\"default\":7,\"Default\":8}]}", true, true},
+		{"malformed", ",", false, false}, {"trailing", "}]} {}", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(prefix + tc.tail)
+			var m Metadata
+			err := json.Unmarshal(raw, &m)
+			if (err == nil) != tc.legacy {
+				t.Fatal("legacy decode class changed")
+			}
+			if tc.legacy {
+				var want Metadata
+				if err := json.Unmarshal(raw, &want); err != nil {
+					t.Fatal(err)
+				}
+				switch tc.name {
+				case "integer":
+					want.Fields[0].Default = int64(7)
+				case "duplicate-default", "case-default":
+					want.Fields[0].Default = int64(8)
+				}
+				var defaults metadataDefaults
+				if err := json.Unmarshal(raw, &defaults); err != nil {
+					t.Fatal("production projection newly rejected legacy metadata")
+				}
+				if err := restoreMetadataIntegerDefaults(&m, defaults); err != nil {
+					t.Fatal("production restore rejected legacy metadata")
+				}
+				if !reflect.DeepEqual(m, want) {
+					t.Fatal("production restore changed legacy default class/other metadata")
+				}
+			}
+
+			_, err = DecodeMetadata(raw)
+			if (err == nil) != tc.admission {
+				t.Fatal("current admission class changed")
+			}
+			if tc.name == "decimal" || tc.name == "exponent" {
+				if err := ValidateMetadata(m); err != nil {
+					t.Fatal("legacy integral float acceptance changed")
+				}
+			}
+			if tc.name == "duplicate-default" || tc.name == "case-default" {
+				metadataExactDefault(t, "last default", m.Fields[0].Default, "8")
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name, raw string
+		fields    int
+		admission bool
+	}{
+		{"schema-invalid", "{\"schema\":\"old\",\"fields\":[]}", 0, false},
+		{"duplicate-field-names", prefix + "},{\"name\":\"config.number\",\"label\":\"Second\",\"kind\":\"integer\"}]}", 2, false},
+		{"case-fields-null", prefix + "}],\"Fields\":null}", 0, true},
+		{"case-fields-empty", prefix + "}],\"Fields\":[]}", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var m Metadata
+			if err := json.Unmarshal([]byte(tc.raw), &m); err != nil || len(m.Fields) != tc.fields {
+				t.Fatal("legacy field/schema shape changed")
+			}
+			var defaults metadataDefaults
+			if err := json.Unmarshal([]byte(tc.raw), &defaults); err != nil {
+				t.Fatal("production projection rejected legacy field/schema shape")
+			}
+			before, _ := json.Marshal(m)
+			if err := restoreMetadataIntegerDefaults(&m, defaults); err != nil {
+				t.Fatal("production restore rejected legacy field/schema shape")
+			}
+			after, _ := json.Marshal(m)
+			if string(before) != string(after) {
+				t.Fatal("production restore changed legacy field/schema shape")
+			}
+
+			_, err := DecodeMetadata([]byte(tc.raw))
+			if (err == nil) != tc.admission {
+				t.Fatal("field admission class changed")
+			}
+		})
+	}
+	// Configuration VALUE decoding is deliberately untouched by a default repair.
+	var config map[string]any
+	if err := json.Unmarshal([]byte("{\"config.number\":7}"), &config); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := config["config.number"].(float64); !ok {
+		t.Fatal("configuration value representation changed")
+	}
+}
+
+func TestMetadataLegacyNestedMerge(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	full, err := json.Marshal(metadataIntegerFixture(t, "7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, first, last string
+		fields            int
+		rawLoses          bool
+	}{
+		{"empty-after", string(full), "{}", 1, true},
+		{"null-after", string(full), "null", 1, true},
+		{"full-after", "{}", string(full), 1, false},
+		{"clear-fields", string(full), "{\"fields\":[]}", 0, false},
+	} {
+		for _, stored := range []bool{false, true} {
+			suffix := "raw"
+			if stored {
+				suffix = "jsonb"
+			}
+			t.Run(tc.name+"/"+suffix, func(t *testing.T) {
+				raw := fmt.Sprintf("{\"Metadata\":%s,\"metadata\":%s}", tc.first, tc.last)
+				if stored {
+					var canonical string
+					if err := db.QueryRow("SELECT $1::jsonb::text", raw).Scan(&canonical); err != nil {
+						t.Fatal("SETUP jsonb canonicalization failed")
+					}
+					raw = canonical
+				}
+				var update UpdateInput
+				var snapshot versionSnapshot
+				if json.Unmarshal([]byte(raw), &update) != nil || json.Unmarshal([]byte(raw), &snapshot) != nil {
+					t.Fatal("typed envelope decode failed")
+				}
+				for _, m := range []Metadata{update.Metadata, snapshot.Metadata} {
+					if m.Schema != MetadataSchema || len(m.Fields) != tc.fields {
+						t.Fatal("typed nested merge changed")
+					}
+					if tc.fields == 1 {
+						metadataExactDefault(t, "typed nested merge", m.Fields[0].Default, "7")
+					}
+				}
+
+				var defaults struct{ Metadata metadataDefaults }
+				if err := json.Unmarshal([]byte(raw), &defaults); err != nil {
+					t.Fatal("production nested projection rejected typed merge")
+				}
+				for _, m := range []*Metadata{&update.Metadata, &snapshot.Metadata} {
+					if err := restoreMetadataIntegerDefaults(m, defaults.Metadata); err != nil {
+						t.Fatal("production nested restore lost merge")
+					}
+					if len(m.Fields) != tc.fields || m.Schema != MetadataSchema {
+						t.Fatal("production merge changed schema/field shape")
+					}
+					if tc.fields == 1 {
+						if value, ok := m.Fields[0].Default.(int64); !ok || value != 7 {
+							t.Fatal("production merged default not restored")
+						}
+					}
+				}
+				// Counterexample only: proposed last-RawMessage extraction, NOT production.
+				var last struct{ Metadata json.RawMessage }
+				if json.Unmarshal([]byte(raw), &last) != nil {
+					t.Fatal("raw envelope fixture")
+				}
+				var projected Metadata
+				if json.Unmarshal(last.Metadata, &projected) != nil {
+					t.Fatal("raw metadata fixture")
+				}
+				if (len(projected.Fields) != len(update.Metadata.Fields)) != tc.rawLoses {
+					t.Fatal("last-blob projection characterization changed")
+				}
+				t.Logf("typed field count=%d last-blob loses retained fields=%t", len(update.Metadata.Fields), tc.rawLoses)
+			})
+		}
+	}
+}
+
+func TestMetadataProductionFieldProjection(t *testing.T) {
+	first := "\"fields\":[{\"kind\":\"integer\",\"default\":9007199254740993}]"
+	for _, tc := range []struct {
+		name, suffix string
+		restore      bool
+	}{
+		{"reuse-empty-element", ",\"Fields\":[{}]", true},
+		{"reuse-null-element", ",\"Fields\":[null]", true},
+		{"change-kind", ",\"Fields\":[{\"kind\":\"string\"}]", false},
+		{"clear-default", ",\"Fields\":[{\"default\":null}]", false},
+		{"reset-null", ",\"Fields\":null", false},
+		{"reset-empty", ",\"Fields\":[]", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte("{" + first + tc.suffix + "}")
+			var got, want Metadata
+			var defaults metadataDefaults
+			if json.Unmarshal(raw, &got) != nil || json.Unmarshal(raw, &want) != nil || json.Unmarshal(raw, &defaults) != nil {
+				t.Fatal("projection fixture decode")
+			}
+			if tc.restore {
+				want.Fields[0].Default = int64(9007199254740993)
+			}
+			if err := restoreMetadataIntegerDefaults(&got, defaults); err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatal("production projection changed field merge/reset")
+			}
+		})
+	}
+	for _, kind := range []FieldKind{FieldString, FieldBoolean, FieldEnum, FieldSecret, "future"} {
+		t.Run(string(kind), func(t *testing.T) {
+			raw := []byte(fmt.Sprintf("{\"fields\":[{\"kind\":%q,\"default\":7}]}", kind))
+			var got, want Metadata
+			var defaults metadataDefaults
+			if json.Unmarshal(raw, &got) != nil || json.Unmarshal(raw, &want) != nil || json.Unmarshal(raw, &defaults) != nil {
+				t.Fatal("kind fixture decode")
+			}
+			if restoreMetadataIntegerDefaults(&got, defaults) != nil || !reflect.DeepEqual(got, want) {
+				t.Fatal("noninteger kind changed")
+			}
+		})
+	}
+	t.Run("shape-invariant", func(t *testing.T) {
+		m := metadataIntegerFixture(t, "7")
+		before, _ := json.Marshal(m)
+		if restoreMetadataIntegerDefaults(&m, metadataDefaults{}) == nil {
+			t.Fatal("mismatched internal projection accepted")
+		}
+		after, _ := json.Marshal(m)
+		if string(before) != string(after) {
+			t.Fatal("mismatch partially changed metadata")
+		}
+	})
+}
+
+func TestMetadataProductionNestedCallers(t *testing.T) {
+	db := testpg.DB(t, store.MigrateSQL)
+	runtime := &recordingRuntime{}
+	svc, err := NewService(db, []byte(strings.Repeat("k", 32)), runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	actor := audit.ActorRef{Type: "api_token", ID: "nested-projection"}
+	for i, tail := range []string{"{}", "null"} {
+		t.Run(tail, func(t *testing.T) {
+			initial := metadataIntegerFixture(t, "7")
+			extra := Field{Name: "config.value", Label: "Value", Kind: FieldInteger}
+			initial.Fields = append(initial.Fields, extra)
+			in := InstallRequest{InstanceID: fmt.Sprintf("00000000-0000-4000-8000-%012d", 9400+i), ExtensionID: fmt.Sprintf("precision.nested%d", i), Repository: "https://github.com/gotthboard/gotth-extension-precision", ArtifactPin: "sha256:" + strings.Repeat("1", 64), ManifestDigest: strings.Repeat("2", 64), GrantDigest: strings.Repeat("3", 64), SessionDigest: strings.Repeat("4", 64), Metadata: initial}
+			if _, err := svc.Install(ctx, actor, in); err != nil {
+				t.Fatal("SETUP install")
+			}
+			config := ConfigureInput{Configuration: map[string]any{"config.value": int64(7)}}
+			cp, err := svc.PreviewConfigure(ctx, actor, in.InstanceID, config)
+			if err != nil {
+				t.Fatal("SETUP configure preview")
+			}
+			if _, err := svc.ApplyConfigure(ctx, actor, in.InstanceID, cp.ID, cp.Confirmation, config); err != nil {
+				t.Fatal("SETUP configure apply")
+			}
+			target := metadataIntegerFixture(t, "9007199254740993")
+			target.Fields = append(target.Fields, extra)
+			input := UpdateInput{ArtifactPin: "sha256:" + strings.Repeat("5", 64), ManifestDigest: strings.Repeat("6", 64), GrantDigest: strings.Repeat("7", 64), SessionDigest: strings.Repeat("8", 64), Metadata: target}
+			preview, err := svc.PreviewUpdate(ctx, actor, in.InstanceID, input)
+			if err != nil {
+				t.Fatal("SETUP update preview")
+			}
+			// DIRECT DB legacy-representation setup only; unchanged actor/target/hash and
+			// semantic update metadata. JSONB preserves both case-variant keys.
+			if _, err := db.Exec("UPDATE extension_operation_previews SET payload_json=(payload_json-'metadata')||jsonb_build_object('Metadata',payload_json->'metadata','metadata',$1::jsonb) WHERE id=$2", tail, preview.ID); err != nil {
+				t.Fatal("SETUP legacy update shape")
+			}
+			t.Log("DIRECT DB SETUP: typed nested legacy representation")
+			updated, err := svc.ApplyUpdate(ctx, actor, in.InstanceID, preview.ID, preview.Confirmation)
+			if err != nil {
+				t.Fatal("production ApplyUpdate lost nested merge")
+			}
+			metadataExactDefault(t, "nested ApplyUpdate", updated.Metadata.Fields[0].Default, "9007199254740993")
+			if v, ok := updated.Configuration["config.value"].(float64); !ok || v != 7 || updated.ConfigurationRev != 3 {
+				t.Fatal("update changed configuration value representation/revision")
+			}
+			// DIRECT DB previous-metadata setup isolates Rollback. A legacy decimal
+			// configuration VALUE must still follow old float64 decoding, not UseNumber.
+			exact, _ := json.Marshal(target)
+			if _, err := db.Exec("UPDATE extension_instances SET previous_version_json=jsonb_set((previous_version_json-'metadata')||jsonb_build_object('Metadata',$1::jsonb,'metadata',$2::jsonb),'{configuration,config.value}','7.0'::jsonb) WHERE instance_id=$3", exact, tail, in.InstanceID); err != nil {
+				t.Fatal("SETUP legacy previous shape")
+			}
+			rolled, err := svc.Rollback(ctx, actor, in.InstanceID, "rollback "+in.ExtensionID+" to "+in.ArtifactPin)
+			if err != nil {
+				t.Fatal("production Rollback lost nested merge or decimal configuration compatibility")
+			}
+			metadataExactDefault(t, "nested Rollback", rolled.Metadata.Fields[0].Default, "9007199254740993")
+			if v, ok := rolled.Configuration["config.value"].(float64); !ok || v != 7 || rolled.ConfigurationRev != 4 || len(runtime.calls) != 0 {
+				t.Fatal("rollback changed configuration/runtime/revision")
+			}
+		})
 	}
 }

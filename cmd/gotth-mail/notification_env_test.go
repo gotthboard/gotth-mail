@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"forgejo/gotthboard/gotth-mail/internal/api"
 	"forgejo/gotthboard/gotth-mail/internal/authz"
 	"forgejo/gotthboard/gotth-mail/internal/notification"
+	"forgejo/gotthboard/gotth-mail/internal/notifyruntime"
 	"forgejo/gotthboard/gotth-mail/internal/outboundpolicy"
 	"forgejo/gotthboard/gotth-mail/internal/plugin"
 	"forgejo/gotthboard/gotth-mail/internal/store"
@@ -50,7 +52,7 @@ func TestConfigureNotificationsWiresGRPCSQLAndAuthenticatedReceiver(t *testing.T
 	t.Setenv("GOTTH_MAIL_NOTIFICATION_PLUGIN_SERVICE_TOKEN", token)
 	t.Setenv("GOTTH_MAIL_TELEGRAM_WEBHOOK_SECRET", "0123456789abcdef-webhook")
 	mappingPath := filepath.Join(t.TempDir(), "telegram-actors.json")
-	if err := os.WriteFile(mappingPath, []byte(`[{"external_id":"chat:42:user:99","actor_type":"api_token","actor_id":"ops","scopes":["queue:read"]}]`), 0o600); err != nil {
+	if err := os.WriteFile(mappingPath, []byte(`[{"external_id":"chat:42:user:99","actor_type":"api_token","actor_id":"ops","scopes":["queue:read","doctor:read"]}]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GOTTH_MAIL_TELEGRAM_ACTOR_MAPPINGS_FILE", mappingPath)
@@ -66,6 +68,19 @@ func TestConfigureNotificationsWiresGRPCSQLAndAuthenticatedReceiver(t *testing.T
 	}
 	if health, err := server.PluginHealth(context.Background(), plugin.FirstNotifyName); err != nil || !health.Healthy || health.Message != "extension.ready" {
 		t.Fatalf("foundation health=%#v err=%v", health, err)
+	}
+	monitor := productionNotificationMonitor(&server, backend, plugin.FirstNotifyName)
+	expected, e := (notifyruntime.RuntimeCommandProvider{DoctorLookup: monitor.Doctor}).Summary(context.Background(), notification.CommandDoctorSummary)
+	if e != nil {
+		t.Fatal(e)
+	}
+	doctorReq := httptest.NewRequest(http.MethodPost, "/internal/v1/notifications/telegram", strings.NewReader(`{"update_id":601,"message":{"message_id":601,"from":{"id":99},"chat":{"id":42},"text":"/doctor"}}`))
+	doctorReq.Header.Set("X-Telegram-Bot-Api-Secret-Token", "0123456789abcdef-webhook")
+	doctorReply := httptest.NewRecorder()
+	server.NotificationReceiver.ServeHTTP(doctorReply, doctorReq)
+	var reply notification.TelegramReply
+	if e = json.Unmarshal(doctorReply.Body.Bytes(), &reply); e != nil || doctorReply.Code != 200 || reply.Text != expected || !strings.Contains(reply.Text, "checks=10") {
+		t.Fatal("production command/monitor mismatch", reply, expected, e)
 	}
 	record, err := server.NotificationService.SendAlert(context.Background(), notification.Alert{ID: "runtime-alert-1", Class: "doctor.failure", Severity: notification.SeverityCritical, Title: "Doctor failed", Summary: "database failed", CorrelationID: "corr-1"})
 	if err != nil || record.Status != notification.StatusDelivered {
@@ -120,6 +135,16 @@ func TestConfigureTelegramActorMappingsRejectsUnsafeFilesAndDuplicateActors(t *t
 	t.Setenv("GOTTH_MAIL_TELEGRAM_ACTOR_MAPPINGS_FILE", path)
 	if err := os.WriteFile(path, []byte(`[]`), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatal("public actor-mapping fixture mode is not 0644")
 	}
 	if err := configureTelegramActorMappings(mapper, true); err == nil || !strings.Contains(err.Error(), "private regular") {
 		t.Fatalf("unsafe permissions accepted: %v", err)
